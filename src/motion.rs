@@ -17,9 +17,17 @@
 
 use std::collections::HashMap;
 
-/// The parallax span, fixed by spec (§4.2.1): *not* the workspace's real column
-/// count, otherwise opening or closing any window would move the wallpaper.
-pub const DEFAULT_SPAN: usize = 6;
+/// The parallax span for columns, fixed by spec (§4.2.1): *not* the workspace's
+/// real column count, otherwise opening or closing any window would move the
+/// wallpaper.
+pub const DEFAULT_COLUMN_SPAN: usize = 6;
+/// The parallax span for workspaces, fixed for the same reason: dividing by the
+/// live workspace count moves the wallpaper whenever one is created or closed.
+///
+/// Separate from the column span because the two count different things —
+/// columns within a workspace versus workspaces on an output — and a setup with
+/// many workspaces should not have to shrink its column steps to say so.
+pub const DEFAULT_WORKSPACE_SPAN: usize = 6;
 /// Parallax scale: the canvas is enlarged by this factor and cropped.
 pub const DEFAULT_SCALE: f64 = 1.1;
 /// Upper bound on the scale, taken from the §4.3 `panFor(_, 9)` row.
@@ -116,7 +124,8 @@ impl Progress {
 
 #[derive(Debug, Default)]
 pub struct Motion {
-    span: usize,
+    column_span: usize,
+    workspace_span: usize,
     workspaces: Vec<Workspace>,
     windows: Vec<Window>,
     focused_id: Option<u64>,
@@ -128,16 +137,21 @@ pub struct Motion {
 }
 
 impl Motion {
-    pub fn new(span: usize) -> Self {
-        // A span of 1 would divide by zero; the spec's default is 6.
+    pub fn new(column_span: usize, workspace_span: usize) -> Self {
+        // A span of 1 would divide by zero; the defaults are 6.
         Self {
-            span: span.max(2),
+            column_span: column_span.max(2),
+            workspace_span: workspace_span.max(2),
             ..Default::default()
         }
     }
 
-    pub fn span(&self) -> usize {
-        self.span
+    pub fn column_span(&self) -> usize {
+        self.column_span
+    }
+
+    pub fn workspace_span(&self) -> usize {
+        self.workspace_span
     }
 
     pub fn focused_id(&self) -> Option<u64> {
@@ -403,7 +417,7 @@ impl Motion {
         let rank = columns.iter().position(|c| *c == column).unwrap_or(0);
         // A single column ranks 0 → 0.0, i.e. flush left. That is the spec
         // (§4.2.4), not a bug to "fix" to 0.5.
-        (rank as f64 / (self.span - 1) as f64).clamp(0.0, 1.0)
+        (rank as f64 / (self.column_span - 1) as f64).clamp(0.0, 1.0)
     }
 
     /// `(horizontal, vertical)` for `output` (§4.1).
@@ -433,7 +447,7 @@ impl Motion {
             // created or closed, for a workspace that did not change. Measured
             // before this: the same active workspace sat at 72 / 48 / 36 px
             // depending on whether 3 / 4 / 5 workspaces existed.
-            (index as f64 / (self.span - 1) as f64).clamp(0.0, 1.0)
+            (index as f64 / (self.workspace_span - 1) as f64).clamp(0.0, 1.0)
         };
 
         let horizontal = match self.horizontal.get(output) {
@@ -558,7 +572,7 @@ mod tests {
     }
 
     fn motion_with(workspaces: Vec<Workspace>, windows: Vec<Window>) -> Motion {
-        let mut motion = Motion::new(DEFAULT_SPAN);
+        let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
         motion.apply(&Event::WorkspacesChanged { workspaces });
         motion.apply(&Event::WindowsChanged { windows });
         motion
@@ -665,6 +679,37 @@ mod tests {
 
     /// Two workspaces whose focus columns rank differently, plus a third with
     /// no columns at all.
+    /// Two workspaces on one output; the first is active, has columns {1,2,3}
+    /// and the focus is on column 3.
+    fn focus_on_column_three(column_span: usize, workspace_span: usize) -> Motion {
+        let ws1 = Workspace {
+            is_focused: true,
+            active_window_id: Some(4),
+            ..default_workspace()
+        };
+        let ws2 = Workspace {
+            id: 2,
+            idx: 2,
+            is_active: false,
+            ..default_workspace()
+        };
+        let mut motion = Motion::new(column_span, workspace_span);
+        motion.apply(&Event::WorkspacesChanged {
+            workspaces: vec![ws1, ws2],
+        });
+        motion.apply(&Event::WindowsChanged {
+            windows: vec![
+                window(1, 1, 1),
+                window(2, 2, 1),
+                Window {
+                    is_focused: true,
+                    ..window(4, 3, 1)
+                },
+            ],
+        });
+        motion
+    }
+
     fn two_workspaces_with_different_columns() -> Motion {
         let ws1 = Workspace {
             is_focused: true,
@@ -750,6 +795,28 @@ mod tests {
     }
 
     #[test]
+    fn the_two_spans_are_independent() {
+        // The two axes count different things (columns within a workspace,
+        // workspaces on an output), so one must not scale the other.
+        // Fixture: ws1 active with columns {1,2,3} and the focus on column 3,
+        // ws2 second on the same output.
+
+        let mut motion = focus_on_column_three(6, 4);
+        // Column 3 of {1,2,3} → rank 2; column_span 6 → 2/5.
+        assert_progress(&motion, "DP-1", 0.4, 0.0);
+        motion.apply(&Event::WorkspaceActivated {
+            id: 2,
+            focused: true,
+        });
+        // workspace_span 4 → the second of two workspaces is 1/3, not 1/5.
+        assert_progress(&motion, "DP-1", 0.4, 1.0 / 3.0);
+
+        // Same fixture, column_span 3: only the horizontal changes.
+        let narrow = focus_on_column_three(3, 4);
+        assert_progress(&narrow, "DP-1", 1.0, 0.0);
+    }
+
+    #[test]
     fn creating_or_closing_a_workspace_does_not_move_the_wallpaper() {
         // The vertical spread is fixed for the same reason as the columns
         // (§4.2.1): with the live workspace count, the same active workspace sat
@@ -757,7 +824,7 @@ mod tests {
         // so creating or closing one jerked the wallpaper for a workspace that
         // did not change.
         let positions = |count: u32| {
-            let mut motion = Motion::new(DEFAULT_SPAN);
+            let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
             let workspaces: Vec<Workspace> = (1..=count)
                 .map(|idx| Workspace {
                     id: idx as u64,
@@ -1058,7 +1125,7 @@ mod tests {
         ];
         assert_eq!(listed.len(), 8);
         for event in listed {
-            let mut motion = Motion::new(DEFAULT_SPAN);
+            let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
             assert!(motion.apply(&event), "{event:?} must be accepted");
         }
     }
@@ -1091,7 +1158,7 @@ mod tests {
                 is_active: false,
                 ..default_workspace()
             };
-            let mut motion = Motion::new(span);
+            let mut motion = Motion::new(span, DEFAULT_WORKSPACE_SPAN);
             motion.apply(&Event::WorkspacesChanged {
                 workspaces: vec![ws1, ws2],
             });

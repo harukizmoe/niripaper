@@ -22,7 +22,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::motion::{offset_px, DEFAULT_SPAN};
+use crate::motion::{offset_px, DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
 use crate::render::anim::Animator;
 use crate::render::egl::{Egl, EglVendor};
@@ -51,7 +51,8 @@ pub struct Options {
     /// tested without touching the user's config.
     pub namespace: String,
     pub scale: f64,
-    pub span: usize,
+    pub column_span: usize,
+    pub workspace_span: usize,
     pub pattern: Pattern,
     /// A static wallpaper to draw instead of the procedural pattern.
     pub wallpaper: Option<std::path::PathBuf>,
@@ -69,7 +70,8 @@ impl Options {
             output: output.into(),
             namespace: NAMESPACE.to_owned(),
             scale: motion::DEFAULT_SCALE,
-            span: DEFAULT_SPAN,
+            column_span: DEFAULT_COLUMN_SPAN,
+            workspace_span: DEFAULT_WORKSPACE_SPAN,
             pattern: Pattern::Blocks,
             wallpaper: None,
             animations: crate::config::Animations::default(),
@@ -104,7 +106,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     };
     let gpu = gpu::gpu_for_node(&node)?;
     log(&format!(
-        "{} on {} ({} {}), namespace {}, scale {:.3}, span {}, pattern {:?}\n\
+        "{} on {} ({} {}), namespace {}, scale {:.3}, spans {}/{}, pattern {:?}\n\
          animations: parallax {}, overview-open-close {} (zoom {:.3}), slowdown {}{}",
         options.output,
         node.display(),
@@ -112,7 +114,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         gpu.vendor_name(),
         options.namespace,
         options.scale,
-        options.span,
+        options.column_span,
+        options.workspace_span,
         options.pattern,
         options.animations.parallax.describe(),
         options.animations.overview_open_close.animation.describe(),
@@ -188,7 +191,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     };
 
     // --- niri --------------------------------------------------------------
-    let mut niri = Niri::connect()?;
+    let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
     let screen = (surface.width as f64, surface.height as f64);
     let animations = &options.animations;

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::motion::{Event, Motion, Window, Workspace, DEFAULT_SPAN};
+use crate::motion::{Event, Motion, Window, Workspace};
 
 /// The socket the compositor is listening on.
 ///
@@ -48,11 +48,15 @@ pub struct Niri {
 
 impl Niri {
     /// Connect using `$NIRI_SOCKET`.
-    pub fn connect() -> Result<Self, String> {
-        Self::connect_path(&socket_path()?)
+    pub fn connect(column_span: usize, workspace_span: usize) -> Result<Self, String> {
+        Self::connect_path(&socket_path()?, column_span, workspace_span)
     }
 
-    pub fn connect_path(path: &Path) -> Result<Self, String> {
+    pub fn connect_path(
+        path: &Path,
+        column_span: usize,
+        workspace_span: usize,
+    ) -> Result<Self, String> {
         let mut stream = UnixStream::connect(path)
             .map_err(|e| format!("connecting to {}: {e}", path.display()))?;
         stream
@@ -61,7 +65,7 @@ impl Niri {
             .map_err(|e| format!("requesting the event stream: {e}"))?;
         Ok(Self {
             reader: BufReader::new(stream),
-            motion: Motion::new(DEFAULT_SPAN),
+            motion: Motion::new(column_span, workspace_span),
             path: path.to_owned(),
             ignored: 0,
             overview_open: false,
@@ -357,6 +361,7 @@ impl From<RawWindow> for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 
     /// Real lines captured from the live socket (`nc -U $NIRI_SOCKET`).
     const WORKSPACES_CHANGED: &str = r#"{"WorkspacesChanged":{"workspaces":[{"id":22,"idx":4,"name":null,"output":"DP-1","is_urgent":false,"is_active":false,"is_focused":false,"active_window_id":null},{"id":15,"idx":2,"name":null,"output":"DP-1","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":180}]}}"#;
@@ -488,7 +493,7 @@ mod tests {
 
     #[test]
     fn state_follows_a_realistic_sequence() {
-        let mut motion = Motion::new(DEFAULT_SPAN);
+        let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
         for line in [WORKSPACES_CHANGED, WINDOWS_CHANGED] {
             let event = parse_event(line).expect("parses").expect("is an event");
             motion.apply(&event);

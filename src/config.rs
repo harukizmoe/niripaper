@@ -9,7 +9,8 @@
 //!
 //! ```toml
 //! scale = 1.1          # canvas enlargement (§4.1); 1.0 ..= 1.35
-//! span = 6             # fixed column span (§4.2.1); >= 2
+//! column_span = 6      # fixed column span (§4.2.1); >= 2
+//! workspace_span = 6   # fixed workspace span; >= 2
 //! duration_ms = 600    # easing duration (§4.2.6)
 //! overview_zoom = 0.96 # canvas zoom while niri's overview is open
 //! overview_duration_ms = 350
@@ -25,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::motion::{DEFAULT_SCALE, DEFAULT_SPAN, MAX_SCALE};
+use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_SCALE, DEFAULT_WORKSPACE_SPAN, MAX_SCALE};
 use crate::render::anim::{Animation, Curve, Spring};
 
 /// The daemon's layer-shell namespace, and the name users match in
@@ -51,7 +52,8 @@ pub const DEFAULT_OVERVIEW_ANIMATION: Animation = Animation::Spring(Spring {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub scale: f64,
-    pub span: usize,
+    pub column_span: usize,
+    pub workspace_span: usize,
     pub namespace: String,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
@@ -65,7 +67,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             scale: DEFAULT_SCALE,
-            span: DEFAULT_SPAN,
+            column_span: DEFAULT_COLUMN_SPAN,
+            workspace_span: DEFAULT_WORKSPACE_SPAN,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             animations: Animations::default(),
             wallpaper: None,
@@ -120,7 +123,8 @@ pub struct OverviewAnimation {
 #[serde(deny_unknown_fields)]
 pub struct OutputOverride {
     pub scale: Option<f64>,
-    pub span: Option<usize>,
+    pub column_span: Option<usize>,
+    pub workspace_span: Option<usize>,
     pub wallpaper: Option<PathBuf>,
 }
 
@@ -128,7 +132,8 @@ pub struct OutputOverride {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutputParams {
     pub scale: f64,
-    pub span: usize,
+    pub column_span: usize,
+    pub workspace_span: usize,
     pub wallpaper: Option<PathBuf>,
 }
 
@@ -166,8 +171,11 @@ impl Config {
         if let Some(scale) = raw.scale {
             config.scale = check_scale("scale", scale)?;
         }
-        if let Some(span) = raw.span {
-            config.span = check_span("span", span)?;
+        if let Some(span) = raw.column_span {
+            config.column_span = check_span("column_span", span)?;
+        }
+        if let Some(span) = raw.workspace_span {
+            config.workspace_span = check_span("workspace_span", span)?;
         }
         // niri exposes nothing over IPC (`niri msg` has no config dump, `niri
         // validate` only reports validity), so its config file is the only
@@ -199,8 +207,11 @@ impl Config {
             if let Some(scale) = output.scale {
                 check_scale(&format!("outputs.{name}.scale"), scale)?;
             }
-            if let Some(span) = output.span {
-                check_span(&format!("outputs.{name}.span"), span)?;
+            if let Some(span) = output.column_span {
+                check_span(&format!("outputs.{name}.column_span"), span)?;
+            }
+            if let Some(span) = output.workspace_span {
+                check_span(&format!("outputs.{name}.workspace_span"), span)?;
             }
             if let Some(wallpaper) = &output.wallpaper {
                 check_wallpaper(&format!("outputs.{name}.wallpaper"), wallpaper.clone())?;
@@ -215,7 +226,10 @@ impl Config {
         let over = self.outputs.get(name);
         OutputParams {
             scale: over.and_then(|o| o.scale).unwrap_or(self.scale),
-            span: over.and_then(|o| o.span).unwrap_or(self.span),
+            column_span: over.and_then(|o| o.column_span).unwrap_or(self.column_span),
+            workspace_span: over
+                .and_then(|o| o.workspace_span)
+                .unwrap_or(self.workspace_span),
             wallpaper: over
                 .and_then(|o| o.wallpaper.clone())
                 .or_else(|| self.wallpaper.clone()),
@@ -481,7 +495,8 @@ struct RawOverviewAnimation {
 #[serde(deny_unknown_fields)]
 struct RawConfig {
     scale: Option<f64>,
-    span: Option<usize>,
+    column_span: Option<usize>,
+    workspace_span: Option<usize>,
     namespace: Option<String>,
     #[serde(default)]
     animations: RawAnimations,
@@ -507,7 +522,8 @@ mod tests {
         let config = Config::parse_without_niri(
             r#"
             scale = 1.2
-            span = 8
+            column_span = 8
+            workspace_span = 5
             namespace = "custom"
 
             [animations.parallax]
@@ -518,22 +534,26 @@ mod tests {
             scale = 1.3
 
             [outputs."eDP-1"]
-            span = 4
+            column_span = 4
             wallpaper = "/etc/hostname"
             "#,
         )
         .expect("parses");
         assert_eq!(config.scale, 1.2);
-        assert_eq!(config.span, 8);
+        assert_eq!(config.column_span, 8);
+        assert_eq!(config.workspace_span, 5);
         assert_eq!(
             config.animations.parallax,
             Animation::easing(Curve::EaseOutExpo, std::time::Duration::from_millis(250))
         );
         assert_eq!(config.namespace, "custom");
         assert_eq!(config.output("DP-1").scale, 1.3);
-        assert_eq!(config.output("DP-1").span, 8);
+        assert_eq!(config.output("DP-1").column_span, 8);
+        assert_eq!(config.output("DP-1").workspace_span, 5);
         assert_eq!(config.output("eDP-1").scale, 1.2);
-        assert_eq!(config.output("eDP-1").span, 4);
+        assert_eq!(config.output("eDP-1").column_span, 4);
+        // The per-output section does not override what it does not mention.
+        assert_eq!(config.output("eDP-1").workspace_span, 5);
         // The per-output wallpaper wins over the global one.
         assert_eq!(
             config.output("eDP-1").wallpaper.as_deref(),
@@ -541,7 +561,8 @@ mod tests {
         );
         // An output with no section gets the global values.
         assert_eq!(config.output("HDMI-A-1").scale, 1.2);
-        assert_eq!(config.output("HDMI-A-1").span, 8);
+        assert_eq!(config.output("HDMI-A-1").column_span, 8);
+        assert_eq!(config.output("HDMI-A-1").workspace_span, 5);
         assert_eq!(config.output("HDMI-A-1").wallpaper, None);
     }
 
@@ -552,8 +573,13 @@ mod tests {
         assert!(scale.contains("scale") && scale.contains("1.0"), "{scale}");
         let high = Config::parse_without_niri("scale = 9").unwrap_err();
         assert!(high.contains("scale"), "{high}");
-        let span = Config::parse_without_niri("span = 1").unwrap_err();
-        assert!(span.contains("span"), "{span}");
+        let span = Config::parse_without_niri("column_span = 1").unwrap_err();
+        assert!(span.contains("column_span"), "{span}");
+        let workspace_span = Config::parse_without_niri("workspace_span = 0").unwrap_err();
+        assert!(
+            workspace_span.contains("workspace_span"),
+            "{workspace_span}"
+        );
         let duration = Config::parse_without_niri(
             "[animations.parallax]\nduration_ms = 0\ncurve = \"linear\"",
         )

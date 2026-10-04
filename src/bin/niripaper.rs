@@ -15,7 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use niripaper::config::Config;
 use niripaper::daemon::{self, Options};
-use niripaper::motion::{offset_px, Progress, DEFAULT_SCALE, DEFAULT_SPAN};
+use niripaper::motion::{
+    offset_px, Progress, DEFAULT_COLUMN_SPAN, DEFAULT_SCALE, DEFAULT_WORKSPACE_SPAN,
+};
 use niripaper::niri::Niri;
 use niripaper::render::gl::Pattern;
 
@@ -72,7 +74,7 @@ fn usage() {
          \n\
          commands:\n\
          \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
-         \x20        [--scale F] [--span N]\n\
+         \x20        [--scale F] [--column-span N] [--workspace-span N]\n\
          \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
@@ -100,7 +102,9 @@ fn watch(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let mut niri = Niri::connect()?;
+    // `watch` is an observation tool: it takes no config, so it runs the
+    // built-in defaults (as it already did for `scale`).
+    let mut niri = Niri::connect(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN)?;
     // The first events are the full state; wait for them so the first line we
     // print is the state we start from.
     niri.wait_for_full_state()?;
@@ -117,8 +121,8 @@ fn watch(args: &[String]) -> Result<(), String> {
             .ok_or("niri reported no outputs; pass --output")?;
     }
     println!(
-        "watching {} (span {}, scale {}), {} event(s) ignored so far",
-        output, DEFAULT_SPAN, DEFAULT_SCALE, niri.ignored
+        "watching {} (built-in spans {}/{}, scale {}), {} event(s) ignored so far",
+        output, DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN, DEFAULT_SCALE, niri.ignored
     );
     let mut last = Progress::CENTER;
     report(&niri, &output, screen, &mut last, "initial");
@@ -191,7 +195,8 @@ struct Overrides {
     output: Option<String>,
     namespace: Option<String>,
     scale: Option<f64>,
-    span: Option<usize>,
+    column_span: Option<usize>,
+    workspace_span: Option<usize>,
     pattern: Option<Pattern>,
     wallpaper: Option<PathBuf>,
     config: Option<PathBuf>,
@@ -209,7 +214,20 @@ fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
             "--config" => over.config = Some(PathBuf::from(value()?)),
             "--wallpaper" => over.wallpaper = Some(PathBuf::from(value()?)),
             "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
-            "--span" => over.span = Some(value()?.parse().map_err(|e| format!("--span: {e}"))?),
+            "--column-span" => {
+                over.column_span = Some(
+                    value()?
+                        .parse()
+                        .map_err(|e| format!("--column-span: {e}"))?,
+                )
+            }
+            "--workspace-span" => {
+                over.workspace_span = Some(
+                    value()?
+                        .parse()
+                        .map_err(|e| format!("--workspace-span: {e}"))?,
+                )
+            }
             "--pattern" => {
                 over.pattern = Some(match value()?.as_str() {
                     "blocks" => Pattern::Blocks,
@@ -246,7 +264,10 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let output = match over.output.clone() {
         Some(name) => name,
         None => {
-            let mut niri = Niri::connect()?;
+            // This connection only reads the output list — the per-output
+            // spans are not known until the output name is — so the global
+            // ones stand in.
+            let mut niri = Niri::connect(config.column_span, config.workspace_span)?;
             niri.wait_for_full_state()?;
             niri.motion
                 .workspaces()
@@ -260,7 +281,8 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let params = config.output(&output);
     let mut options = Options::new(output);
     options.scale = over.scale.unwrap_or(params.scale);
-    options.span = over.span.unwrap_or(params.span);
+    options.column_span = over.column_span.unwrap_or(params.column_span);
+    options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
     // Animations come from the config only: they are tuned by feel, and a flag
     // per parameter would be noise.
