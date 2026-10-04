@@ -217,6 +217,12 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 5. **scale 上限**：§4.3 的 `panFor(_, 9)` 行要求 zoom 夹到 `log2(1.35)`，即 scale ≤ **1.35**；`offset_px` 用同一上限夹紧。
 6. **§4.3 里 `panFor(...)` 的三行不做**：它是 mpv 时代的表述（`video-pan-x`/`video-zoom`），§4.1 明确说新渲染器不要照搬。实现它会是死代码。
 7. **"双键信封"那一行不属于 `motion.rs`**：那是 IPC 解析层的事——多键对象根本不会变成 `Event`，所以由 `niri.rs` 的解析器返回 `None` 来保证（`apply()` 只会收到 §4.2.7 的 8 个变体）。
+8. **横向不随工作区切换平移**（对 §4.2.2 的修正）。原先"每个工作区各自记忆焦点列"意味着切工作区时 `horizontal` 也会跳到新工作区的列 ✗：竖直切换变成了**斜向** ✗。实测（修前）：`target h=0.500 v=1.000`，逐帧 `h` 与 `v` 的增量**完全相同**（0.1301/0.6301、0.2215/0.7215 …）——两个轴锁在一起走。修后：`target h=0.000 v=0.500`，`h` 一动不动。
+   * 为什么不能只看事件类型：niri 切工作区发的是 `WorkspaceActivated` **紧跟一个** `WindowFocusChanged`（指向新工作区的窗口），而横向移动焦点**也**只发 `WindowFocusChanged` ✗。
+   * 判据：**"焦点此前就在该输出的活动工作区上"** → 说明正在发生的是横向滚动，不是工作区带在滑动。其余情况（`WorkspaceActivated`、以及它后面那个 `WindowFocusChanged`）只改竖直。
+   * 首次建立时机：状态有意义（已知焦点窗口）时建立一次。否则"切换早于首次横向移动"会回落到按新工作区重算 ✗，又变回斜向。
+   * 实测（修后，八个动作段全部轴向纯净）：ws-down/up → Δh **+0.0 px**、Δv ±61…68 px；col-right/left → Δh ±46…47 px、Δv **+0.0 px**。
+9. **过期的 `is_focused` 标志会把焦点抢回去**（修 8 时一并发现）。`WindowOpenedOrChanged` 对**标题/app_id 变化**也会触发，其载荷窗口并非焦点窗口 ✗；而 `adopt_reported_focus` 会在窗口列表里扫描 `is_focused` ✗ —— 我们自己从不清除旧标志 ✗，于是这类事件会把焦点（以及横向视差）拽回上一个焦点窗口 ✗。修正：只有**载荷窗口自称被聚焦**时才采纳（`WindowsChanged` 是完整列表，仍可整体扫描），采纳时把其余窗口的标志清掉（niri 的语义：一个窗口报告被聚焦即意味着其他都不是）。
 
 ---
 
@@ -260,6 +266,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | **做逐像素比对时要扣掉窗口阴影**：本机 `layout { shadow { on; softness 10; spread 4; color "#00000070" } }`，于是窗口外的 10 px 边距被阴影压暗——实测比值从离窗口远处 0.884 单调降到贴窗口处 0.823（纯乘性、有梯度）。这是配置效果，不是渲染 bug；要干净的比对就切到空工作区 | M2 实测 |
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
 | 测 3 列位移时用 backdrop 放置（`--namespace mpvpaper` 命中既有规则）只是为了让**测量更干净**：工作区背景的壁纸会随工作区滚动一起平移，混进位移里 | M1 实测 |
+| **竖直移动工作区时横向被带着走 → 斜向**：`horizontal` 若跟着新工作区重算，两个轴就锁在一起走 ✗（实测逐帧增量完全相同）。修复见 §4.4 第 8 条；判据是"焦点此前是否已在该输出的活动工作区上"，不是事件类型 | 实测 |
 | **niri 不暴露它的动画参数**：`niri msg` 没有 dump 配置的命令、`niri validate` 只打印 "config is valid"、事件流里与配置有关的只有 `{"ConfigLoaded":{"failed":false}}`。唯一来源是它的 KDL 配置文件（含 `include`，本机动画在 `__custom__.kdl` 里） | `niri msg --help`、`niri validate`、事件流实测 |
 | **niri 的配置路径顺序**（`src/main.rs`）：`-c/--config` > `$NIRI_CONFIG` > 用户配置（`$XDG_CONFIG_HOME/niri/config.kdl`，否则 `~/.config/niri/config.kdl`）> `/etc/niri/config.kdl`。注意 niri 启动后**会把 `NIRI_CONFIG` 从自己的环境里删掉**，子进程看不到 → 跟随它的唯一可靠办法是读 `/proc/<niri pid>/cmdline` 里的 `--config` | 读 niri 源码 + 实测 |
 | `include` 的路径**相对于包含它的那个文件**解析（不是相对于主配置），绝对路径原样使用，且会**展开开头的 `~`**；递归有上限，自包含会报错 | niri `niri-config/src/lib.rs` 的 include 分支 |
