@@ -129,6 +129,13 @@ pub struct Motion {
     workspaces: Vec<Workspace>,
     windows: Vec<Window>,
     focused_id: Option<u64>,
+    /// The workspace the focus was last *seen* on, kept when niri reports
+    /// `WindowFocusChanged(None)` (the overview). It answers only one question —
+    /// "was the focus on this output's active workspace?" — so that the
+    /// horizontal can tell a focus move from a workspace switch. It must never
+    /// drive the remembered column: in the overview the focus is `None` and the
+    /// active window is the signal that moves.
+    last_focus_workspace: Option<u64>,
     /// Per workspace (by id) focus column, remembered across column churn.
     remembered: HashMap<u64, usize>,
     /// Per output: the horizontal the wallpaper has settled on. Held across
@@ -171,6 +178,7 @@ impl Motion {
         self.workspaces.clear();
         self.windows.clear();
         self.focused_id = None;
+        self.last_focus_workspace = None;
         self.remembered.clear();
         self.horizontal.clear();
     }
@@ -185,7 +193,7 @@ impl Motion {
             .into_iter()
             .map(|output| {
                 let active = self.active_workspace(&output).map(|w| w.id);
-                let focus = self.focus_workspace_on(&output);
+                let focus = self.last_focus_workspace_on(&output);
                 (output, active, focus)
             })
             .collect();
@@ -261,12 +269,18 @@ impl Motion {
                 // The remembered column stays: that is what "记忆保留" means.
             }
             Event::WindowFocusChanged { id } => {
-                // Keep the compositor's literal answer, including `None`. The
-                // overview reports no focused window while it is open, and
-                // *instead* reports what it is working with as
+                // `focused_id` keeps the compositor's literal answer, including
+                // `None`: the overview reports no focused window while it is
+                // open, and *instead* reports what it is working with as
                 // `WorkspaceActiveWindowChanged` — so a remembered focus here
                 // would mask the very signal the overview moves with.
+                //
+                // `last_focus_workspace` is the separate, sticky answer the
+                // horizontal's test needs (see the field's comment).
                 self.focused_id = *id;
+                if let Some(id) = id {
+                    self.remember_focus_workspace(*id);
+                }
             }
             Event::WindowLayoutsChanged { changes } => {
                 for (id, column, tile) in changes {
@@ -303,6 +317,30 @@ impl Motion {
             window.is_focused = window.id == id;
         }
         self.focused_id = Some(id);
+        self.remember_focus_workspace(id);
+    }
+
+    /// Record where the focus was last seen, for the horizontal's test only.
+    fn remember_focus_workspace(&mut self, window_id: u64) {
+        if let Some(workspace) = self
+            .windows
+            .iter()
+            .find(|w| w.id == window_id)
+            .and_then(|window| self.workspaces.iter().find(|w| w.id == window.workspace_id))
+            .map(|workspace| workspace.id)
+        {
+            self.last_focus_workspace = Some(workspace);
+        }
+    }
+
+    /// Where the focus was last seen, but only while that workspace is on
+    /// `output` — `None` if the focus has never been seen there.
+    fn last_focus_workspace_on(&self, output: &str) -> Option<u64> {
+        let workspace = self.last_focus_workspace?;
+        self.workspaces
+            .iter()
+            .find(|w| w.id == workspace && w.output == output)
+            .map(|w| w.id)
     }
 
     /// Re-derive the remembered focus column of every displayed workspace.
@@ -360,18 +398,6 @@ impl Motion {
             .find(|w| w.output == output && w.is_active)
     }
 
-    /// The workspace of the focused window, but only while that window is on
-    /// `output` — `None` if the focus is elsewhere (or nowhere).
-    fn focus_workspace_on(&self, output: &str) -> Option<u64> {
-        let focused = self.focused_id?;
-        let window = self.windows.iter().find(|w| w.id == focused)?;
-        let workspace = self
-            .workspaces
-            .iter()
-            .find(|w| w.id == window.workspace_id)?;
-        (workspace.output == output).then_some(workspace.id)
-    }
-
     /// Re-derive the settled horizontal for each output the focus moved *within*.
     ///
     /// Switching workspaces is a **vertical** move: niri slides the workspace
@@ -403,10 +429,17 @@ impl Motion {
             // The focus was on this output's active workspace and still is:
             // whatever moved was the horizontal scroll, not the workspace strip.
             //
-            // No focus at all counts too: that is the overview, which reports
-            // its selection as `WorkspaceActiveWindowChanged` instead of as a
-            // focus change. Holding there would freeze the horizontal for the
-            // whole overview.
+            // No focus before *and* after counts too: that is the overview,
+            // which reports its selection as `WorkspaceActiveWindowChanged`
+            // instead of as a focus change, and reports no focus while it is
+            // open. Holding there would freeze the horizontal for the whole
+            // overview.
+            //
+            // Both ends matter. A workspace switched while nothing was focused
+            // (say the focused window had just been closed) is followed by niri
+            // focusing a window in the new workspace; `None` → `Some` is that
+            // focus arriving, not a horizontal move, and panning there would
+            // drag the horizontal along with the vertical again.
             let pans = *focus_before == Some(active_id) || focus_before.is_none();
             // Establish it once the state is meaningful (a window is focused),
             // so that a workspace switch arriving before the first horizontal
@@ -1150,6 +1183,52 @@ mod tests {
             let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
             assert!(motion.apply(&event), "{event:?} must be accepted");
         }
+    }
+
+    #[test]
+    fn a_workspace_switch_with_nothing_focused_does_not_pan() {
+        // The nasty `None` → `Some` case: the focus had been on ws1, the
+        // focused window closed (niri reports `None`), then the user switched
+        // workspaces and niri focused a window in the new one. That arriving
+        // focus is part of a vertical move, not a horizontal one — panning
+        // there would drag the horizontal along with the vertical again, which
+        // is exactly the diagonal this rule exists to prevent.
+        let ws1 = Workspace {
+            is_focused: true,
+            active_window_id: Some(1),
+            ..default_workspace()
+        };
+        let ws2 = Workspace {
+            id: 2,
+            idx: 2,
+            is_active: false,
+            active_window_id: Some(4),
+            ..default_workspace()
+        };
+        let mut motion = motion_with(
+            vec![ws1, ws2],
+            vec![
+                window(1, 1, 1),
+                window(2, 2, 1),
+                window(3, 3, 1),
+                window_on(4, 2, 3, 1),
+            ],
+        );
+        motion.apply(&Event::WindowFocusChanged { id: Some(1) });
+        assert_progress(&motion, "DP-1", 0.0, 0.0);
+
+        // The focused window goes away.
+        motion.apply(&Event::WindowClosed { id: 1 });
+        assert_eq!(motion.focused_id(), None);
+
+        // Switch workspaces, then niri focuses a window in the new one (its
+        // column 3 would read 0.4 if the horizontal followed it).
+        motion.apply(&Event::WorkspaceActivated {
+            id: 2,
+            focused: true,
+        });
+        motion.apply(&Event::WindowFocusChanged { id: Some(4) });
+        assert_progress(&motion, "DP-1", 0.0, 0.2);
     }
 
     #[test]
