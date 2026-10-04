@@ -10,8 +10,11 @@
 
 use std::process::ExitCode;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
+use niripaper::config::Config;
 use niripaper::daemon::{self, Options};
 use niripaper::motion::{offset_px, Progress, DEFAULT_SCALE, DEFAULT_SPAN};
 use niripaper::niri::Niri;
@@ -61,7 +64,8 @@ fn usage() {
         "usage: niripaper <command>\n\
          \n\
          commands:\n\
-         \x20 daemon [--output NAME] [--namespace NAME] [--scale F] [--span N]\n\
+         \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
+         \x20        [--scale F] [--span N] [--duration-ms N]\n\
          \x20        [--pattern blocks|bands] [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
@@ -166,53 +170,95 @@ fn summarize(event: &niripaper::motion::Event) -> String {
     }
 }
 
-/// Draw the wallpaper layer for one output until asked to stop.
-fn daemon_command(args: &[String]) -> Result<(), String> {
-    install_signal_handlers();
-    let mut options = Options::new("");
+/// Flags given on the command line. Each one overrides the config file, which
+/// in turn overrides the built-in defaults.
+#[derive(Default)]
+struct Overrides {
+    output: Option<String>,
+    namespace: Option<String>,
+    scale: Option<f64>,
+    span: Option<usize>,
+    duration_ms: Option<u64>,
+    pattern: Option<Pattern>,
+    config: Option<PathBuf>,
+    trace: bool,
+}
+
+fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
+    let mut over = Overrides::default();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
+        let mut value = || iter.next().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
-            "--output" => options.output = iter.next().ok_or("--output needs a value")?.clone(),
-            "--namespace" => {
-                options.namespace = iter.next().ok_or("--namespace needs a value")?.clone()
-            }
-            "--scale" => {
-                options.scale = iter
-                    .next()
-                    .ok_or("--scale needs a value")?
-                    .parse()
-                    .map_err(|e| format!("--scale: {e}"))?
-            }
-            "--span" => {
-                options.span = iter
-                    .next()
-                    .ok_or("--span needs a value")?
-                    .parse()
-                    .map_err(|e| format!("--span: {e}"))?
+            "--output" => over.output = Some(value()?.clone()),
+            "--namespace" => over.namespace = Some(value()?.clone()),
+            "--config" => over.config = Some(PathBuf::from(value()?)),
+            "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
+            "--span" => over.span = Some(value()?.parse().map_err(|e| format!("--span: {e}"))?),
+            "--duration-ms" => {
+                over.duration_ms = Some(
+                    value()?
+                        .parse()
+                        .map_err(|e| format!("--duration-ms: {e}"))?,
+                )
             }
             "--pattern" => {
-                options.pattern = match iter.next().ok_or("--pattern needs a value")?.as_str() {
+                over.pattern = Some(match value()?.as_str() {
                     "blocks" => Pattern::Blocks,
                     "bands" => Pattern::Bands,
                     other => return Err(format!("unknown --pattern {other}")),
-                }
+                })
             }
-            "--trace" => options.trace = true,
+            "--trace" => over.trace = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
-    if options.output.is_empty() {
-        // Pick the first output niri reports a workspace on.
-        let mut niri = Niri::connect()?;
-        niri.wait_for_full_state()?;
-        options.output = niri
-            .motion
-            .workspaces()
-            .iter()
-            .map(|w| w.output.clone())
-            .find(|name| !name.is_empty())
-            .ok_or("niri reported no outputs; pass --output")?;
+    Ok(over)
+}
+
+/// Draw the wallpaper layer for one output until asked to stop.
+fn daemon_command(args: &[String]) -> Result<(), String> {
+    install_signal_handlers();
+    let over = parse_overrides(args)?;
+
+    let (config, source) = match &over.config {
+        Some(path) => (Config::load_from(path)?, path.display().to_string()),
+        None => {
+            let config = Config::load()?;
+            let source = match niripaper::config::default_path() {
+                Some(path) if path.exists() => path.display().to_string(),
+                _ => "built-in defaults (no config file)".to_owned(),
+            };
+            (config, source)
+        }
+    };
+
+    // The output name may have to come from niri, and the per-output overrides
+    // are keyed by it, so resolve it before building the effective options.
+    let output = match over.output.clone() {
+        Some(name) => name,
+        None => {
+            let mut niri = Niri::connect()?;
+            niri.wait_for_full_state()?;
+            niri.motion
+                .workspaces()
+                .iter()
+                .map(|w| w.output.clone())
+                .find(|name| !name.is_empty())
+                .ok_or("niri reported no outputs; pass --output")?
+        }
+    };
+
+    let params = config.output(&output);
+    let mut options = Options::new(output);
+    options.scale = over.scale.unwrap_or(params.scale);
+    options.span = over.span.unwrap_or(params.span);
+    options.duration = Duration::from_millis(over.duration_ms.unwrap_or(config.duration_ms));
+    options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
+    if let Some(pattern) = over.pattern {
+        options.pattern = pattern;
     }
+    options.trace = over.trace;
+    println!("niripaper: config {source}");
     daemon::run(&options, &|| !EXIT.load(Ordering::SeqCst))
 }

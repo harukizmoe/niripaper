@@ -53,6 +53,8 @@ pub struct Options {
     pub scale: f64,
     pub span: usize,
     pub pattern: Pattern,
+    /// Easing duration (§4.2.6).
+    pub duration: Duration,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -67,6 +69,7 @@ impl Options {
             scale: motion::DEFAULT_SCALE,
             span: DEFAULT_SPAN,
             pattern: Pattern::Blocks,
+            duration: crate::render::anim::DEFAULT_DURATION,
             trace: false,
         }
     }
@@ -98,12 +101,16 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     };
     let gpu = gpu::gpu_for_node(&node)?;
     log(&format!(
-        "{} on {} ({} {}), namespace {}",
+        "{} on {} ({} {}), namespace {}, scale {:.3}, span {}, easing {} ms, pattern {:?}",
         options.output,
         node.display(),
         gpu.card,
         gpu.vendor_name(),
-        options.namespace
+        options.namespace,
+        options.scale,
+        options.span,
+        options.duration.as_millis(),
+        options.pattern,
     ));
 
     // --- render objects ----------------------------------------------------
@@ -144,7 +151,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     let mut niri = Niri::connect()?;
     niri.wait_for_full_state()?;
     let screen = (surface.width as f64, surface.height as f64);
-    let mut animator = Animator::new(niri.motion.progress(&options.output));
+    let mut animator =
+        Animator::with_duration(niri.motion.progress(&options.output), options.duration);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
