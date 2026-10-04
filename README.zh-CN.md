@@ -138,8 +138,8 @@ scale = 1.2
 - **启动后立刻退出。** 配置文件解析失败 —— 报错会指明出问题的键和行号。
 - **壁纸不动。** 如果 niri 配置里全局关掉了动画（`animations { off }`），
   总览过渡在这里也是关的。视差不受影响 —— 它不是 niri 的动画之一。
-- **你已经为 `mpvpaper` 写过图层规则。** 把 `namespace = "mpvpaper"` 设上，
-  现有规则就直接适用于这个守护进程。
+- **你的图层规则匹配的是别的名字。** 图层规则是按命名空间匹配的，
+  把 `namespace` 设成你现有规则已经在用的名字即可。
 
 ## 许可证
 
@@ -149,5 +149,3 @@ GPL-3.0-or-later © 2026 harukizmoe。见 [LICENSE](LICENSE)。
 
 - **[niri](https://github.com/niri-wm/niri)** —— 本项目的目标合成器，
   也是它跟随的事件流的来源。
-- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** —— `mpvpaper`
-  这个 layer-shell 命名空间约定来自它。
