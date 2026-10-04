@@ -12,6 +12,26 @@ use super::egl::{DmaBufDesc, DmaBufPlane, Egl, EglImage};
 use super::gbm::{self, Bo, Device, Plane};
 use super::gl;
 
+/// Search order for `(format, modifier)`: what both the compositor and the
+/// driver accept first, then what only the compositor advertises (the driver
+/// may still refuse), then "let the driver choose" — which the compositor may
+/// then reject, but it is worth trying last.
+pub fn modifier_candidates(advertised: &[u64], renderable: &[u64]) -> Vec<Vec<u64>> {
+    let mut order: Vec<Vec<u64>> = advertised
+        .iter()
+        .filter(|m| renderable.contains(m))
+        .map(|m| vec![*m])
+        .collect();
+    order.extend(
+        advertised
+            .iter()
+            .filter(|m| !renderable.contains(m))
+            .map(|m| vec![*m]),
+    );
+    order.push(Vec::new());
+    order
+}
+
 pub struct Frame<'a> {
     egl: &'a Egl,
     pub bo: Bo,
