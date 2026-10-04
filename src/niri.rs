@@ -41,6 +41,9 @@ pub struct Niri {
     pub path: PathBuf,
     /// Lines read that were not parallax events (`{"Ok":...}`, urgency, casts…).
     pub ignored: u64,
+    /// Whether niri's overview is open. Not a parallax input, but the daemon
+    /// animates the wallpaper on it.
+    pub overview_open: bool,
 }
 
 impl Niri {
@@ -61,6 +64,7 @@ impl Niri {
             motion: Motion::new(DEFAULT_SPAN),
             path: path.to_owned(),
             ignored: 0,
+            overview_open: false,
         })
     }
 
@@ -122,12 +126,17 @@ impl Niri {
             self.ignored += 1;
             return Ok(None);
         }
-        match parse_event(line)? {
-            Some(event) => {
+        match parse_line(line)? {
+            Parsed::Event(event) => {
                 self.motion.apply(&event);
                 Ok(Some(event))
             }
-            None => {
+            Parsed::Overview { is_open } => {
+                self.overview_open = is_open;
+                self.ignored += 1;
+                Ok(None)
+            }
+            Parsed::Ignored => {
                 self.ignored += 1;
                 Ok(None)
             }
@@ -135,18 +144,30 @@ impl Niri {
     }
 }
 
-/// Parse one event line. `Ok(None)` means "not one of §4.2.7's eight events".
-pub fn parse_event(line: &str) -> Result<Option<Event>, String> {
+/// What one event-stream line turned out to be.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Parsed {
+    /// One of §4.2.7's eight parallax events.
+    Event(Event),
+    /// `OverviewOpenedOrClosed`: not a parallax input, but the daemon animates
+    /// the wallpaper when it opens and closes.
+    Overview { is_open: bool },
+    /// Everything else: urgency, casts, config reloads, multi-key envelopes.
+    Ignored,
+}
+
+/// Parse one event line.
+pub fn parse_line(line: &str) -> Result<Parsed, String> {
     let value: serde_json::Value =
         serde_json::from_str(line).map_err(|e| format!("unparsable event {line:?}: {e}"))?;
     let serde_json::Value::Object(object) = value else {
         // `{"Ok":"Handled"}` is an object; anything else is not an event.
-        return Ok(None);
+        return Ok(Parsed::Ignored);
     };
     // A multi-key envelope is not a valid single event (§4.2.7) — ignore it
     // rather than guess which half applies.
     if object.len() != 1 {
-        return Ok(None);
+        return Ok(Parsed::Ignored);
     }
     let (name, payload) = object.into_iter().next().expect("len == 1");
     let event = match name.as_str() {
@@ -203,10 +224,24 @@ pub fn parse_event(line: &str) -> Result<Option<Event>, String> {
                     .collect(),
             }
         }
-        // Everything else: urgency, overview, casts, config, timestamps…
-        _ => return Ok(None),
+        "OverviewOpenedOrClosed" => {
+            let raw: RawOverviewOpenedOrClosed = from(payload)?;
+            return Ok(Parsed::Overview {
+                is_open: raw.is_open,
+            });
+        }
+        // Everything else: urgency, casts, config, timestamps…
+        _ => return Ok(Parsed::Ignored),
     };
-    Ok(Some(event))
+    Ok(Parsed::Event(event))
+}
+
+/// Convenience for callers that only care about parallax events.
+pub fn parse_event(line: &str) -> Result<Option<Event>, String> {
+    Ok(match parse_line(line)? {
+        Parsed::Event(event) => Some(event),
+        _ => None,
+    })
 }
 
 fn from<T: for<'de> Deserialize<'de>>(payload: serde_json::Value) -> Result<T, String> {
@@ -271,6 +306,11 @@ struct RawWindowOpenedOrChanged {
 #[derive(Deserialize)]
 struct RawWindowClosed {
     id: u64,
+}
+
+#[derive(Deserialize)]
+struct RawOverviewOpenedOrClosed {
+    is_open: bool,
 }
 
 #[derive(Deserialize)]
@@ -405,12 +445,25 @@ mod tests {
     }
 
     #[test]
+    fn surfaces_the_overview_state() {
+        // Not a parallax event, but the daemon animates on it.
+        assert_eq!(
+            parse_line(r#"{"OverviewOpenedOrClosed":{"is_open":true}}"#).expect("parses"),
+            Parsed::Overview { is_open: true }
+        );
+        assert!(
+            parse_event(r#"{"OverviewOpenedOrClosed":{"is_open":false}}"#)
+                .expect("parses")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn ignores_everything_that_is_not_a_parallax_event() {
         // The request acknowledgement, and events §4.2.7 does not list.
         for line in [
             r#"{"Ok":"Handled"}"#,
             r#"{"WindowUrgencyChanged":{"id":1,"urgent":true}}"#,
-            r#"{"OverviewOpenedOrClosed":{"is_open":false}}"#,
             r#"{"ConfigLoaded":{"failed":false}}"#,
             r#"{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":[]}}}"#,
             r#"{"CastsChanged":{"casts":[]}}"#,

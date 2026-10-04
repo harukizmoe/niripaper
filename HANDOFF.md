@@ -76,6 +76,7 @@ cargo build
 | Noctalia UI | 不自己造选择器：镜像官方壁纸选择（Material You 取色继续生效）+ 状态栏开关 + 插件设置项 |
 | 分发 | 源码 `cargo install` + AUR + GitHub Releases 预编译；Noctalia 插件为可选集成 |
 | 默认参数 | `scale = 1.1`、`span = 6`、视差时长 `600 ms`、缓动 `OutCubic`、换图过渡 `fade 250 ms`、视频静音、`hwdec=auto-safe` |
+| 总览过渡 | 总览打开/关闭时画布做一次轻微后撤：`overview_zoom = 0.96`、`overview_duration_ms = 350`，由 niri 的 `OverviewOpenedOrClosed` 事件驱动。zoom 实现为 **`scale` 的动画化乘数**，所以画布/overflow/视差行程/纹理采样全部自动跟随，shader 不用改、纹理不用重传（只采样子区域）。设为 1.0 即关闭。niri 不报告它自己的过渡进度，因此只能近似同步 |
 
 ---
 
@@ -99,7 +100,7 @@ niripaper（Rust 守护进程）
 │   ├── gl.rs      GL 子集（链 libGL，GLVND 按当前 EGL 上下文分发）+ 测试图案
 │   ├── image.rs   已实现：解码 → cover 裁剪 → 缩放到画布（output × scale）→ 纹理
 │   ├── video.rs   libmpv render API → 纹理
-│   └── anim.rs    frame callback 驱动的动画：视差平移 + 换图过渡
+│   └── anim.rs    frame callback 驱动的动画：视差平移 + 总览 zoom（+ 未来的换图过渡）
 └── cli.rs      niripaper {daemon|set|video|query|reload|kill}；另有 `watch`（打印视差目标，纯观测、不用 GPU）
 ```
 
@@ -269,7 +270,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | M0a ✔ | EGL 按 GPU 绑定 | 结论修正为"按合成器 main device 绑定"，机制见 §5；`eglpin` 可复现 |
 | **M0b ✔** | 最小 layer 客户端 + 自建 dmabuf 交换链 | ① `niri msg --json layers` 出现 `{"namespace":"niripaper","output":"DP-1","layer":"Background"}`；② 用 `--namespace mpvpaper` 命中既有 rule 后，半透明窗口的模糊区域确实显示我们的画面（无 rule 时显示 Noctalia 壁纸）；③ 进程只打开 `/dev/dri/renderD128`；④ 静置 6 s：0 事件、0.0 ms CPU、0 字节写 socket、不请求 frame callback；⑤ 5 帧提交收到 4 次 `wl_buffer::release`（缓冲被回收，非泄漏） |
 | **M1 ✔** | Niri IPC + `motion.rs`（§4.3 全部用例）+ frame callback 的 OutCubic 视差 + CLI + 配置文件 | **已验证**：`cargo test` 覆盖 §4.3（18 个用例）；逐帧单调（两段动画 30/35 帧，`--trace` 可复现）；静置 8 s：0 帧、0 目标变化、0 CPU 滴答；buffer 池 68 帧 / 68 release / 0 丢帧。**已实测切列位移**：3 列工作区（临时开 3 个终端造列，测完关闭）从第 1 列到第 3 列 = **102 px**（预期 102.4；相关性搜索是 1 px 粒度），纯壁纸条带上的 mse 160 vs 零位移 326；2 列时 Δrank=1 = **51–52 px**（预期 51.2）。**配置文件已实现**：`~/.config/niripaper/config.toml`，优先级 CLI > 文件 > 默认值；实测 `duration_ms = 150` 时动画段为 7/10 帧（600 ms 时约 36 帧），证明配置确实驱动到缓动。**缓冲必须跟着"当前" feedback 走**：`main_device` 可能运行时变化（会话恢复、设备变化），变了就要重建缓冲与 GL 导入；日志里必须记下"选了哪个设备 / vendor / modifier"（§7 风险 1 的失败是静默的） |
-| **M2 进行中** | 静态图 ✔ / 换图过渡 / V2 视频（libmpv 纹理） | 静态图已实测：截图与"源图 → cover → 缩放 → 视差偏移"的独立复算**相关系数 0.9847**，偏移误差 ≤1 px。剩余验收：视频壁纸下切列时可见画面与**模糊区域**一起动；任意内容组合换图无空窗 |
+| **M2 进行中** | 静态图 ✔ / 总览过渡动画 ✔ / 换图过渡 / V2 视频（libmpv 纹理） | 静态图已实测：截图与"源图 → cover → 缩放 → 视差偏移"的独立复算**相关系数 0.9847**，偏移误差 ≤1 px。总览过渡实测：`overview opened → zoom 0.960`，动画 21 帧 ≈ 350 ms 逐帧单调；总览打开时按候选 zoom 复算整屏像素，误差在 z=0.96 处最小（6.21 vs z=1.00 的 12.33），即屏幕确实是 0.96。剩余验收：视频壁纸下切列时可见画面与**模糊区域**一起动；任意内容组合换图无空窗 |
 | M3 | Noctalia 插件（镜像壁纸选择 + 设置 + 开关 + 原生层交接） | 关闭插件无残留进程；改壁纸 1 s 内生效；原生层恢复自愈 |
 | M4 | 开源：README / 教程 / 示例 / CI（`cargo test` + `clippy` + `fmt`）、AUR / Releases | 新用户照 README 从零到出效果 |
 

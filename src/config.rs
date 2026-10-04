@@ -11,6 +11,8 @@
 //! scale = 1.1          # canvas enlargement (§4.1); 1.0 ..= 1.35
 //! span = 6             # fixed column span (§4.2.1); >= 2
 //! duration_ms = 600    # easing duration (§4.2.6)
+//! overview_zoom = 0.96 # canvas zoom while niri's overview is open
+//! overview_duration_ms = 350
 //! namespace = "niripaper"
 //! wallpaper = "~/Pictures/wall.png"
 //!
@@ -30,12 +32,26 @@ use crate::render::anim::DEFAULT_DURATION;
 /// `~/.config/niri/rules.kdl` (§2).
 pub const DEFAULT_NAMESPACE: &str = "niripaper";
 
+/// How much the canvas pulls back while the overview is open. Subtle on
+/// purpose: with the wallpaper as a workspace background niri *also* scales it
+/// down with the workspace, so a large value would double up.
+pub const DEFAULT_OVERVIEW_ZOOM: f64 = 0.96;
+
+/// Shorter than the parallax easing: niri's own overview transition is a spring
+/// (`damping-ratio`/`stiffness`), and the wallpaper has to feel like it belongs
+/// to it. The compositor does not report its animation progress, so this can
+/// only ever be an approximation — hence a knob.
+pub const DEFAULT_OVERVIEW_DURATION_MS: u64 = 350;
+
 /// A validated configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub scale: f64,
     pub span: usize,
     pub duration_ms: u64,
+    /// Canvas zoom multiplier while niri's overview is open (`1.0` = no change).
+    pub overview_zoom: f64,
+    pub overview_duration_ms: u64,
     pub namespace: String,
     /// Static wallpaper for every output that does not override it.
     pub wallpaper: Option<PathBuf>,
@@ -49,6 +65,8 @@ impl Default for Config {
             scale: DEFAULT_SCALE,
             span: DEFAULT_SPAN,
             duration_ms: DEFAULT_DURATION.as_millis() as u64,
+            overview_zoom: DEFAULT_OVERVIEW_ZOOM,
+            overview_duration_ms: DEFAULT_OVERVIEW_DURATION_MS,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             wallpaper: None,
             outputs: BTreeMap::new(),
@@ -100,7 +118,13 @@ impl Config {
             config.span = check_span("span", span)?;
         }
         if let Some(duration) = raw.duration_ms {
-            config.duration_ms = check_duration(duration)?;
+            config.duration_ms = check_duration("duration_ms", duration)?;
+        }
+        if let Some(zoom) = raw.overview_zoom {
+            config.overview_zoom = check_overview_zoom(zoom)?;
+        }
+        if let Some(duration) = raw.overview_duration_ms {
+            config.overview_duration_ms = check_duration("overview_duration_ms", duration)?;
         }
         if let Some(wallpaper) = raw.wallpaper {
             config.wallpaper = Some(check_wallpaper("wallpaper", wallpaper)?);
@@ -184,11 +208,23 @@ fn check_wallpaper(key: &str, path: PathBuf) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn check_duration(duration_ms: u64) -> Result<u64, String> {
+fn check_duration(key: &str, duration_ms: u64) -> Result<u64, String> {
     if duration_ms == 0 {
-        return Err("duration_ms must be greater than 0".to_owned());
+        return Err(format!("{key} must be greater than 0"));
     }
     Ok(duration_ms)
+}
+
+/// The zoom must stay positive, and `scale × zoom` must not fall below 1.0 —
+/// a canvas smaller than the output would leave holes at the edges. The daemon
+/// clamps the effective scale as a second line of defence.
+fn check_overview_zoom(zoom: f64) -> Result<f64, String> {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return Err(format!(
+            "overview_zoom must be a positive number, got {zoom}"
+        ));
+    }
+    Ok(zoom)
 }
 
 // --- the file's shape -----------------------------------------------------
@@ -199,6 +235,8 @@ struct RawConfig {
     scale: Option<f64>,
     span: Option<usize>,
     duration_ms: Option<u64>,
+    overview_zoom: Option<f64>,
+    overview_duration_ms: Option<u64>,
     namespace: Option<String>,
     wallpaper: Option<PathBuf>,
     #[serde(default)]
@@ -262,6 +300,13 @@ mod tests {
         assert!(span.contains("span"), "{span}");
         let duration = Config::parse("duration_ms = 0").unwrap_err();
         assert!(duration.contains("duration_ms"), "{duration}");
+        let zoom = Config::parse("overview_zoom = 0").unwrap_err();
+        assert!(zoom.contains("overview_zoom"), "{zoom}");
+        let overview_duration = Config::parse("overview_duration_ms = 0").unwrap_err();
+        assert!(
+            overview_duration.contains("overview_duration_ms"),
+            "{overview_duration}"
+        );
         let per_output = Config::parse("[outputs.\"DP-1\"]\nscale = 9").unwrap_err();
         assert!(per_output.contains("outputs.DP-1.scale"), "{per_output}");
         let namespace = Config::parse("namespace = \"\"").unwrap_err();

@@ -57,6 +57,9 @@ pub struct Options {
     pub wallpaper: Option<std::path::PathBuf>,
     /// Easing duration (§4.2.6).
     pub duration: Duration,
+    /// Canvas zoom while the overview is open, and how long it takes.
+    pub overview_zoom: f64,
+    pub overview_duration: Duration,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -73,6 +76,8 @@ impl Options {
             pattern: Pattern::Blocks,
             wallpaper: None,
             duration: crate::render::anim::DEFAULT_DURATION,
+            overview_zoom: crate::config::DEFAULT_OVERVIEW_ZOOM,
+            overview_duration: Duration::from_millis(crate::config::DEFAULT_OVERVIEW_DURATION_MS),
             trace: false,
         }
     }
@@ -174,6 +179,9 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     let screen = (surface.width as f64, surface.height as f64);
     let mut animator =
         Animator::with_duration(niri.motion.progress(&options.output), options.duration);
+    // The overview transition animates the canvas scale (§4.1): pulling back
+    // shows more of the wallpaper, which reads as the workspace receding.
+    let mut zoom = Animator::with_duration(1.0f64, options.overview_duration);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -195,6 +203,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         &surface,
         &renderer,
         animator.target(),
+        1.0,
         screen,
         options,
         wallpaper.as_ref(),
@@ -239,11 +248,29 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 exit_note = Some(err);
                 break;
             }
+            let now = Instant::now();
             let target = niri.motion.progress(&options.output);
-            if animator.retarget(target, Instant::now()) {
+            if animator.retarget(target, now) {
                 log(&format!(
                     "target h={:.3} v={:.3} (moving)",
                     target.horizontal, target.vertical
+                ));
+            }
+            // `retarget` ignores an unchanged target, so this is a no-op unless
+            // the overview actually opened or closed.
+            let wanted_zoom = if niri.overview_open {
+                options.overview_zoom
+            } else {
+                1.0
+            };
+            if zoom.retarget(wanted_zoom, now) {
+                log(&format!(
+                    "overview {} → zoom {wanted_zoom:.3}",
+                    if niri.overview_open {
+                        "opened"
+                    } else {
+                        "closed"
+                    }
                 ));
             }
         }
@@ -257,12 +284,15 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             let dt = now.saturating_duration_since(last_frame_at);
             last_frame_at = now;
             let (progress, moving) = animator.sample(now);
+            let (zoom_now, zoom_moving) = zoom.sample(now);
+            let moving = moving || zoom_moving;
             let submitted = draw(
                 &mut client,
                 &mut pool,
                 &surface,
                 &renderer,
                 progress,
+                zoom_now,
                 screen,
                 options,
                 wallpaper.as_ref(),
@@ -274,7 +304,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             }
             if options.trace {
                 log(&format!(
-                    "frame {drawn:4} h={:.4} v={:.4} dt={:>5.1}ms moving={moving} submitted={submitted} in_flight={} released={} skipped={skipped}",
+                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} dt={:>5.1}ms moving={moving} submitted={submitted} in_flight={} released={} skipped={skipped}",
                     progress.horizontal,
                     progress.vertical,
                     dt.as_secs_f64() * 1000.0,
@@ -287,9 +317,10 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             frame_pending = submitted && moving;
         }
 
-        // The layout started moving but no frame is pending: kick the animation
-        // with a commit that carries only the frame request.
-        if animator.is_moving() && !frame_pending {
+        // Anything still animating but no frame pending: kick it with a commit
+        // that carries only the frame request. Both the parallax and the
+        // overview zoom go through here, so neither can stall.
+        if (animator.is_moving() || zoom.is_moving()) && !frame_pending {
             surface.request_frame(&client.handle());
             surface.surface.commit();
             client.flush()?;
@@ -319,6 +350,7 @@ fn draw(
     surface: &LayerSurface,
     renderer: &gl::Renderer,
     progress: motion::Progress,
+    zoom: f64,
     screen: (f64, f64),
     options: &Options,
     wallpaper: Option<&crate::render::image::Wallpaper>,
@@ -332,7 +364,12 @@ fn draw(
         return Ok(false);
     };
 
-    let offset = offset_px(progress, screen, options.scale);
+    // The zoom is just an animated multiplier on `scale`: the canvas, the
+    // overflow and therefore the parallax travel all follow from it, and the
+    // wallpaper texture (already canvas-sized) is sampled as a sub-region —
+    // nothing to re-upload.
+    let scale = (options.scale * zoom).max(1.0);
+    let offset = offset_px(progress, screen, scale);
     let frame = pool.frame(slot);
     frame.begin();
     let content = match wallpaper {
@@ -342,7 +379,7 @@ fn draw(
     renderer.draw(
         gl::View {
             screen: (screen.0 as f32, screen.1 as f32),
-            scale: options.scale as f32,
+            scale: scale as f32,
             offset: (offset.0 as f32, offset.1 as f32),
             pattern: options.pattern,
         },

@@ -13,10 +13,28 @@
 
 use std::time::{Duration, Instant};
 
-use crate::motion::Progress;
-
 /// §4.2.6: `durations.large` = 600 ms.
 pub const DEFAULT_DURATION: Duration = Duration::from_millis(600);
+
+/// Values the animator can interpolate.
+///
+/// Generic rather than `Progress`-only so the same tested state machine drives
+/// every animated quantity — the parallax target and the overview zoom today.
+pub trait Lerp {
+    fn lerp(self, to: Self, t: f64) -> Self;
+}
+
+impl Lerp for f64 {
+    fn lerp(self, to: Self, t: f64) -> Self {
+        self + (to - self) * t
+    }
+}
+
+impl Lerp for crate::motion::Progress {
+    fn lerp(self, to: Self, t: f64) -> Self {
+        crate::motion::Progress::lerp(self, to, t)
+    }
+}
 
 /// `Easing.OutCubic`.
 pub fn out_cubic(t: f64) -> f64 {
@@ -25,16 +43,16 @@ pub fn out_cubic(t: f64) -> f64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Animator {
-    from: Progress,
-    to: Progress,
+pub struct Animator<T> {
+    from: T,
+    to: T,
     started: Option<Instant>,
     duration: Duration,
 }
 
-impl Animator {
+impl<T: Lerp + Copy + PartialEq> Animator<T> {
     /// At rest at `at`.
-    pub fn new(at: Progress) -> Self {
+    pub fn new(at: T) -> Self {
         Self {
             from: at,
             to: at,
@@ -43,15 +61,15 @@ impl Animator {
         }
     }
 
-    pub fn with_duration(at: Progress, duration: Duration) -> Self {
+    pub fn with_duration(at: T, duration: Duration) -> Self {
         Self {
             duration,
             ..Self::new(at)
         }
     }
 
-    /// Where the wallpaper is heading.
-    pub fn target(&self) -> Progress {
+    /// Where the value is heading.
+    pub fn target(&self) -> T {
         self.to
     }
 
@@ -61,7 +79,7 @@ impl Animator {
 
     /// Aim at `target`. Returns `false` when the target is unchanged, in which
     /// case nothing at all happens (§4.2.6).
-    pub fn retarget(&mut self, target: Progress, now: Instant) -> bool {
+    pub fn retarget(&mut self, target: T, now: Instant) -> bool {
         if target == self.to {
             return false;
         }
@@ -77,7 +95,7 @@ impl Animator {
     ///
     /// Once the easing finishes the animator comes to rest: no further frames
     /// are needed, which is what keeps an idle wallpaper at zero cost.
-    pub fn sample(&mut self, now: Instant) -> (Progress, bool) {
+    pub fn sample(&mut self, now: Instant) -> (T, bool) {
         let Some(started) = self.started else {
             return (self.to, false);
         };
@@ -92,7 +110,7 @@ impl Animator {
     }
 
     /// The position right now, without changing the state.
-    pub fn position(&self, now: Instant) -> Progress {
+    pub fn position(&self, now: Instant) -> T {
         let Some(started) = self.started else {
             return self.to;
         };
@@ -108,6 +126,7 @@ impl Animator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::motion::Progress;
 
     /// A fixed origin, so `ms(n)` is always `n` ms after `ms(0)`.
     struct Clock(Instant);
@@ -208,6 +227,25 @@ mod tests {
         let (end, moving) = animator.sample(clock.ms(900));
         assert_eq!(end, Progress::new(0.2, 0.5));
         assert!(!moving);
+    }
+
+    #[test]
+    fn drives_plain_scalars_too() {
+        // The overview zoom is an `Animator<f64>`; the semantics must match.
+        let clock = Clock::new();
+        let mut zoom = Animator::with_duration(1.0, Duration::from_millis(350));
+        assert!(!zoom.is_moving());
+        assert!(zoom.retarget(0.96, clock.ms(0)));
+        assert!(
+            !zoom.retarget(0.96, clock.ms(50)),
+            "identical target ignored"
+        );
+        let (middle, moving) = zoom.sample(clock.ms(175));
+        assert!(moving);
+        assert!((middle - (1.0 - 0.04 * 0.875)).abs() < 1e-9, "{middle}");
+        let (end, moving) = zoom.sample(clock.ms(350));
+        assert!(!moving);
+        assert!((end - 0.96).abs() < 1e-12);
     }
 
     #[test]
