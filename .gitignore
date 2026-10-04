@@ -7,6 +7,9 @@
 *.log
 /perf.data*
 
+# 本地工作文档（设计/进度/HANDOFF），只给本地 coding agent 看，不进仓库
+HANDOFF.md
+
 # 编辑器 / 系统
 .DS_Store
 .idea/

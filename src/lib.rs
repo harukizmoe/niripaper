@@ -6,7 +6,10 @@
 //! EGL + dmabuf by design: that is the only combination that lets a client
 //! choose which GPU renders an output.
 
+pub mod config;
+pub mod daemon;
 pub mod gpu;
 pub mod motion;
 pub mod niri;
+pub mod niri_config;
 pub mod render;
