@@ -55,11 +55,8 @@ pub struct Options {
     pub pattern: Pattern,
     /// A static wallpaper to draw instead of the procedural pattern.
     pub wallpaper: Option<std::path::PathBuf>,
-    /// Easing duration (§4.2.6).
-    pub duration: Duration,
-    /// Canvas zoom while the overview is open, and how long it takes.
-    pub overview_zoom: f64,
-    pub overview_duration: Duration,
+    /// Animation parameters, in niri's vocabulary (see `config.rs`).
+    pub animations: crate::config::Animations,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -75,9 +72,7 @@ impl Options {
             span: DEFAULT_SPAN,
             pattern: Pattern::Blocks,
             wallpaper: None,
-            duration: crate::render::anim::DEFAULT_DURATION,
-            overview_zoom: crate::config::DEFAULT_OVERVIEW_ZOOM,
-            overview_duration: Duration::from_millis(crate::config::DEFAULT_OVERVIEW_DURATION_MS),
+            animations: crate::config::Animations::default(),
             trace: false,
         }
     }
@@ -109,7 +104,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     };
     let gpu = gpu::gpu_for_node(&node)?;
     log(&format!(
-        "{} on {} ({} {}), namespace {}, scale {:.3}, span {}, easing {} ms, pattern {:?}",
+        "{} on {} ({} {}), namespace {}, scale {:.3}, span {}, pattern {:?}\n\
+         animations: parallax {}, overview-open-close {} (zoom {:.3}), slowdown {}",
         options.output,
         node.display(),
         gpu.card,
@@ -117,8 +113,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         options.namespace,
         options.scale,
         options.span,
-        options.duration.as_millis(),
         options.pattern,
+        options.animations.parallax.describe(),
+        options.animations.overview_open_close.animation.describe(),
+        options.animations.overview_open_close.zoom,
+        options.animations.slowdown,
     ));
 
     // --- render objects ----------------------------------------------------
@@ -177,11 +176,13 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     let mut niri = Niri::connect()?;
     niri.wait_for_full_state()?;
     let screen = (surface.width as f64, surface.height as f64);
-    let mut animator =
-        Animator::with_duration(niri.motion.progress(&options.output), options.duration);
+    let animations = &options.animations;
+    let mut animator = Animator::new(niri.motion.progress(&options.output), animations.parallax)
+        .with_slowdown(animations.slowdown);
     // The overview transition animates the canvas scale (§4.1): pulling back
     // shows more of the wallpaper, which reads as the workspace receding.
-    let mut zoom = Animator::with_duration(1.0f64, options.overview_duration);
+    let mut zoom = Animator::new(1.0f64, animations.overview_open_close.animation)
+        .with_slowdown(animations.slowdown);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -259,7 +260,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             // `retarget` ignores an unchanged target, so this is a no-op unless
             // the overview actually opened or closed.
             let wanted_zoom = if niri.overview_open {
-                options.overview_zoom
+                animations.overview_open_close.zoom
             } else {
                 1.0
             };

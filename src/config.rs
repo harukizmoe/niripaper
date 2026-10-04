@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::motion::{DEFAULT_SCALE, DEFAULT_SPAN, MAX_SCALE};
-use crate::render::anim::DEFAULT_DURATION;
+use crate::render::anim::{Animation, Curve, Spring};
 
 /// The daemon's layer-shell namespace, and the name users match in
 /// `~/.config/niri/rules.kdl` (§2).
@@ -37,22 +37,24 @@ pub const DEFAULT_NAMESPACE: &str = "niripaper";
 /// down with the workspace, so a large value would double up.
 pub const DEFAULT_OVERVIEW_ZOOM: f64 = 0.96;
 
-/// Shorter than the parallax easing: niri's own overview transition is a spring
-/// (`damping-ratio`/`stiffness`), and the wallpaper has to feel like it belongs
-/// to it. The compositor does not report its animation progress, so this can
-/// only ever be an approximation — hence a knob.
-pub const DEFAULT_OVERVIEW_DURATION_MS: u64 = 350;
+/// niri's own default for `overview-open-close`. Using the same spring by
+/// default makes the wallpaper feel like it belongs to the overview transition,
+/// and because a spring is scale-invariant the same parameters work for any
+/// zoom distance. Match your niri config's values for the closest feel.
+pub const DEFAULT_OVERVIEW_ANIMATION: Animation = Animation::Spring(Spring {
+    damping_ratio: 1.0,
+    stiffness: 800.0,
+    epsilon: 0.0001,
+});
 
 /// A validated configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub scale: f64,
     pub span: usize,
-    pub duration_ms: u64,
-    /// Canvas zoom multiplier while niri's overview is open (`1.0` = no change).
-    pub overview_zoom: f64,
-    pub overview_duration_ms: u64,
     pub namespace: String,
+    /// Animation parameters, in niri's vocabulary.
+    pub animations: Animations,
     /// Static wallpaper for every output that does not override it.
     pub wallpaper: Option<PathBuf>,
     /// Per-output overrides.
@@ -64,14 +66,43 @@ impl Default for Config {
         Self {
             scale: DEFAULT_SCALE,
             span: DEFAULT_SPAN,
-            duration_ms: DEFAULT_DURATION.as_millis() as u64,
-            overview_zoom: DEFAULT_OVERVIEW_ZOOM,
-            overview_duration_ms: DEFAULT_OVERVIEW_DURATION_MS,
             namespace: DEFAULT_NAMESPACE.to_owned(),
+            animations: Animations::default(),
             wallpaper: None,
             outputs: BTreeMap::new(),
         }
     }
+}
+
+/// Animation parameters, mirroring niri's `animations { }` section.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Animations {
+    /// The parallax follow (§4.2.6): 600 ms OutCubic by default.
+    pub parallax: Animation,
+    /// The overview transition, with its target zoom.
+    pub overview_open_close: OverviewAnimation,
+    /// niri's `slowdown`: divides elapsed time, so > 1 slows everything down.
+    pub slowdown: f64,
+}
+
+impl Default for Animations {
+    fn default() -> Self {
+        Self {
+            parallax: Animation::easing(Curve::EaseOutCubic, crate::render::anim::DEFAULT_DURATION),
+            overview_open_close: OverviewAnimation {
+                zoom: DEFAULT_OVERVIEW_ZOOM,
+                animation: DEFAULT_OVERVIEW_ANIMATION,
+            },
+            slowdown: 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OverviewAnimation {
+    /// Canvas zoom multiplier while the overview is open (`1.0` = no change).
+    pub zoom: f64,
+    pub animation: Animation,
 }
 
 /// What one output may override. Everything else is global.
@@ -117,15 +148,7 @@ impl Config {
         if let Some(span) = raw.span {
             config.span = check_span("span", span)?;
         }
-        if let Some(duration) = raw.duration_ms {
-            config.duration_ms = check_duration("duration_ms", duration)?;
-        }
-        if let Some(zoom) = raw.overview_zoom {
-            config.overview_zoom = check_overview_zoom(zoom)?;
-        }
-        if let Some(duration) = raw.overview_duration_ms {
-            config.overview_duration_ms = check_duration("overview_duration_ms", duration)?;
-        }
+        config.animations = resolve_animations(&raw.animations)?;
         if let Some(wallpaper) = raw.wallpaper {
             config.wallpaper = Some(check_wallpaper("wallpaper", wallpaper)?);
         }
@@ -208,36 +231,196 @@ fn check_wallpaper(key: &str, path: PathBuf) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn check_duration(key: &str, duration_ms: u64) -> Result<u64, String> {
-    if duration_ms == 0 {
-        return Err(format!("{key} must be greater than 0"));
-    }
-    Ok(duration_ms)
-}
-
-/// The zoom must stay positive, and `scale × zoom` must not fall below 1.0 —
-/// a canvas smaller than the output would leave holes at the edges. The daemon
-/// clamps the effective scale as a second line of defence.
+/// The zoom must stay positive; the daemon clamps `scale × zoom` to ≥ 1.0 as a
+/// second line of defence (a canvas smaller than the output would leave holes).
 fn check_overview_zoom(zoom: f64) -> Result<f64, String> {
     if !zoom.is_finite() || zoom <= 0.0 {
-        return Err(format!(
-            "overview_zoom must be a positive number, got {zoom}"
-        ));
+        return Err(format!("zoom must be a positive number, got {zoom}"));
     }
     Ok(zoom)
 }
 
+fn resolve_animations(raw: &RawAnimations) -> Result<Animations, String> {
+    let defaults = Animations::default();
+    let global_off = raw.off.unwrap_or(false);
+    let slowdown = raw.slowdown.unwrap_or(defaults.slowdown);
+    if !slowdown.is_finite() || slowdown <= 0.0 {
+        return Err(format!(
+            "animations.slowdown must be a positive number, got {slowdown}"
+        ));
+    }
+
+    let parallax = resolve_animation(
+        "animations.parallax",
+        raw.parallax.as_ref(),
+        defaults.parallax,
+        global_off,
+    )?;
+    let overview = raw.overview_open_close.as_ref();
+    let zoom = match overview.and_then(|o| o.zoom) {
+        Some(zoom) => check_overview_zoom(zoom)?,
+        None => defaults.overview_open_close.zoom,
+    };
+    let overview_animation = resolve_animation(
+        "animations.overview-open-close",
+        overview.map(|o| &o.animation),
+        defaults.overview_open_close.animation,
+        global_off,
+    )?;
+
+    Ok(Animations {
+        parallax,
+        overview_open_close: OverviewAnimation {
+            zoom,
+            animation: overview_animation,
+        },
+        slowdown,
+    })
+}
+
+/// Turn one niri-style animation block into an [`Animation`].
+///
+/// The three shapes are niri's: `off`, an easing (`duration_ms` + `curve`), or a
+/// `spring`. Mixing them is an error rather than a silent precedence rule.
+fn resolve_animation(
+    key: &str,
+    raw: Option<&RawAnimation>,
+    default: Animation,
+    global_off: bool,
+) -> Result<Animation, String> {
+    let Some(raw) = raw else {
+        return Ok(if global_off { Animation::Off } else { default });
+    };
+    if raw.off == Some(true) {
+        if raw.duration_ms.is_some() || raw.curve.is_some() || raw.spring.is_some() {
+            return Err(format!(
+                "{key}: `off` cannot be combined with other settings"
+            ));
+        }
+        return Ok(Animation::Off);
+    }
+    if global_off {
+        // The global switch wins, but say so rather than silently ignoring the
+        // block the user wrote.
+        return Ok(Animation::Off);
+    }
+
+    if let Some(spring) = &raw.spring {
+        if raw.duration_ms.is_some() || raw.curve.is_some() || raw.cubic_bezier.is_some() {
+            return Err(format!(
+                "{key}: a spring and an easing are alternatives — remove duration_ms/curve"
+            ));
+        }
+        return Ok(Animation::spring(
+            check_damping_ratio(key, spring.damping_ratio)?,
+            check_stiffness(key, spring.stiffness)?,
+            check_epsilon(key, spring.epsilon)?,
+        ));
+    }
+
+    match (raw.duration_ms, &raw.curve) {
+        (None, None) => Ok(default),
+        (Some(_), None) => Err(format!(
+            "{key}: `curve` is required when `duration_ms` is set"
+        )),
+        (None, Some(_)) => Err(format!(
+            "{key}: `duration_ms` is required when `curve` is set"
+        )),
+        (Some(duration_ms), Some(curve)) => {
+            if duration_ms == 0 {
+                return Err(format!(
+                    "{key}: `duration_ms` must be greater than 0 (use off = true)"
+                ));
+            }
+            let curve = Curve::parse(curve, raw.cubic_bezier)?;
+            Ok(Animation::easing(
+                curve,
+                std::time::Duration::from_millis(duration_ms),
+            ))
+        }
+    }
+}
+
+fn check_damping_ratio(key: &str, ratio: f64) -> Result<f64, String> {
+    // niri documents 0.1 ..= 10.0, and warns that > 1.0 is unstable.
+    if !(0.1..=10.0).contains(&ratio) {
+        return Err(format!(
+            "{key}: damping_ratio must be between 0.1 and 10.0, got {ratio}"
+        ));
+    }
+    Ok(ratio)
+}
+
+fn check_stiffness(key: &str, stiffness: f64) -> Result<f64, String> {
+    if !stiffness.is_finite() || stiffness <= 0.0 {
+        return Err(format!(
+            "{key}: stiffness must be a positive number, got {stiffness}"
+        ));
+    }
+    Ok(stiffness)
+}
+
+fn check_epsilon(key: &str, epsilon: f64) -> Result<f64, String> {
+    if !epsilon.is_finite() || epsilon <= 0.0 {
+        return Err(format!(
+            "{key}: epsilon must be a positive number, got {epsilon}"
+        ));
+    }
+    Ok(epsilon)
+}
+
 // --- the file's shape -----------------------------------------------------
+
+/// niri's `animations { }` section.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAnimations {
+    /// niri's global `off`.
+    off: Option<bool>,
+    /// niri's `slowdown <factor>`.
+    slowdown: Option<f64>,
+    parallax: Option<RawAnimation>,
+    #[serde(rename = "overview-open-close")]
+    overview_open_close: Option<RawOverviewAnimation>,
+}
+
+/// One animation block: `off`, an easing, or a spring.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAnimation {
+    off: Option<bool>,
+    duration_ms: Option<u64>,
+    curve: Option<String>,
+    /// Control points for `curve = "cubic-bezier"`.
+    cubic_bezier: Option<[f64; 4]>,
+    spring: Option<RawSpring>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSpring {
+    damping_ratio: f64,
+    stiffness: f64,
+    epsilon: f64,
+}
+
+/// The overview transition: an animation block plus its target zoom.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOverviewAnimation {
+    zoom: Option<f64>,
+    #[serde(flatten)]
+    animation: RawAnimation,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
     scale: Option<f64>,
     span: Option<usize>,
-    duration_ms: Option<u64>,
-    overview_zoom: Option<f64>,
-    overview_duration_ms: Option<u64>,
     namespace: Option<String>,
+    #[serde(default)]
+    animations: RawAnimations,
     wallpaper: Option<PathBuf>,
     #[serde(default)]
     outputs: BTreeMap<String, OutputOverride>,
@@ -258,8 +441,11 @@ mod tests {
             r#"
             scale = 1.2
             span = 8
-            duration_ms = 250
             namespace = "custom"
+
+            [animations.parallax]
+            duration_ms = 250
+            curve = "ease-out-expo"
 
             [outputs."DP-1"]
             scale = 1.3
@@ -272,7 +458,10 @@ mod tests {
         .expect("parses");
         assert_eq!(config.scale, 1.2);
         assert_eq!(config.span, 8);
-        assert_eq!(config.duration_ms, 250);
+        assert_eq!(
+            config.animations.parallax,
+            Animation::easing(Curve::EaseOutExpo, std::time::Duration::from_millis(250))
+        );
         assert_eq!(config.namespace, "custom");
         assert_eq!(config.output("DP-1").scale, 1.3);
         assert_eq!(config.output("DP-1").span, 8);
@@ -298,15 +487,11 @@ mod tests {
         assert!(high.contains("scale"), "{high}");
         let span = Config::parse("span = 1").unwrap_err();
         assert!(span.contains("span"), "{span}");
-        let duration = Config::parse("duration_ms = 0").unwrap_err();
+        let duration = Config::parse("[animations.parallax]\nduration_ms = 0\ncurve = \"linear\"")
+            .unwrap_err();
         assert!(duration.contains("duration_ms"), "{duration}");
-        let zoom = Config::parse("overview_zoom = 0").unwrap_err();
-        assert!(zoom.contains("overview_zoom"), "{zoom}");
-        let overview_duration = Config::parse("overview_duration_ms = 0").unwrap_err();
-        assert!(
-            overview_duration.contains("overview_duration_ms"),
-            "{overview_duration}"
-        );
+        let zoom = Config::parse("[animations.overview-open-close]\nzoom = 0").unwrap_err();
+        assert!(zoom.contains("zoom"), "{zoom}");
         let per_output = Config::parse("[outputs.\"DP-1\"]\nscale = 9").unwrap_err();
         assert!(per_output.contains("outputs.DP-1.scale"), "{per_output}");
         let namespace = Config::parse("namespace = \"\"").unwrap_err();
@@ -331,5 +516,144 @@ mod tests {
         // …but `load()` falls back to defaults when the default path is absent.
         let path = default_path().expect("HOME is set in tests");
         assert!(path.ends_with("niripaper/config.toml"));
+    }
+}
+
+#[cfg(test)]
+mod animation_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn parallax(config: &Config) -> Animation {
+        config.animations.parallax
+    }
+
+    #[test]
+    fn animations_default_to_the_spec_and_to_niri() {
+        let config = Config::default();
+        // §4.2.6: OutCubic, 600 ms.
+        assert_eq!(
+            parallax(&config),
+            Animation::easing(Curve::EaseOutCubic, Duration::from_millis(600))
+        );
+        // niri's own default for `overview-open-close`.
+        assert_eq!(
+            config.animations.overview_open_close.animation,
+            Animation::spring(1.0, 800.0, 0.0001)
+        );
+        assert_eq!(config.animations.overview_open_close.zoom, 0.96);
+        assert_eq!(config.animations.slowdown, 1.0);
+    }
+
+    #[test]
+    fn easing_blocks_need_both_duration_and_curve() {
+        let err = Config::parse("[animations.parallax]\nduration_ms = 250").unwrap_err();
+        assert!(err.contains("curve"), "{err}");
+        let err = Config::parse("[animations.parallax]\ncurve = \"linear\"").unwrap_err();
+        assert!(err.contains("duration_ms"), "{err}");
+    }
+
+    #[test]
+    fn spring_and_easing_are_alternatives() {
+        let err = Config::parse(
+            "[animations.parallax]\nduration_ms = 250\ncurve = \"linear\"\nspring = { damping_ratio = 1.0, stiffness = 800.0, epsilon = 0.0001 }",
+        )
+        .unwrap_err();
+        assert!(err.contains("alternatives"), "{err}");
+    }
+
+    #[test]
+    fn springs_are_validated_like_niri_documents() {
+        for (spring, key) in [
+            (
+                "damping_ratio = 0.0, stiffness = 800.0, epsilon = 0.0001",
+                "damping_ratio",
+            ),
+            (
+                "damping_ratio = 1.0, stiffness = 0.0, epsilon = 0.0001",
+                "stiffness",
+            ),
+            (
+                "damping_ratio = 1.0, stiffness = 800.0, epsilon = 0.0",
+                "epsilon",
+            ),
+        ] {
+            let text = format!("[animations.parallax]\nspring = {{ {spring} }}");
+            let err = Config::parse(&text).unwrap_err();
+            assert!(err.contains(key), "{err}");
+        }
+    }
+
+    #[test]
+    fn off_can_be_global_or_per_animation() {
+        let config = Config::parse("[animations]\noff = true").expect("parses");
+        assert_eq!(parallax(&config), Animation::Off);
+        assert_eq!(
+            config.animations.overview_open_close.animation,
+            Animation::Off
+        );
+
+        let config = Config::parse("[animations.parallax]\noff = true").expect("parses");
+        assert_eq!(parallax(&config), Animation::Off);
+        // …while the other animation keeps its default.
+        assert_ne!(
+            config.animations.overview_open_close.animation,
+            Animation::Off
+        );
+
+        let err =
+            Config::parse("[animations.parallax]\noff = true\nduration_ms = 100").unwrap_err();
+        assert!(err.contains("cannot be combined"), "{err}");
+    }
+
+    #[test]
+    fn slowdown_must_be_positive() {
+        assert_eq!(
+            Config::parse("[animations]\nslowdown = 3.0")
+                .unwrap()
+                .animations
+                .slowdown,
+            3.0
+        );
+        let err = Config::parse("[animations]\nslowdown = 0").unwrap_err();
+        assert!(err.contains("slowdown"), "{err}");
+    }
+
+    #[test]
+    fn the_overview_block_takes_a_zoom_and_an_animation() {
+        let config = Config::parse(
+            "[animations.overview-open-close]\nzoom = 0.9\nspring = { damping_ratio = 0.5, stiffness = 400.0, epsilon = 0.001 }",
+        )
+        .expect("parses");
+        assert_eq!(config.animations.overview_open_close.zoom, 0.9);
+        assert_eq!(
+            config.animations.overview_open_close.animation,
+            Animation::spring(0.5, 400.0, 0.001)
+        );
+
+        // Easing works there too.
+        let config = Config::parse(
+            "[animations.overview-open-close]\nduration_ms = 350\ncurve = \"ease-out-cubic\"",
+        )
+        .expect("parses");
+        assert_eq!(
+            config.animations.overview_open_close.animation,
+            Animation::easing(Curve::EaseOutCubic, Duration::from_millis(350))
+        );
+    }
+
+    #[test]
+    fn cubic_bezier_takes_four_control_points() {
+        let config = Config::parse(
+            "[animations.parallax]\nduration_ms = 250\ncurve = \"cubic-bezier\"\ncubic_bezier = [0.05, 0.7, 0.1, 1.0]",
+        )
+        .expect("parses");
+        assert_eq!(
+            parallax(&config),
+            Animation::easing(
+                Curve::CubicBezier([0.05, 0.7, 0.1, 1.0]),
+                Duration::from_millis(250)
+            )
+        );
     }
 }

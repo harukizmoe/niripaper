@@ -12,7 +12,6 @@ use std::process::ExitCode;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use niripaper::config::Config;
 use niripaper::daemon::{self, Options};
@@ -73,7 +72,7 @@ fn usage() {
          \n\
          commands:\n\
          \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
-         \x20        [--scale F] [--span N] [--duration-ms N]\n\
+         \x20        [--scale F] [--span N]\n\
          \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
@@ -193,7 +192,6 @@ struct Overrides {
     namespace: Option<String>,
     scale: Option<f64>,
     span: Option<usize>,
-    duration_ms: Option<u64>,
     pattern: Option<Pattern>,
     wallpaper: Option<PathBuf>,
     config: Option<PathBuf>,
@@ -212,13 +210,6 @@ fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
             "--wallpaper" => over.wallpaper = Some(PathBuf::from(value()?)),
             "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
             "--span" => over.span = Some(value()?.parse().map_err(|e| format!("--span: {e}"))?),
-            "--duration-ms" => {
-                over.duration_ms = Some(
-                    value()?
-                        .parse()
-                        .map_err(|e| format!("--duration-ms: {e}"))?,
-                )
-            }
             "--pattern" => {
                 over.pattern = Some(match value()?.as_str() {
                     "blocks" => Pattern::Blocks,
@@ -270,8 +261,10 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let mut options = Options::new(output);
     options.scale = over.scale.unwrap_or(params.scale);
     options.span = over.span.unwrap_or(params.span);
-    options.duration = Duration::from_millis(over.duration_ms.unwrap_or(config.duration_ms));
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
+    // Animations come from the config only: they are tuned by feel, and a flag
+    // per parameter would be noise.
+    options.animations = config.animations.clone();
     options.wallpaper = over.wallpaper.or(params.wallpaper);
     if let Some(pattern) = over.pattern {
         options.pattern = pattern;

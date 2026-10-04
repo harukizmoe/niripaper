@@ -75,8 +75,9 @@ cargo build
 | Noctalia 交接 | 插件在某输出启用守护进程时调用 `setWallpaperEnabled(connector, false)` 撤掉原生壁纸层（保证 backdrop 一致）；插件启动时自愈式恢复 `true` |
 | Noctalia UI | 不自己造选择器：镜像官方壁纸选择（Material You 取色继续生效）+ 状态栏开关 + 插件设置项 |
 | 分发 | 源码 `cargo install` + AUR + GitHub Releases 预编译；Noctalia 插件为可选集成 |
-| 默认参数 | `scale = 1.1`、`span = 6`、视差时长 `600 ms`、缓动 `OutCubic`、换图过渡 `fade 250 ms`、视频静音、`hwdec=auto-safe` |
-| 总览过渡 | 总览打开/关闭时画布做一次轻微后撤：`overview_zoom = 0.96`、`overview_duration_ms = 350`，由 niri 的 `OverviewOpenedOrClosed` 事件驱动。zoom 实现为 **`scale` 的动画化乘数**，所以画布/overflow/视差行程/纹理采样全部自动跟随，shader 不用改、纹理不用重传（只采样子区域）。设为 1.0 即关闭。niri 不报告它自己的过渡进度，因此只能近似同步 |
+| 默认参数 | `scale = 1.1`、`span = 6`、视差 `ease-out-cubic 600 ms`、总览过渡 `spring 1.0/800/0.0001` + `zoom 0.96`、换图过渡 `fade 250 ms`、视频静音、`hwdec=auto-safe` |
+| 动画配置 | **语义与写法对齐 niri 的 `animations { }`**：每个动画三选一——`off`、缓动（`duration_ms` + `curve`）、或 `spring`（`damping_ratio` / `stiffness` / `epsilon`，质量固定 1，与 niri 同）。`curve` 取 niri 的五个：`linear` / `ease-out-quad` / `ease-out-cubic` / `ease-out-expo` / `cubic-bezier`（后者配 `cubic_bezier = [x1,y1,x2,y2]`）。另有顶层 `off` 与 `slowdown`。当前两项：`animations.parallax`（§4.2.6：ease-out-cubic 600 ms）、`animations.overview-open-close`（`zoom` + 动画，默认用 **niri 自己的默认弹簧** 1.0/800/0.0001）。两种动画类型都能驱动任何被动画量 |
+| 总览过渡 | 总览打开/关闭时画布做一次轻微后撤，由 `OverviewOpenedOrClosed` 驱动。zoom 实现为 **`scale` 的动画化乘数**，所以画布/overflow/视差行程/纹理采样全部自动跟随，shader 不用改、纹理不用重传（只采样子区域）。niri 不报告它自己的过渡进度，所以只能近似同步——把参数设成与 niri 配置里 `overview-open-close` 相同的弹簧，手感就基本一致 |
 
 ---
 
@@ -287,7 +288,8 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 7. **backdrop 一致性有固有每帧成本**：壁纸每动一帧，backdrop 失效 → Niri 要重建并重跑模糊。这是"窗口背景必须跟随"的代价，无法消除。可省的是：额外的解码/渲染开销、跨 GPU 拷贝、外部进程往返、GPU 选错。
 8. **backdrop 内的层序取决于创建顺序**：视差"失效"（壁纸不跟随）时，先查是否有别的层盖住（`niri msg --json layers` + §8 的位移测量），再怀疑算法。
 9. **`wl_buffer::release` 的语义**：常驻缓冲永远不会被释放，必须按"替换后才回收"来设计池（管线深度 ≥ 1）。M1 做 buffer 池时注意。
-10. **LINEAR 是跨设备 scanout 的通行证**：niri 对"渲染节点 ≠ 主节点"的输出只接受 Linear 的 scanout tranche。我们选 LINEAR（Mesa 能渲染进 LINEAR）既省一次拷贝又保证可直扫。**NVIDIA 不能渲染 LINEAR**，所以若将来 main device 是 NVIDIA，必须改用它的 tiled modifier，并接受 niri 的跨设备拷贝。
+10. **弹簧的"结束"判据不能用瞬时误差**：欠阻尼弹簧每半个周期穿过一次目标，`|当前 − 目标|` 会在第一次穿越时变成 0 —— 于是动画在过冲之前就被判定结束，用户永远看不到回弹（本机实测就是这样：轨迹一路走到 0.9600 直接停住）。判据要用**衰减包络**（ζ<1 时 `e^{-ζωt}/√(1-ζ²)`），它单调递减；值本身该过冲就过冲。修好后实测过冲 0.0065，与解析值 `e^{-πζ/√(1-ζ²)}×0.04` 一致
+11. **LINEAR 是跨设备 scanout 的通行证**：niri 对"渲染节点 ≠ 主节点"的输出只接受 Linear 的 scanout tranche。我们选 LINEAR（Mesa 能渲染进 LINEAR）既省一次拷贝又保证可直扫。**NVIDIA 不能渲染 LINEAR**，所以若将来 main device 是 NVIDIA，必须改用它的 tiled modifier，并接受 niri 的跨设备拷贝。
 11. **视频参与换图过渡需要 V2**：外部 mpvpaper 的帧拿不到，无法混合。
 12. **指标可信性**：不要用 `--dump-stats`（抽样）或 `nvidia-smi`（噪声大）宣称性能收益；先用 §8 的方法确认指标可信。
 
