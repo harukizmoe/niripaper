@@ -2,20 +2,25 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-A wallpaper daemon for the [niri](https://github.com/niri-wm/niri) compositor.
+**A wallpaper that moves with your layout.**
 
-It draws your wallpaper itself — a layer-shell background rendered on the GPU — and
-moves it as you move around, so the wallpaper reads as being *behind* your windows
-instead of pasted on top of the screen.
+niripaper is a parallax wallpaper daemon for the
+[niri](https://github.com/niri-wm/niri) compositor: as you move between windows and
+workspaces, the wallpaper shifts by a few dozen pixels in the same direction. Enough
+to make the desktop read as having depth — your windows sitting in front of a scene
+rather than on top of a picture — and small enough that you stop noticing it.
+
+It draws the wallpaper itself, as a layer-shell background, and follows niri's own
+animation settings, so it moves in step with the compositor rather than on a curve of
+its own.
 
 ## Features
 
+- **Parallax.** Moving between windows and workspaces shifts the wallpaper a few dozen
+  pixels the same way. This is the point of the project.
 - **It draws the wallpaper itself.** No mpv, no shell scripts, no helper processes:
   a single binary puts a layer-shell surface on the background layer and renders
   into it.
-- **Parallax.** As you move between windows and workspaces, the wallpaper shifts by
-  a few dozen pixels in the same direction — enough to give the desktop depth,
-  small enough not to be distracting.
 - **It follows niri's own animations.** With `follow_niri = true` (the default) it
   reads niri's config and reuses the same spring or easing curve, so the wallpaper
   moves in step with the workspaces rather than on a curve of its own.
@@ -37,9 +42,6 @@ Those are why this is 0.1 rather than 1.0.
 ## Requirements
 
 - **niri.** Developed against 26.04.
-- **A GPU** that the compositor composites with, and working EGL + GBM. Both Mesa
-  and the proprietary NVIDIA driver are fine — the daemon follows the GPU niri
-  itself is using, so there is nothing to configure.
 - **Rust** (a recent stable toolchain) if you are building it yourself.
 
 ## Install
