@@ -105,7 +105,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     let gpu = gpu::gpu_for_node(&node)?;
     log(&format!(
         "{} on {} ({} {}), namespace {}, scale {:.3}, span {}, pattern {:?}\n\
-         animations: parallax {}, overview-open-close {} (zoom {:.3}), slowdown {}",
+         animations: parallax {}, overview-open-close {} (zoom {:.3}), slowdown {}{}",
         options.output,
         node.display(),
         gpu.card,
@@ -118,6 +118,14 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         options.animations.overview_open_close.animation.describe(),
         options.animations.overview_open_close.zoom,
         options.animations.slowdown,
+        if options.animations.from_niri.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "  (from niri's config: {})",
+                options.animations.from_niri.join(", ")
+            )
+        },
     ));
 
     // --- render objects ----------------------------------------------------

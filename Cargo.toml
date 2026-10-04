@@ -7,6 +7,7 @@ description = "A wallpaper engine for Niri: static images, video, and layout-rea
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+kdl = { version = "6.7.1", features = ["v1-fallback"] }
 libc = "0.2.190"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

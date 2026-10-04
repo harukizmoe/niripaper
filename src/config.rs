@@ -83,6 +83,11 @@ pub struct Animations {
     pub overview_open_close: OverviewAnimation,
     /// niri's `slowdown`: divides elapsed time, so > 1 slows everything down.
     pub slowdown: f64,
+    /// Whether the shared animations were read from niri's config.
+    pub follow_niri: bool,
+    /// Which of them actually came from there, for the startup log — a value
+    /// that silently stops matching niri is the failure mode to avoid.
+    pub from_niri: Vec<&'static str>,
 }
 
 impl Default for Animations {
@@ -94,6 +99,8 @@ impl Default for Animations {
                 animation: DEFAULT_OVERVIEW_ANIMATION,
             },
             slowdown: 1.0,
+            follow_niri: true,
+            from_niri: Vec::new(),
         }
     }
 }
@@ -139,7 +146,18 @@ impl Config {
 
     /// Parse and validate. Kept separate from the file handling so it is
     /// testable without touching the filesystem.
+    /// Reads niri's config when `animations.follow_niri` is on, so tests use
+    /// [`Config::parse_without_niri`] to stay hermetic.
     pub fn parse(text: &str) -> Result<Self, String> {
+        Self::parse_inner(text, true)
+    }
+
+    /// Like [`Config::parse`] but never reads niri's config.
+    pub fn parse_without_niri(text: &str) -> Result<Self, String> {
+        Self::parse_inner(text, false)
+    }
+
+    fn parse_inner(text: &str, read_niri: bool) -> Result<Self, String> {
         let raw: RawConfig = toml::from_str(text).map_err(|e| e.to_string())?;
         let mut config = Self::default();
         if let Some(scale) = raw.scale {
@@ -148,7 +166,21 @@ impl Config {
         if let Some(span) = raw.span {
             config.span = check_span("span", span)?;
         }
-        config.animations = resolve_animations(&raw.animations)?;
+        // niri exposes nothing over IPC (`niri msg` has no config dump, `niri
+        // validate` only reports validity), so its config file is the only
+        // source. A config we cannot read is an error rather than something to
+        // paper over: the whole point is that the two stay in step.
+        // `animations.follow_niri = false` is the way out.
+        let follow_niri = raw
+            .animations
+            .follow_niri
+            .unwrap_or(Animations::default().follow_niri);
+        let niri = if follow_niri && read_niri {
+            crate::niri_config::animations()?
+        } else {
+            None
+        };
+        config.animations = resolve_animations(&raw.animations, niri)?;
         if let Some(wallpaper) = raw.wallpaper {
             config.wallpaper = Some(check_wallpaper("wallpaper", wallpaper)?);
         }
@@ -240,33 +272,64 @@ fn check_overview_zoom(zoom: f64) -> Result<f64, String> {
     Ok(zoom)
 }
 
-fn resolve_animations(raw: &RawAnimations) -> Result<Animations, String> {
+fn resolve_animations(
+    raw: &RawAnimations,
+    niri: Option<crate::niri_config::NiriAnimations>,
+) -> Result<Animations, String> {
     let defaults = Animations::default();
-    let global_off = raw.off.unwrap_or(false);
-    let slowdown = raw.slowdown.unwrap_or(defaults.slowdown);
-    if !slowdown.is_finite() || slowdown <= 0.0 {
-        return Err(format!(
-            "animations.slowdown must be a positive number, got {slowdown}"
-        ));
-    }
+    let follow_niri = raw.follow_niri.unwrap_or(defaults.follow_niri);
+    let mut from_niri = Vec::new();
 
-    let parallax = resolve_animation(
-        "animations.parallax",
-        raw.parallax.as_ref(),
-        defaults.parallax,
-        global_off,
-    )?;
+    let global_off = raw.off.unwrap_or(false);
+    let niri_off = niri.as_ref().and_then(|n| n.off).unwrap_or(false);
+
+    // Precedence: our explicit value → niri's config → our default.
+    let slowdown = match raw.slowdown {
+        Some(value) => {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(format!(
+                    "animations.slowdown must be a positive number, got {value}"
+                ));
+            }
+            value
+        }
+        None => match niri.as_ref().and_then(|n| n.slowdown) {
+            Some(value) => {
+                from_niri.push("slowdown");
+                value
+            }
+            None => defaults.slowdown,
+        },
+    };
+
+    let parallax = match explicit_animation("animations.parallax", raw.parallax.as_ref())? {
+        Some(animation) => animation,
+        None if global_off => Animation::Off,
+        None => defaults.parallax,
+    };
+
     let overview = raw.overview_open_close.as_ref();
     let zoom = match overview.and_then(|o| o.zoom) {
         Some(zoom) => check_overview_zoom(zoom)?,
         None => defaults.overview_open_close.zoom,
     };
-    let overview_animation = resolve_animation(
+    // niri's `off` only switches off the transition it owns: the parallax is not
+    // a niri animation, so niri's global `off` does not touch it.
+    let overview_animation = match explicit_animation(
         "animations.overview-open-close",
         overview.map(|o| &o.animation),
-        defaults.overview_open_close.animation,
-        global_off,
-    )?;
+    )? {
+        Some(animation) => animation,
+        None if global_off => Animation::Off,
+        None => match niri.as_ref().and_then(|n| n.overview_open_close) {
+            Some(animation) => {
+                from_niri.push("overview-open-close");
+                animation
+            }
+            None if niri_off => Animation::Off,
+            None => defaults.overview_open_close.animation,
+        },
+    };
 
     Ok(Animations {
         parallax,
@@ -275,6 +338,8 @@ fn resolve_animations(raw: &RawAnimations) -> Result<Animations, String> {
             animation: overview_animation,
         },
         slowdown,
+        follow_niri,
+        from_niri,
     })
 }
 
@@ -282,14 +347,10 @@ fn resolve_animations(raw: &RawAnimations) -> Result<Animations, String> {
 ///
 /// The three shapes are niri's: `off`, an easing (`duration_ms` + `curve`), or a
 /// `spring`. Mixing them is an error rather than a silent precedence rule.
-fn resolve_animation(
-    key: &str,
-    raw: Option<&RawAnimation>,
-    default: Animation,
-    global_off: bool,
-) -> Result<Animation, String> {
+/// `Ok(None)` means the block is absent, so a lower-priority source applies.
+fn explicit_animation(key: &str, raw: Option<&RawAnimation>) -> Result<Option<Animation>, String> {
     let Some(raw) = raw else {
-        return Ok(if global_off { Animation::Off } else { default });
+        return Ok(None);
     };
     if raw.off == Some(true) {
         if raw.duration_ms.is_some() || raw.curve.is_some() || raw.spring.is_some() {
@@ -297,12 +358,7 @@ fn resolve_animation(
                 "{key}: `off` cannot be combined with other settings"
             ));
         }
-        return Ok(Animation::Off);
-    }
-    if global_off {
-        // The global switch wins, but say so rather than silently ignoring the
-        // block the user wrote.
-        return Ok(Animation::Off);
+        return Ok(Some(Animation::Off));
     }
 
     if let Some(spring) = &raw.spring {
@@ -311,15 +367,15 @@ fn resolve_animation(
                 "{key}: a spring and an easing are alternatives — remove duration_ms/curve"
             ));
         }
-        return Ok(Animation::spring(
+        return Ok(Some(Animation::spring(
             check_damping_ratio(key, spring.damping_ratio)?,
             check_stiffness(key, spring.stiffness)?,
             check_epsilon(key, spring.epsilon)?,
-        ));
+        )));
     }
 
     match (raw.duration_ms, &raw.curve) {
-        (None, None) => Ok(default),
+        (None, None) => Ok(None),
         (Some(_), None) => Err(format!(
             "{key}: `curve` is required when `duration_ms` is set"
         )),
@@ -333,10 +389,10 @@ fn resolve_animation(
                 ));
             }
             let curve = Curve::parse(curve, raw.cubic_bezier)?;
-            Ok(Animation::easing(
+            Ok(Some(Animation::easing(
                 curve,
                 std::time::Duration::from_millis(duration_ms),
-            ))
+            )))
         }
     }
 }
@@ -379,6 +435,8 @@ struct RawAnimations {
     off: Option<bool>,
     /// niri's `slowdown <factor>`.
     slowdown: Option<f64>,
+    /// Read the shared animations from niri's own config (default true).
+    follow_niri: Option<bool>,
     parallax: Option<RawAnimation>,
     #[serde(rename = "overview-open-close")]
     overview_open_close: Option<RawOverviewAnimation>,
@@ -432,12 +490,15 @@ mod tests {
 
     #[test]
     fn an_empty_file_is_the_defaults() {
-        assert_eq!(Config::parse("").expect("parses"), Config::default());
+        assert_eq!(
+            Config::parse_without_niri("").expect("parses"),
+            Config::default()
+        );
     }
 
     #[test]
     fn reads_every_parameter() {
-        let config = Config::parse(
+        let config = Config::parse_without_niri(
             r#"
             scale = 1.2
             span = 8
@@ -481,31 +542,35 @@ mod tests {
     #[test]
     fn rejects_out_of_range_values() {
         // Each message has to name the key, otherwise a typo is unsearchable.
-        let scale = Config::parse("scale = 0.5").unwrap_err();
+        let scale = Config::parse_without_niri("scale = 0.5").unwrap_err();
         assert!(scale.contains("scale") && scale.contains("1.0"), "{scale}");
-        let high = Config::parse("scale = 9").unwrap_err();
+        let high = Config::parse_without_niri("scale = 9").unwrap_err();
         assert!(high.contains("scale"), "{high}");
-        let span = Config::parse("span = 1").unwrap_err();
+        let span = Config::parse_without_niri("span = 1").unwrap_err();
         assert!(span.contains("span"), "{span}");
-        let duration = Config::parse("[animations.parallax]\nduration_ms = 0\ncurve = \"linear\"")
-            .unwrap_err();
+        let duration = Config::parse_without_niri(
+            "[animations.parallax]\nduration_ms = 0\ncurve = \"linear\"",
+        )
+        .unwrap_err();
         assert!(duration.contains("duration_ms"), "{duration}");
-        let zoom = Config::parse("[animations.overview-open-close]\nzoom = 0").unwrap_err();
+        let zoom =
+            Config::parse_without_niri("[animations.overview-open-close]\nzoom = 0").unwrap_err();
         assert!(zoom.contains("zoom"), "{zoom}");
-        let per_output = Config::parse("[outputs.\"DP-1\"]\nscale = 9").unwrap_err();
+        let per_output = Config::parse_without_niri("[outputs.\"DP-1\"]\nscale = 9").unwrap_err();
         assert!(per_output.contains("outputs.DP-1.scale"), "{per_output}");
-        let namespace = Config::parse("namespace = \"\"").unwrap_err();
+        let namespace = Config::parse_without_niri("namespace = \"\"").unwrap_err();
         assert!(namespace.contains("namespace"), "{namespace}");
-        let wallpaper = Config::parse("wallpaper = \"/nope/missing.png\"").unwrap_err();
+        let wallpaper =
+            Config::parse_without_niri("wallpaper = \"/nope/missing.png\"").unwrap_err();
         assert!(wallpaper.contains("wallpaper"), "{wallpaper}");
     }
 
     #[test]
     fn rejects_unknown_keys() {
         // A typo like `scal` must not silently do nothing.
-        let err = Config::parse("scal = 1.2").unwrap_err();
+        let err = Config::parse_without_niri("scal = 1.2").unwrap_err();
         assert!(err.contains("scal"), "{err}");
-        let err = Config::parse("[outputs.\"DP-1\"]\nspam = 1").unwrap_err();
+        let err = Config::parse_without_niri("[outputs.\"DP-1\"]\nspam = 1").unwrap_err();
         assert!(err.contains("spam"), "{err}");
     }
 
@@ -547,15 +612,17 @@ mod animation_tests {
 
     #[test]
     fn easing_blocks_need_both_duration_and_curve() {
-        let err = Config::parse("[animations.parallax]\nduration_ms = 250").unwrap_err();
+        let err =
+            Config::parse_without_niri("[animations.parallax]\nduration_ms = 250").unwrap_err();
         assert!(err.contains("curve"), "{err}");
-        let err = Config::parse("[animations.parallax]\ncurve = \"linear\"").unwrap_err();
+        let err =
+            Config::parse_without_niri("[animations.parallax]\ncurve = \"linear\"").unwrap_err();
         assert!(err.contains("duration_ms"), "{err}");
     }
 
     #[test]
     fn spring_and_easing_are_alternatives() {
-        let err = Config::parse(
+        let err = Config::parse_without_niri(
             "[animations.parallax]\nduration_ms = 250\ncurve = \"linear\"\nspring = { damping_ratio = 1.0, stiffness = 800.0, epsilon = 0.0001 }",
         )
         .unwrap_err();
@@ -579,21 +646,22 @@ mod animation_tests {
             ),
         ] {
             let text = format!("[animations.parallax]\nspring = {{ {spring} }}");
-            let err = Config::parse(&text).unwrap_err();
+            let err = Config::parse_without_niri(&text).unwrap_err();
             assert!(err.contains(key), "{err}");
         }
     }
 
     #[test]
     fn off_can_be_global_or_per_animation() {
-        let config = Config::parse("[animations]\noff = true").expect("parses");
+        let config = Config::parse_without_niri("[animations]\noff = true").expect("parses");
         assert_eq!(parallax(&config), Animation::Off);
         assert_eq!(
             config.animations.overview_open_close.animation,
             Animation::Off
         );
 
-        let config = Config::parse("[animations.parallax]\noff = true").expect("parses");
+        let config =
+            Config::parse_without_niri("[animations.parallax]\noff = true").expect("parses");
         assert_eq!(parallax(&config), Animation::Off);
         // …while the other animation keeps its default.
         assert_ne!(
@@ -602,26 +670,27 @@ mod animation_tests {
         );
 
         let err =
-            Config::parse("[animations.parallax]\noff = true\nduration_ms = 100").unwrap_err();
+            Config::parse_without_niri("[animations.parallax]\noff = true\nduration_ms = 100")
+                .unwrap_err();
         assert!(err.contains("cannot be combined"), "{err}");
     }
 
     #[test]
     fn slowdown_must_be_positive() {
         assert_eq!(
-            Config::parse("[animations]\nslowdown = 3.0")
+            Config::parse_without_niri("[animations]\nslowdown = 3.0")
                 .unwrap()
                 .animations
                 .slowdown,
             3.0
         );
-        let err = Config::parse("[animations]\nslowdown = 0").unwrap_err();
+        let err = Config::parse_without_niri("[animations]\nslowdown = 0").unwrap_err();
         assert!(err.contains("slowdown"), "{err}");
     }
 
     #[test]
     fn the_overview_block_takes_a_zoom_and_an_animation() {
-        let config = Config::parse(
+        let config = Config::parse_without_niri(
             "[animations.overview-open-close]\nzoom = 0.9\nspring = { damping_ratio = 0.5, stiffness = 400.0, epsilon = 0.001 }",
         )
         .expect("parses");
@@ -632,7 +701,7 @@ mod animation_tests {
         );
 
         // Easing works there too.
-        let config = Config::parse(
+        let config = Config::parse_without_niri(
             "[animations.overview-open-close]\nduration_ms = 350\ncurve = \"ease-out-cubic\"",
         )
         .expect("parses");
@@ -644,7 +713,7 @@ mod animation_tests {
 
     #[test]
     fn cubic_bezier_takes_four_control_points() {
-        let config = Config::parse(
+        let config = Config::parse_without_niri(
             "[animations.parallax]\nduration_ms = 250\ncurve = \"cubic-bezier\"\ncubic_bezier = [0.05, 0.7, 0.1, 1.0]",
         )
         .expect("parses");
@@ -654,6 +723,84 @@ mod animation_tests {
                 Curve::CubicBezier([0.05, 0.7, 0.1, 1.0]),
                 Duration::from_millis(250)
             )
+        );
+    }
+}
+
+#[cfg(test)]
+mod niri_follow_tests {
+    use super::*;
+    use crate::niri_config::NiriAnimations;
+    use std::time::Duration;
+
+    fn niri_spring() -> NiriAnimations {
+        NiriAnimations {
+            overview_open_close: Some(Animation::spring(0.5, 400.0, 0.001)),
+            slowdown: Some(2.0),
+            off: None,
+        }
+    }
+
+    #[test]
+    fn niri_is_followed_when_we_do_not_override() {
+        let out =
+            resolve_animations(&RawAnimations::default(), Some(niri_spring())).expect("resolves");
+        assert_eq!(
+            out.overview_open_close.animation,
+            Animation::spring(0.5, 400.0, 0.001)
+        );
+        assert_eq!(out.slowdown, 2.0);
+        // …and it says so, so a silent divergence is impossible.
+        assert_eq!(out.from_niri, vec!["slowdown", "overview-open-close"]);
+        assert!(out.follow_niri);
+    }
+
+    #[test]
+    fn our_explicit_values_win_over_niri() {
+        let raw: RawAnimations = toml::from_str(
+            "slowdown = 3.0\n[overview-open-close]\nduration_ms = 350\ncurve = \"linear\"",
+        )
+        .expect("parses");
+        let out = resolve_animations(&raw, Some(niri_spring())).expect("resolves");
+        assert_eq!(out.slowdown, 3.0);
+        assert_eq!(
+            out.overview_open_close.animation,
+            Animation::easing(Curve::Linear, Duration::from_millis(350))
+        );
+        assert!(out.from_niri.is_empty(), "nothing came from niri");
+    }
+
+    #[test]
+    fn niris_global_off_only_touches_the_transition_it_owns() {
+        let niri = NiriAnimations {
+            off: Some(true),
+            ..NiriAnimations::default()
+        };
+        let out = resolve_animations(&RawAnimations::default(), Some(niri)).expect("resolves");
+        assert_eq!(out.overview_open_close.animation, Animation::Off);
+        // The parallax is not a niri animation.
+        assert_ne!(out.parallax, Animation::Off);
+    }
+
+    #[test]
+    fn without_niri_the_defaults_stand() {
+        let out = resolve_animations(&RawAnimations::default(), None).expect("resolves");
+        assert_eq!(
+            out.overview_open_close.animation,
+            Animations::default().overview_open_close.animation
+        );
+        assert!(out.from_niri.is_empty());
+    }
+
+    #[test]
+    fn following_niri_can_be_switched_off() {
+        let raw: RawAnimations = toml::from_str("follow_niri = false").expect("parses");
+        let out = resolve_animations(&raw, None).expect("resolves");
+        assert!(!out.follow_niri);
+        assert_eq!(
+            out.overview_open_close.animation,
+            Animation::spring(1.0, 800.0, 0.0001),
+            "falls back to niri's own default, which is our default"
         );
     }
 }

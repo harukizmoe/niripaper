@@ -11,4 +11,5 @@ pub mod daemon;
 pub mod gpu;
 pub mod motion;
 pub mod niri;
+pub mod niri_config;
 pub mod render;

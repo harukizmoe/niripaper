@@ -76,7 +76,8 @@ cargo build
 | Noctalia UI | 不自己造选择器：镜像官方壁纸选择（Material You 取色继续生效）+ 状态栏开关 + 插件设置项 |
 | 分发 | 源码 `cargo install` + AUR + GitHub Releases 预编译；Noctalia 插件为可选集成 |
 | 默认参数 | `scale = 1.1`、`span = 6`、视差 `ease-out-cubic 600 ms`、总览过渡 `spring 1.0/800/0.0001` + `zoom 0.96`、换图过渡 `fade 250 ms`、视频静音、`hwdec=auto-safe` |
-| 动画配置 | **语义与写法对齐 niri 的 `animations { }`**：每个动画三选一——`off`、缓动（`duration_ms` + `curve`）、或 `spring`（`damping_ratio` / `stiffness` / `epsilon`，质量固定 1，与 niri 同）。`curve` 取 niri 的五个：`linear` / `ease-out-quad` / `ease-out-cubic` / `ease-out-expo` / `cubic-bezier`（后者配 `cubic_bezier = [x1,y1,x2,y2]`）。另有顶层 `off` 与 `slowdown`。当前两项：`animations.parallax`（§4.2.6：ease-out-cubic 600 ms）、`animations.overview-open-close`（`zoom` + 动画，默认用 **niri 自己的默认弹簧** 1.0/800/0.0001）。两种动画类型都能驱动任何被动画量 |
+| 动画配置 | **语义与写法对齐 niri 的 `animations { }`**：每个动画三选一——`off`、缓动（`duration_ms` + `curve`）、或 `spring`（`damping_ratio` / `stiffness` / `epsilon`，质量固定 1，与 niri 同）。`curve` 取 niri 的五个：`linear` / `ease-out-quad` / `ease-out-cubic` / `ease-out-expo` / `cubic-bezier`（后者配 `cubic_bezier = [x1,y1,x2,y2]`）。另有顶层 `off` 与 `slowdown`。当前两项：`animations.parallax`（§4.2.6：ease-out-cubic 600 ms）、`animations.overview-open-close`（`zoom` + 动画，默认用 **niri 自己的默认弹簧** 1.0/800/0.0001）。两种动画类型都能驱动任何被动画量。
+| **跟随 niri 配置** | `animations.follow_niri`（默认 **true**）：读 niri 自己的 `config.kdl`（含 `include`），取用两者共享的 `overview-open-close` 与 `slowdown`；niri 的全局 `off` 只关掉总览过渡，**不动视差**（视差不是 niri 的动画）。优先级：**本文件显式值 > niri 配置 > 我们的默认值**，来源会写进启动日志（`from niri's config: …`），避免静默偏离。`follow_niri = false` 则完全不读 |
 | 总览过渡 | 总览打开/关闭时画布做一次轻微后撤，由 `OverviewOpenedOrClosed` 驱动。zoom 实现为 **`scale` 的动画化乘数**，所以画布/overflow/视差行程/纹理采样全部自动跟随，shader 不用改、纹理不用重传（只采样子区域）。niri 不报告它自己的过渡进度，所以只能近似同步——把参数设成与 niri 配置里 `overview-open-close` 相同的弹簧，手感就基本一致 |
 
 ---
@@ -259,6 +260,9 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | **做逐像素比对时要扣掉窗口阴影**：本机 `layout { shadow { on; softness 10; spread 4; color "#00000070" } }`，于是窗口外的 10 px 边距被阴影压暗——实测比值从离窗口远处 0.884 单调降到贴窗口处 0.823（纯乘性、有梯度）。这是配置效果，不是渲染 bug；要干净的比对就切到空工作区 | M2 实测 |
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
 | 测 3 列位移时用 backdrop 放置（`--namespace mpvpaper` 命中既有规则）只是为了让**测量更干净**：工作区背景的壁纸会随工作区滚动一起平移，混进位移里 | M1 实测 |
+| **niri 不暴露它的动画参数**：`niri msg` 没有 dump 配置的命令、`niri validate` 只打印 "config is valid"、事件流里与配置有关的只有 `{"ConfigLoaded":{"failed":false}}`。唯一来源是它的 KDL 配置文件（含 `include`，本机动画在 `__custom__.kdl` 里） | `niri msg --help`、`niri validate`、事件流实测 |
+| **niri 的配置是 KDL v1**（`niri-config` 依赖 `knuffel 3.2.0`），而 `kdl` crate 6.x 默认解析 KDL v2 → 直接解析会失败且 `Display` 只说 "Failed to parse KDL document"。crate 的 `v1-fallback` 特性正是为此；错误信息要用 `KdlError::diagnostics` 才可读 | 实测（读本机 config.kdl 失败 → 开特性后成功） |
+| KDL 里 `400` 是 **Integer**、`0.5` 是 Float，`as_float()` 对前者返回 None；niri 的 `stiffness=400`、`cubic-bezier … 1` 都是整数写法 | 实测 |
 | `--dump-stats` 是**抽样**输出（不能用来数帧率）；`nvidia-smi` 在桌面负载下噪声大（基线 26–65%），难以量测边际成本 | 实测 |
 | 工具链：`cargo` / `rustc` / `gcc` / `grim` 在位；`socat` 未安装 | `command -v` |
 
