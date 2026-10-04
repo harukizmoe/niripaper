@@ -3,7 +3,7 @@ name = "niripaper"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "A wallpaper engine for Niri: static images, video, and layout-reactive parallax."
+description = "A wallpaper daemon for the niri compositor, with layout-reactive parallax."
 
 [dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }

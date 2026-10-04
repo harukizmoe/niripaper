@@ -1,0 +1,167 @@
+# niripaper
+
+**English** · [简体中文](README.zh-CN.md)
+
+A wallpaper daemon for the [niri](https://github.com/niri-wm/niri) compositor.
+
+It draws your wallpaper itself — a layer-shell background rendered on the GPU — and
+moves it as you move around, so the wallpaper reads as being *behind* your windows
+instead of pasted on top of the screen.
+
+## Features
+
+- **It draws the wallpaper itself.** No mpv, no shell scripts, no helper processes:
+  a single binary puts a layer-shell surface on the background layer and renders
+  into it.
+- **Parallax.** As you move between windows and workspaces, the wallpaper shifts by
+  a few dozen pixels in the same direction — enough to give the desktop depth,
+  small enough not to be distracting.
+- **It follows niri's own animations.** With `follow_niri = true` (the default) it
+  reads niri's config and reuses the same spring or easing curve, so the wallpaper
+  moves in step with the workspaces rather than on a curve of its own.
+- **Overview zoom.** Pulling back into niri's overview pulls the wallpaper back with
+  it, so the overview has a proper background instead of a frozen one.
+- **Per-output settings.** Scale, spans and wallpaper can all differ per output.
+- **Cheap when nothing is happening.** Idle, it draws no frames and burns no CPU.
+
+## Status
+
+Version 0.1.0 — early, and honest about it.
+
+Working today: static images (PNG, JPEG, WebP), parallax, the overview transition,
+configuration, per-output settings.
+
+Not here yet: **video wallpapers**, and a cross-fade when the wallpaper changes.
+Those are why this is 0.1 rather than 1.0.
+
+## Requirements
+
+- **niri.** Developed against 26.04.
+- **A GPU** that the compositor composites with, and working EGL + GBM. Both Mesa
+  and the proprietary NVIDIA driver are fine — the daemon follows the GPU niri
+  itself is using, so there is nothing to configure.
+- **Rust** (a recent stable toolchain) if you are building it yourself.
+
+## Install
+
+Build from source:
+
+```bash
+git clone https://github.com/harukizmoe/niripaper.git
+cd niripaper
+cargo build --release
+install -Dm755 target/release/niripaper ~/.local/bin/niripaper
+```
+
+## Usage
+
+```bash
+niripaper daemon                          # draw the wallpaper
+niripaper daemon --wallpaper ~/wall.webp  # …with a specific image
+niripaper watch                           # print what the parallax would do, without drawing
+```
+
+`watch` is a debugging aid: it prints the target position as niri's layout changes,
+which is the quickest way to tell whether a problem is in niri's events or in the
+rendering.
+
+### Starting it with niri
+
+Add this to `~/.config/niri/config.kdl`:
+
+```kdl
+spawn-at-startup "niripaper" "daemon"
+```
+
+The binary has to be on `PATH` for that to work — hence the `install` line above.
+
+### Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--output NAME` | which output to draw on (default: the first one niri reports) |
+| `--config PATH` | config file to read (default: `~/.config/niripaper/config.toml`) |
+| `--namespace NAME` | layer-shell namespace (default: `niripaper`) |
+| `--wallpaper PATH` | image to draw |
+| `--scale F` | canvas enlargement, `1.0`–`1.35` |
+| `--column-span N`, `--workspace-span N` | how many steps the parallax spreads over |
+| `--pattern blocks\|bands` | the built-in test pattern, used when no wallpaper is given |
+| `--trace` | log every frame (position, zoom, timing) — for debugging |
+
+## Configuration
+
+The config file lives at `~/.config/niripaper/config.toml`. It is optional: with no
+file at all, the built-in defaults are used. Values are resolved as
+**command line → config file → built-in default**, so the file only needs to state
+what differs.
+
+```toml
+wallpaper = "~/Pictures/wall.webp"
+
+scale = 1.1           # canvas enlargement; bigger = more parallax room
+column_span = 6       # how many columns the horizontal parallax spans
+workspace_span = 6    # how many workspaces the vertical parallax spans
+namespace = "niripaper"
+
+[animations]
+follow_niri = true    # reuse niri's own animation settings
+
+[animations.parallax]
+duration_ms = 600
+curve = "ease-out-cubic"
+
+[animations.overview-open-close]
+zoom = 0.96           # 1.0 turns the effect off
+
+# Per-output overrides — anything not listed here is inherited from above.
+[outputs."DP-1"]
+scale = 1.2
+```
+
+### Keys
+
+| Key | Meaning |
+| --- | --- |
+| `wallpaper` | image to draw (PNG, JPEG or WebP) |
+| `scale` | canvas enlargement (default `1.1`, max `1.35`) |
+| `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |
+| `workspace_span` | fixed workspace span for the vertical parallax (default `6`, min `2`) |
+| `namespace` | layer-shell namespace (default `niripaper`) |
+| `[animations] follow_niri` | read niri's config and use its animation settings (default `true`) |
+| `[animations] slowdown` | stretch every animation's timeline |
+| `[animations.parallax]` | how the wallpaper moves when you move |
+| `[animations.overview-open-close]` | the overview transition: a `zoom` plus a spring or a curve |
+| `[outputs."NAME"]` | per-output overrides of any of the above |
+
+Animations use niri's own vocabulary, so there is one thing to learn: each of them
+is either `off`, an easing (`duration_ms` plus a `curve`), or a `spring`
+(`damping_ratio`, `stiffness`, `epsilon`). The `curve` names are niri's:
+`linear`, `ease-out-quad`, `ease-out-cubic`, `ease-out-expo`, `cubic-bezier`.
+
+With `follow_niri = true` the overview transition takes its parameters straight from
+niri's config, so tuning niri tunes the wallpaper too. Anything written in this file
+wins over what niri says.
+
+## Troubleshooting
+
+- **Nothing appears.** The output name has to match niri's; check `niri msg outputs`
+  and pass `--output NAME`.
+- **It exits right away.** The config did not parse — the error names the offending
+  key and line.
+- **The wallpaper does not move.** If niri's config turns animations off globally
+  (`animations { off }`), the overview transition is off here too. The parallax is
+  unaffected — it is not one of niri's animations.
+- **You already have layer rules for `mpvpaper`.** Set `namespace = "mpvpaper"` and
+  your existing rules apply to this daemon as well.
+
+## License
+
+GPL-3.0-or-later © 2026 harukizmoe. See [LICENSE](LICENSE).
+
+## Acknowledgements
+
+- **[niri](https://github.com/niri-wm/niri)** — the compositor this is written for,
+  and the source of the event stream it follows.
+- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** — the usual first answer to
+  "wallpaper on niri", and where the `mpvpaper` layer-shell namespace convention
+  comes from.
