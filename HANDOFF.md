@@ -387,6 +387,18 @@ grim -o DP-1 /tmp/b.png     # 状态 B（例如焦点在第 3 列）
 
 ---
 
+## 10. 发布流程（squash 合入 + 保留 dev 的代价）
+
+`main` 上的发布用 **squash** ✓（一条提交 ✓），`dev` 保留 ✓。代价是 `dev` 的提交**不再是 `main` 的祖先** ✗，于是：
+
+* **每次** squash 合入之后，都要把 `main` 合回 `dev` ✗：`git checkout dev && git merge origin/main` ✓。
+  这只**新增一个合并提交** ✓，不改写任何已有记录 ✓。
+* 不做这一步的话，下一个 PR 会带着从 `ab4be5a` 起的全部旧提交 ✗，并且 GitHub 直接报 `CONFLICTING` ✗
+  （合并基还是老的 ✗，同一份内容被算成"两边都改了" ✗）。
+* 冲突通常只出现在 README / LICENSE / Cargo.toml 这类"两边都改过"的文件上 ✗，
+  取 `dev` 的版本 ✓（它更新 ✓）：`git checkout --ours -- <files>` ✓。
+* 判断是否需要 back-merge：`git merge-base --is-ancestor origin/main origin/dev || echo 需要` ✓。
+
 ## 9. 参考资料
 
 - Clavis（运动参数与公式的来源）：https://github.com/StatIndet/quickshell —— 见 §4 的定位表
