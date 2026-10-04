@@ -261,6 +261,9 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
 | 测 3 列位移时用 backdrop 放置（`--namespace mpvpaper` 命中既有规则）只是为了让**测量更干净**：工作区背景的壁纸会随工作区滚动一起平移，混进位移里 | M1 实测 |
 | **niri 不暴露它的动画参数**：`niri msg` 没有 dump 配置的命令、`niri validate` 只打印 "config is valid"、事件流里与配置有关的只有 `{"ConfigLoaded":{"failed":false}}`。唯一来源是它的 KDL 配置文件（含 `include`，本机动画在 `__custom__.kdl` 里） | `niri msg --help`、`niri validate`、事件流实测 |
+| **niri 的配置路径顺序**（`src/main.rs`）：`-c/--config` > `$NIRI_CONFIG` > 用户配置（`$XDG_CONFIG_HOME/niri/config.kdl`，否则 `~/.config/niri/config.kdl`）> `/etc/niri/config.kdl`。注意 niri 启动后**会把 `NIRI_CONFIG` 从自己的环境里删掉**，子进程看不到 → 跟随它的唯一可靠办法是读 `/proc/<niri pid>/cmdline` 里的 `--config` | 读 niri 源码 + 实测 |
+| `include` 的路径**相对于包含它的那个文件**解析（不是相对于主配置），绝对路径原样使用，且会**展开开头的 `~`**；递归有上限，自包含会报错 | niri `niri-config/src/lib.rs` 的 include 分支 |
+| **没有自定义动画时**我们回落到内置默认，而内置默认就是 **niri 自己的默认值**（`overview-open-close: spring 1.0/800/0.0001`、`slowdown 1.0`），所以两边仍然一致；完全没有 niri 配置也不是错误 | 实测（临时配置只含 `input` 段 → 日志显示 `spring 1/800/0.0001`，无报错） |
 | **niri 的配置是 KDL v1**（`niri-config` 依赖 `knuffel 3.2.0`），而 `kdl` crate 6.x 默认解析 KDL v2 → 直接解析会失败且 `Display` 只说 "Failed to parse KDL document"。crate 的 `v1-fallback` 特性正是为此；错误信息要用 `KdlError::diagnostics` 才可读 | 实测（读本机 config.kdl 失败 → 开特性后成功） |
 | KDL 里 `400` 是 **Integer**、`0.5` 是 Float，`as_float()` 对前者返回 None；niri 的 `stiffness=400`、`cubic-bezier … 1` 都是整数写法 | 实测 |
 | `--dump-stats` 是**抽样**输出（不能用来数帧率）；`nvidia-smi` 在桌面负载下噪声大（基线 26–65%），难以量测边际成本 | 实测 |

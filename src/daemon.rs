@@ -118,13 +118,20 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         options.animations.overview_open_close.animation.describe(),
         options.animations.overview_open_close.zoom,
         options.animations.slowdown,
-        if options.animations.from_niri.is_empty() {
-            String::new()
-        } else {
-            format!(
+        match (
+            options.animations.from_niri.is_empty(),
+            &options.animations.niri_config,
+        ) {
+            (true, _) => String::new(),
+            (false, Some(path)) => format!(
+                "  (from {}: {})",
+                path.display(),
+                options.animations.from_niri.join(", ")
+            ),
+            (false, None) => format!(
                 "  (from niri's config: {})",
                 options.animations.from_niri.join(", ")
-            )
+            ),
         },
     ));
 

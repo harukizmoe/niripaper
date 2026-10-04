@@ -88,6 +88,8 @@ pub struct Animations {
     /// Which of them actually came from there, for the startup log — a value
     /// that silently stops matching niri is the failure mode to avoid.
     pub from_niri: Vec<&'static str>,
+    /// The niri config file those values were read from, if any.
+    pub niri_config: Option<PathBuf>,
 }
 
 impl Default for Animations {
@@ -101,6 +103,7 @@ impl Default for Animations {
             slowdown: 1.0,
             follow_niri: true,
             from_niri: Vec::new(),
+            niri_config: None,
         }
     }
 }
@@ -180,7 +183,9 @@ impl Config {
         } else {
             None
         };
+        let niri_config = niri.as_ref().and_then(|n| n.path.clone());
         config.animations = resolve_animations(&raw.animations, niri)?;
+        config.animations.niri_config = niri_config;
         if let Some(wallpaper) = raw.wallpaper {
             config.wallpaper = Some(check_wallpaper("wallpaper", wallpaper)?);
         }
@@ -340,6 +345,7 @@ fn resolve_animations(
         slowdown,
         follow_niri,
         from_niri,
+        niri_config: None,
     })
 }
 
@@ -737,7 +743,7 @@ mod niri_follow_tests {
         NiriAnimations {
             overview_open_close: Some(Animation::spring(0.5, 400.0, 0.001)),
             slowdown: Some(2.0),
-            off: None,
+            ..NiriAnimations::default()
         }
     }
 

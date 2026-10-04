@@ -28,6 +28,8 @@ use crate::render::anim::{Animation, Curve};
 /// about this", which is different from "niri says off".
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct NiriAnimations {
+    /// The file these came from, for the log.
+    pub path: Option<PathBuf>,
     /// A global `animations { off }`.
     pub off: Option<bool>,
     /// `animations { slowdown <factor> }`.
@@ -36,14 +38,39 @@ pub struct NiriAnimations {
     pub overview_open_close: Option<Animation>,
 }
 
-/// Where niri's config lives: `$NIRI_CONFIG`, else `$XDG_CONFIG_HOME/niri/config.kdl`,
-/// else `~/.config/niri/config.kdl` — the same order niri itself uses.
+/// Where niri's config lives, in niri's own order of preference.
+///
+/// 1. `$NIRI_CONFIG` (niri accepts the same variable);
+/// 2. the `--config` the *running* niri was started with — niri deletes
+///    `NIRI_CONFIG` from its environment at startup, so its command line is the
+///    only way to see what it actually loaded;
+/// 3. `$XDG_CONFIG_HOME/niri/config.kdl`, else `~/.config/niri/config.kdl`;
+/// 4. `/etc/niri/config.kdl`, niri's system fallback.
+///
+/// Getting this wrong is silent divergence, so the caller logs which file it
+/// used.
 pub fn config_path() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("NIRI_CONFIG") {
         if !explicit.is_empty() {
             return Some(PathBuf::from(explicit));
         }
     }
+    if let Some(running) = running_niri_config() {
+        return Some(running);
+    }
+    let user = user_config_path();
+    if user.as_ref().is_some_and(|path| path.exists()) {
+        return user;
+    }
+    let system = PathBuf::from("/etc/niri/config.kdl");
+    if system.exists() {
+        return Some(system);
+    }
+    user
+}
+
+/// `$XDG_CONFIG_HOME/niri/config.kdl`, else `~/.config/niri/config.kdl`.
+pub fn user_config_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
         if !dir.is_empty() {
             return Some(PathBuf::from(dir).join("niri/config.kdl"));
@@ -51,6 +78,48 @@ pub fn config_path() -> Option<PathBuf> {
     }
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".config/niri/config.kdl"))
+}
+
+/// The `--config`/`-c` argument of the running niri, read from `/proc`.
+fn running_niri_config() -> Option<PathBuf> {
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let pid = entry.file_name();
+        let pid = pid.to_str()?;
+        if !pid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        if comm.trim() != "niri" {
+            continue;
+        }
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        let args: Vec<String> = cmdline
+            .split(|byte| *byte == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| String::from_utf8_lossy(arg).into_owned())
+            .collect();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-c" | "--config" => return iter.next().map(PathBuf::from),
+                other => {
+                    if let Some(path) = other.strip_prefix("--config=") {
+                        return Some(PathBuf::from(path));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// niri expands a leading `~` in include paths; so do we.
+fn expand_tilde(name: &str, home: Option<&Path>) -> Option<PathBuf> {
+    if let Some(rest) = name.strip_prefix('~') {
+        let home = home?;
+        return Some(home.join(rest.trim_start_matches('/')));
+    }
+    Some(PathBuf::from(name))
 }
 
 /// Read niri's shared animation parameters.
@@ -63,7 +132,10 @@ pub fn animations() -> Result<Option<NiriAnimations>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let mut out = NiriAnimations::default();
+    let mut out = NiriAnimations {
+        path: Some(path.clone()),
+        ..Default::default()
+    };
     let mut visited = Vec::new();
     read_file(&path, &mut out, &mut visited)?;
     Ok(Some(out))
@@ -139,9 +211,20 @@ fn include(
         .get("optional")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let path = match from.parent() {
-        Some(dir) => dir.join(name),
-        None => PathBuf::from(name),
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let Some(name) = expand_tilde(name, home.as_deref()) else {
+        return Err(format!(
+            "{}: cannot expand ~ in include path {name:?}",
+            from.display()
+        ));
+    };
+    let path = if name.is_absolute() {
+        name
+    } else {
+        match from.parent() {
+            Some(dir) => dir.join(name),
+            None => name,
+        }
     };
     if !path.exists() {
         return if optional {
@@ -368,8 +451,31 @@ mod tests {
 
     #[test]
     fn config_path_follows_niris_order() {
-        // The env var wins; otherwise it is <config dir>/niri/config.kdl.
-        let path = config_path().expect("HOME is set in tests");
+        let path = config_path().expect("a config path is always found in tests");
         assert!(path.ends_with("niri/config.kdl"), "{path:?}");
+    }
+
+    #[test]
+    fn tilde_in_include_paths_expands_like_niri() {
+        let home = Path::new("/home/someone");
+        assert_eq!(
+            expand_tilde("~/wall/anim.kdl", Some(home)),
+            Some(PathBuf::from("/home/someone/wall/anim.kdl"))
+        );
+        assert_eq!(
+            expand_tilde("~/anim.kdl", Some(home)),
+            Some(PathBuf::from("/home/someone/anim.kdl"))
+        );
+        // A plain relative name stays relative to the including file.
+        assert_eq!(
+            expand_tilde("anim.kdl", Some(home)),
+            Some(PathBuf::from("anim.kdl"))
+        );
+        assert_eq!(
+            expand_tilde("/etc/x.kdl", Some(home)),
+            Some(PathBuf::from("/etc/x.kdl"))
+        );
+        // No home to expand into is an error, not a silent miss.
+        assert_eq!(expand_tilde("~/x.kdl", None), None);
     }
 }
