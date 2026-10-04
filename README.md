@@ -5,39 +5,37 @@
 **A wallpaper that moves with your layout.**
 
 niripaper is a parallax wallpaper daemon for the
-[niri](https://github.com/niri-wm/niri) compositor: as you move between windows and
-workspaces, the wallpaper shifts by a few dozen pixels in the same direction. Enough
-to make the desktop read as having depth — your windows sitting in front of a scene
-rather than on top of a picture — and small enough that you stop noticing it.
+[niri](https://github.com/niri-wm/niri) compositor. As you move between windows and
+workspaces, it shifts the wallpaper by a few dozen pixels in the same direction, so
+the wallpaper stays behind your windows instead of sitting still.
 
-It draws the wallpaper itself, as a layer-shell background, and follows niri's own
-animation settings, so it moves in step with the compositor rather than on a curve of
-its own.
+It draws the wallpaper itself, as a layer-shell background. The overview transition
+takes its timing from niri's own animation settings, so the wallpaper moves in step
+with the workspaces.
 
 ## Features
 
 - **Parallax.** Moving between windows and workspaces shifts the wallpaper a few dozen
-  pixels the same way. This is the point of the project.
+  pixels in the same direction.
 - **It draws the wallpaper itself.** No mpv, no shell scripts, no helper processes:
   a single binary puts a layer-shell surface on the background layer and renders
   into it.
-- **It follows niri's own animations.** With `follow_niri = true` (the default) it
-  reads niri's config and reuses the same spring or easing curve, so the wallpaper
-  moves in step with the workspaces rather than on a curve of its own.
-- **Overview zoom.** Pulling back into niri's overview pulls the wallpaper back with
-  it, so the overview has a proper background instead of a frozen one.
+- **The overview transition follows niri.** With `follow_niri = true` (the default),
+  its spring or easing curve is read from niri's config, so the wallpaper moves in
+  step with the workspaces.
+- **Overview zoom.** Opening niri's overview zooms the wallpaper out with it.
 - **Per-output settings.** Scale, spans and wallpaper can all differ per output.
-- **Cheap when nothing is happening.** Idle, it draws no frames and burns no CPU.
+- **Low resource usage.** While nothing is moving it draws no frames and uses no
+  measurable CPU.
 
 ## Status
 
-Version 0.1.0 — early, and honest about it.
+Version 0.1.0, early.
 
 Working today: static images (PNG, JPEG, WebP), parallax, the overview transition,
 configuration, per-output settings.
 
-Not here yet: **video wallpapers**, and a cross-fade when the wallpaper changes.
-Those are why this is 0.1 rather than 1.0.
+Not here yet: video wallpapers, and a cross-fade when the wallpaper changes.
 
 ## Requirements
 
@@ -64,8 +62,7 @@ niripaper watch                           # print what the parallax would do, wi
 ```
 
 `watch` is a debugging aid: it prints the target position as niri's layout changes,
-which is the quickest way to tell whether a problem is in niri's events or in the
-rendering.
+which helps tell whether a problem is in niri's events or in the rendering.
 
 ### Starting it with niri
 
@@ -100,13 +97,13 @@ what differs.
 ```toml
 wallpaper = "~/Pictures/wall.webp"
 
-scale = 1.1           # canvas enlargement; bigger = more parallax room
+scale = 1.1           # canvas enlargement; larger values leave more room to move in
 column_span = 6       # how many columns the horizontal parallax spans
 workspace_span = 6    # how many workspaces the vertical parallax spans
 namespace = "niripaper"
 
 [animations]
-follow_niri = true    # reuse niri's own animation settings
+follow_niri = true    # take the overview transition's settings from niri
 
 [animations.parallax]
 duration_ms = 600
@@ -129,20 +126,20 @@ scale = 1.2
 | `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |
 | `workspace_span` | fixed workspace span for the vertical parallax (default `6`, min `2`) |
 | `namespace` | layer-shell namespace (default `niripaper`) |
-| `[animations] follow_niri` | read niri's config and use its animation settings (default `true`) |
+| `[animations] follow_niri` | take the overview transition's settings from niri (default `true`) |
 | `[animations] slowdown` | stretch every animation's timeline |
 | `[animations.parallax]` | how the wallpaper moves when you move |
 | `[animations.overview-open-close]` | the overview transition: a `zoom` plus a spring or a curve |
 | `[outputs."NAME"]` | per-output overrides of any of the above |
 
-Animations use niri's own vocabulary, so there is one thing to learn: each of them
-is either `off`, an easing (`duration_ms` plus a `curve`), or a `spring`
-(`damping_ratio`, `stiffness`, `epsilon`). The `curve` names are niri's:
-`linear`, `ease-out-quad`, `ease-out-cubic`, `ease-out-expo`, `cubic-bezier`.
+Animations use niri's own vocabulary: each of them is either `off`, an easing
+(`duration_ms` plus a `curve`), or a `spring` (`damping_ratio`, `stiffness`,
+`epsilon`). The `curve` names are niri's: `linear`, `ease-out-quad`,
+`ease-out-cubic`, `ease-out-expo`, `cubic-bezier`.
 
-With `follow_niri = true` the overview transition takes its parameters straight from
-niri's config, so tuning niri tunes the wallpaper too. Anything written in this file
-wins over what niri says.
+With `follow_niri = true`, the overview transition takes its parameters from niri's
+config, so changing niri's settings changes the wallpaper's motion as well. Anything
+written in this file wins over what niri says.
 
 ## Troubleshooting
 
@@ -164,6 +161,5 @@ GPL-3.0-or-later © 2026 harukizmoe. See [LICENSE](LICENSE).
 
 - **[niri](https://github.com/niri-wm/niri)** — the compositor this is written for,
   and the source of the event stream it follows.
-- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** — the usual first answer to
-  "wallpaper on niri", and where the `mpvpaper` layer-shell namespace convention
-  comes from.
+- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** — where the `mpvpaper`
+  layer-shell namespace convention comes from.

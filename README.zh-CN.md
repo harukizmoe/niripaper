@@ -4,32 +4,31 @@
 
 **会跟着你的布局一起动的壁纸。**
 
-niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸守护进程：
-在窗口之间、工作区之间移动时，壁纸会朝同一方向移动几十像素。这个幅度足够让桌面
-有层次 —— 窗口像是坐在一个场景前面，而不是贴在一张图上 —— 又小到你很快就会忽略它。
+niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸守护进程。
+在窗口之间、工作区之间移动时，它会把壁纸朝同一方向移动几十像素，
+让壁纸保持在窗口背后，而不是定住不动。
 
-它自己绘制壁纸（一个 layer-shell 背景），并跟随 niri 自己的动画设置 ——
-所以它和合成器是同步动的，而不是各走各的曲线。
+它自己绘制壁纸，用一个 layer-shell 背景。总览过渡的时序取自 niri 自己的动画设置，
+所以它和工作区是同步动的。
 
 ## 特性
 
-- **视差。** 在窗口之间、工作区之间移动时，壁纸朝同一方向移动几十像素 —— 这是本项目的主打。
+- **视差。** 在窗口之间、工作区之间移动时，壁纸朝同一方向移动几十像素。
 - **自己绘制壁纸。** 不需要 mpv，不需要 shell 脚本，也没有辅助进程：一个二进制，
   在 background 层放一个 layer-shell 表面，直接往里渲染。
-- **跟随 niri 自己的动画。** 默认 `follow_niri = true`：读取 niri 的配置，
-  复用同一组弹簧或缓动曲线，所以壁纸和工作区是同步动的，而不是各走各的曲线。
-- **总览缩放。** 拉开 niri 总览时，壁纸跟着一起后退，于是总览有真正的背景，
-  而不是一张定住的图。
+- **总览过渡跟随 niri。** 默认 `follow_niri = true`：它的弹簧或缓动曲线从 niri 的配置里读，
+  所以壁纸和工作区是同步动的。
+- **总览缩放。** 打开 niri 总览时，壁纸跟着一起缩小。
 - **按输出分别配置。** 缩放、跨度、壁纸都可以每个输出不一样。
-- **空闲时几乎不花钱。** 静止时不出帧、不烧 CPU。
+- **资源占用低。** 没有东西在动时不出帧，也测不到 CPU 占用。
 
 ## 状态
 
-版本 0.1.0 —— 早期版本，如实说明。
+版本 0.1.0，早期。
 
 现在能用：静态图像（PNG / JPEG / WebP）、视差、总览过渡、配置文件、按输出配置。
 
-还没有：**视频壁纸**，以及换图时的交叉淡入。这也是它还是 0.1 而不是 1.0 的原因。
+还没有：视频壁纸，以及换图时的交叉淡入。
 
 ## 环境要求
 
@@ -55,8 +54,8 @@ niripaper daemon --wallpaper ~/wall.webp  # …指定图像
 niripaper watch                           # 只打印视差目标值，不绘制
 ```
 
-`watch` 是排查工具：niri 布局变化时它会打印目标位置，是判断"问题出在 niri 的事件上
-还是渲染上"最快的方法。
+`watch` 是排查工具：niri 布局变化时它会打印目标位置，
+有助于判断问题出在 niri 的事件上还是渲染上。
 
 ### 随 niri 启动
 
@@ -90,13 +89,13 @@ spawn-at-startup "niripaper" "daemon"
 ```toml
 wallpaper = "~/Pictures/wall.webp"
 
-scale = 1.1           # 画布放大倍数；越大，视差可用的余地越大
+scale = 1.1           # 画布放大倍数；越大，可移动的余地越大
 column_span = 6       # 横向视差铺开多少列
 workspace_span = 6    # 纵向视差铺开多少工作区
 namespace = "niripaper"
 
 [animations]
-follow_niri = true    # 复用 niri 自己的动画设置
+follow_niri = true    # 总览过渡的设置取自 niri
 
 [animations.parallax]
 duration_ms = 600
@@ -119,19 +118,19 @@ scale = 1.2
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |
 | `workspace_span` | 纵向视差的固定工作区跨度（默认 `6`，最小 `2`） |
 | `namespace` | layer-shell 命名空间（默认 `niripaper`） |
-| `[animations] follow_niri` | 读取 niri 配置并使用它的动画设置（默认 `true`） |
+| `[animations] follow_niri` | 总览过渡的设置取自 niri（默认 `true`） |
 | `[animations] slowdown` | 把所有动画的时间轴拉长 |
 | `[animations.parallax]` | 移动时壁纸怎么动 |
 | `[animations.overview-open-close]` | 总览过渡：一个 `zoom` 加一个弹簧或缓动 |
 | `[outputs."NAME"]` | 按输出覆盖上面任意一项 |
 
-动画用的是 niri 自己那套词汇，所以只有一件事要学：每一个动画要么是 `off`，
-要么是缓动（`duration_ms` 加 `curve`），要么是弹簧（`damping_ratio`、`stiffness`、
-`epsilon`）。`curve` 的取值也是 niri 那五个：`linear`、`ease-out-quad`、
-`ease-out-cubic`、`ease-out-expo`、`cubic-bezier`。
+动画用的是 niri 自己那套词汇：每一个动画要么是 `off`，要么是缓动
+（`duration_ms` 加 `curve`），要么是弹簧（`damping_ratio`、`stiffness`、`epsilon`）。
+`curve` 的取值也是 niri 那五个：`linear`、`ease-out-quad`、`ease-out-cubic`、
+`ease-out-expo`、`cubic-bezier`。
 
-开着 `follow_niri = true` 时，总览过渡的参数直接取自 niri 的配置，
-所以调 niri 就等于调壁纸。本文件里显式写的值优先于 niri 的值。
+开着 `follow_niri = true` 时，总览过渡的参数取自 niri 的配置，
+所以改 niri 的设置也会改变壁纸的运动。本文件里显式写的值优先于 niri 的值。
 
 ## 排查
 
@@ -150,5 +149,5 @@ GPL-3.0-or-later © 2026 harukizmoe。见 [LICENSE](LICENSE)。
 
 - **[niri](https://github.com/niri-wm/niri)** —— 本项目的目标合成器，
   也是它跟随的事件流的来源。
-- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** —— "niri 上怎么放壁纸"
-  最常见的第一个答案，`mpvpaper` 这个 layer-shell 命名空间约定也来自它。
+- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** —— `mpvpaper`
+  这个 layer-shell 命名空间约定来自它。
