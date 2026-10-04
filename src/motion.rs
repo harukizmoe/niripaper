@@ -419,16 +419,21 @@ impl Motion {
         };
         on_output.sort_by_key(|w| w.idx);
         let vertical = if on_output.len() <= 1 {
-            // `activeIndex / (count - 1)` is 0/0 here. A lone workspace sits in
-            // the middle — which is what the §4.3 rows with a single workspace
-            // expect (`(_, 0.5)`).
+            // Nothing to pan between, so centre — which is what the §4.3 rows
+            // with a single workspace expect (`(_, 0.5)`).
             0.5
         } else {
             let index = on_output
                 .iter()
                 .position(|w| w.id == active.id)
                 .unwrap_or(0);
-            index as f64 / (on_output.len() - 1) as f64
+            // Fixed spread, for the same reason as the columns (§4.2.1):
+            // dividing by the live workspace count moves the wallpaper —
+            // and changes the parallax ratio — whenever a workspace is
+            // created or closed, for a workspace that did not change. Measured
+            // before this: the same active workspace sat at 72 / 48 / 36 px
+            // depending on whether 3 / 4 / 5 workspaces existed.
+            (index as f64 / (self.span - 1) as f64).clamp(0.0, 1.0)
         };
 
         let horizontal = match self.horizontal.get(output) {
@@ -706,12 +711,12 @@ mod tests {
         });
         // The vertical moves to ws2's slot; the horizontal holds ws1's 0.4
         // rather than jumping to ws2's 0.0 (a 102 px sideways slide).
-        assert_progress(&motion, "DP-1", 0.4, 0.5);
+        assert_progress(&motion, "DP-1", 0.4, 0.2);
 
         // …and niri's follow-up focus change into the new workspace is part of
         // the same vertical move, so it must not pan either.
         motion.apply(&Event::WindowFocusChanged { id: Some(3) });
-        assert_progress(&motion, "DP-1", 0.4, 0.5);
+        assert_progress(&motion, "DP-1", 0.4, 0.2);
 
         // A focus move *within* that workspace is a horizontal move: it pans.
         motion.apply(&Event::WindowOpenedOrChanged {
@@ -719,7 +724,7 @@ mod tests {
         });
         motion.apply(&Event::WindowFocusChanged { id: Some(5) });
         // ws2's columns are now {1,4}, focus on 4 → rank 1 → 0.2.
-        assert_progress(&motion, "DP-1", 0.2, 0.5);
+        assert_progress(&motion, "DP-1", 0.2, 0.2);
     }
 
     #[test]
@@ -731,9 +736,9 @@ mod tests {
             id: 3,
             focused: true,
         });
-        assert_progress(&motion, "DP-1", 0.4, 1.0);
+        assert_progress(&motion, "DP-1", 0.4, 0.4);
         motion.apply(&Event::WindowFocusChanged { id: None });
-        assert_progress(&motion, "DP-1", 0.4, 1.0);
+        assert_progress(&motion, "DP-1", 0.4, 0.4);
 
         // Coming back, the horizontal is still ws1's.
         motion.apply(&Event::WorkspaceActivated {
@@ -742,6 +747,35 @@ mod tests {
         });
         motion.apply(&Event::WindowFocusChanged { id: Some(1) });
         assert_progress(&motion, "DP-1", 0.4, 0.0);
+    }
+
+    #[test]
+    fn creating_or_closing_a_workspace_does_not_move_the_wallpaper() {
+        // The vertical spread is fixed for the same reason as the columns
+        // (§4.2.1): with the live workspace count, the same active workspace sat
+        // at 72 / 48 / 36 px depending on whether 3 / 4 / 5 workspaces existed,
+        // so creating or closing one jerked the wallpaper for a workspace that
+        // did not change.
+        let positions = |count: u32| {
+            let mut motion = Motion::new(DEFAULT_SPAN);
+            let workspaces: Vec<Workspace> = (1..=count)
+                .map(|idx| Workspace {
+                    id: idx as u64,
+                    idx,
+                    is_active: idx == 2,
+                    ..default_workspace()
+                })
+                .collect();
+            motion.apply(&Event::WorkspacesChanged { workspaces });
+            motion.progress("DP-1").vertical
+        };
+        assert_eq!(positions(4), 1.0 / 5.0);
+        assert_eq!(
+            positions(5),
+            positions(4),
+            "a workspace appearing changed it"
+        );
+        assert_eq!(positions(3), positions(4), "a workspace closing changed it");
     }
 
     #[test]
@@ -805,7 +839,8 @@ mod tests {
             id: 2,
             focused: false,
         });
-        assert_progress(&motion, "DP-1", 0.0, 1.0);
+        // Two workspaces on DP-1, the second active → 1/(span-1) = 0.2.
+        assert_progress(&motion, "DP-1", 0.0, 0.2);
         let by_id = |motion: &Motion, id: u64| {
             motion
                 .workspaces()
@@ -990,11 +1025,11 @@ mod tests {
             .map(|i| window_on(i, 90, i as usize * 10, 1))
             .collect();
         let mut motion = motion_with(vec![ws90, ws3, ws40], windows);
-        assert_progress(&motion, "DP-1", 1.0, 1.0);
+        assert_progress(&motion, "DP-1", 1.0, 0.4);
 
         // ↳ focus 列 10 → (0.0, 1.0)
         motion.apply(&Event::WindowFocusChanged { id: Some(1) });
-        assert_progress(&motion, "DP-1", 0.0, 1.0);
+        assert_progress(&motion, "DP-1", 0.0, 0.4);
     }
 
     #[test]
