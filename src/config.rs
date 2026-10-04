@@ -3,21 +3,24 @@
 //! Precedence is CLI flag → config file → built-in default, so the file only
 //! ever has to state what differs from §2's defaults.
 //!
-//! Only the parameters that exist today are configurable. There is deliberately
-//! no `wallpaper = "…"` yet: images land with the next milestone, and a key that
-//! does nothing is worse than no key at all.
-//!
 //! ```toml
-//! scale = 1.1          # canvas enlargement (§4.1); 1.0 ..= 1.35
-//! column_span = 6      # fixed column span (§4.2.1); >= 2
-//! workspace_span = 6   # fixed workspace span; >= 2
-//! duration_ms = 600    # easing duration (§4.2.6)
-//! overview_zoom = 0.96 # canvas zoom while niri's overview is open
-//! overview_duration_ms = 350
+//! wallpaper = "~/Pictures/wall.webp"
+//! scale = 1.2          # canvas enlargement (§4.1); 1.0 ..= 1.35
+//! column_span = 5      # fixed column span (§4.2.1); >= 2
+//! workspace_span = 4   # fixed workspace span; >= 2
 //! namespace = "niripaper"
-//! wallpaper = "~/Pictures/wall.png"
 //!
-//! [outputs."eDP-1"]    # per-output overrides of the motion parameters
+//! [animations]
+//! follow_niri = true   # reuse niri's own animation settings
+//!
+//! [animations.parallax]
+//! duration_ms = 600
+//! curve = "ease-out-cubic"
+//!
+//! [animations.overview-open-close]
+//! zoom = 0.96
+//!
+//! [outputs."eDP-1"]    # per-output overrides of any of the above
 //! scale = 1.2
 //! ```
 
@@ -276,10 +279,28 @@ fn check_span(key: &str, span: usize) -> Result<usize, String> {
 /// The file has to exist: a wallpaper that silently does not load is exactly
 /// the kind of failure this project keeps getting bitten by.
 fn check_wallpaper(key: &str, path: PathBuf) -> Result<PathBuf, String> {
+    let path = expand_home(&path);
     if !path.exists() {
         return Err(format!("{key} {} does not exist", path.display()));
     }
     Ok(path)
+}
+
+/// Expand a leading `~` the way a shell would, so `~/Pictures/wall.png` works in
+/// the config file. niri expands `~` in its own paths, so people write it; a
+/// config value is not a shell word, so nobody else will do it for us.
+fn expand_home(path: &Path) -> PathBuf {
+    expand_home_at(path, std::env::var_os("HOME").map(PathBuf::from).as_deref())
+}
+
+fn expand_home_at(path: &Path, home: Option<&Path>) -> PathBuf {
+    let Some(rest) = path.to_str().and_then(|text| text.strip_prefix('~')) else {
+        return path.to_owned();
+    };
+    match home {
+        Some(home) => home.join(rest.trim_start_matches('/')),
+        None => path.to_owned(),
+    }
 }
 
 /// The zoom must stay positive; the daemon clamps `scale × zoom` to ≥ 1.0 as a
@@ -564,6 +585,31 @@ mod tests {
         assert_eq!(config.output("HDMI-A-1").column_span, 8);
         assert_eq!(config.output("HDMI-A-1").workspace_span, 5);
         assert_eq!(config.output("HDMI-A-1").wallpaper, None);
+    }
+
+    #[test]
+    fn a_leading_tilde_in_the_wallpaper_expands() {
+        // niri expands `~` in its own paths, so people write it here too. A
+        // config value is not a shell word, so nobody else will.
+        let home = Path::new("/home/someone");
+        assert_eq!(
+            expand_home_at(Path::new("~/Pictures/wall.png"), Some(home)),
+            PathBuf::from("/home/someone/Pictures/wall.png")
+        );
+        // Anything else is left exactly as written.
+        assert_eq!(
+            expand_home_at(Path::new("/abs/wall.png"), Some(home)),
+            PathBuf::from("/abs/wall.png")
+        );
+        assert_eq!(
+            expand_home_at(Path::new("rel/wall.png"), Some(home)),
+            PathBuf::from("rel/wall.png")
+        );
+        // No home to expand into: leave it alone rather than invent a path.
+        assert_eq!(
+            expand_home_at(Path::new("~/wall.png"), None),
+            PathBuf::from("~/wall.png")
+        );
     }
 
     #[test]
