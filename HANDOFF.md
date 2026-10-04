@@ -9,15 +9,21 @@
 
 ```
 位置：~/workspace/rust/niripaper      # 已 git init（main）；尚无提交、无 remote
-进度：M0a ✔、M0b ✔；M1 进行中——`motion.rs`（§4.3 全部用例）、`niri.rs`（事件流）、`niripaper watch` 已完成，
-      还剩：frame-callback 视差循环 + buffer 池 + 配置文件
+进度：M0a ✔、M0b ✔；M1 基本完成——`motion.rs`（§4.3 全部用例）、`niri.rs`（事件流）、
+      帧回调 OutCubic 视差循环 + buffer 池 + `niripaper daemon` 已完成并实测；
+      还剩：配置文件，以及"102.4 px"那条需要 3 列工作区的测量（当前工作区最多 2 列）
 ```
 
 ```sh
 cd ~/workspace/rust/niripaper
 cargo build
 
-# 0) 看 niripaper 认为当前布局的视差目标是多少（不需要 GPU，改列/切工作区时会实时打印）
+# 0) 真画壁纸层（跟随 niri 布局；静置时阻塞在 poll()，零开销）
+./target/debug/niripaper daemon --output DP-1 --pattern blocks --trace
+#    注意：namespace 默认 `niripaper`，需要用户在 rules.kdl 里加 place-within-backdrop；
+#    要零配置验证，用 --namespace mpvpaper 命中本机既有规则
+
+# 0b) 只看视差目标（不需要 GPU，改列/切工作区时实时打印）
 ./target/debug/niripaper watch --output DP-1 --screen 2560x1440
 
 # 1) 诊断：每个 DRM 节点能不能建 EGL 上下文、能不能产出可渲染的 dmabuf
@@ -234,6 +240,10 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | niri 的 `MultiRenderer` 只在 `render_device != target_device` 时启用拷贝路径：`create_shared_dma_framebuffer` 用**渲染设备**的 allocator 分配，modifier 取两设备可导入集合的**交集**，再让目标设备 `import_dmabuf` | smithay `renderer/multigpu/mod.rs` |
 | `debug { render-drm-device "<render node>" }` 只读一次（`Tty::new`），**热重载不生效，必须重启 niri**；`ignore-drm-device` 自 25.11 起可用 | niri `src/backend/tty.rs:466`、`docs/wiki/Configuration:-Debug-Options.md` |
 | 混合显卡机型 niri 默认在 iGPU 上渲染是**官方设计**（省电），代价是外接屏内容要拷到 dGPU，官方承认高分辨率高刷下可能卡顿；解法是 UEFI 的 MUX 开关或上面的 debug 选项 | niri `docs/wiki/FAQ.md` |
+| **niri 对图层表面的 frame callback 按 60 Hz 节奏**，即便 DP-1 当前是 180 Hz：实测 68 帧的 dt 分布 min 15.9 / 中位 16.7 / max 16.9 ms。600 ms 的缓动因此约 36 帧 | M1 daemon `--trace` |
+| **`wl_surface.frame` 只在 `wl_surface.commit` 时生效**：单独发出请求、不 commit，回调永远不来（表现为"动画一帧都不走"）。正确做法是与 buffer 同一次 commit，或在没有新 buffer 时单独 commit 一次 | M1 实测（第一次实现踩到） |
+| **缓冲池空时不能只"跳过绘制"**：那样既没有 commit 也没有新的帧请求，动画会卡死。必须补一次只带帧请求的 commit | M1 实测 |
+| 测量用的条带：窗口上下沿的 10 px 外边距、左右 10 px 边距都是纯壁纸；**屏幕底部有 `noctalia-dock` 图层**、顶部有 bar，用它们做剖面会被污染 | M1 实测 |
 | `--dump-stats` 是**抽样**输出（不能用来数帧率）；`nvidia-smi` 在桌面负载下噪声大（基线 26–65%），难以量测边际成本 | 实测 |
 | 工具链：`cargo` / `rustc` / `gcc` / `grim` 在位；`socat` 未安装 | `command -v` |
 
@@ -245,7 +255,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | --- | --- | --- |
 | M0a ✔ | EGL 按 GPU 绑定 | 结论修正为"按合成器 main device 绑定"，机制见 §5；`eglpin` 可复现 |
 | **M0b ✔** | 最小 layer 客户端 + 自建 dmabuf 交换链 | ① `niri msg --json layers` 出现 `{"namespace":"niripaper","output":"DP-1","layer":"Background"}`；② 用 `--namespace mpvpaper` 命中既有 rule 后，半透明窗口的模糊区域确实显示我们的画面（无 rule 时显示 Noctalia 壁纸）；③ 进程只打开 `/dev/dri/renderD128`；④ 静置 6 s：0 事件、0.0 ms CPU、0 字节写 socket、不请求 frame callback；⑤ 5 帧提交收到 4 次 `wl_buffer::release`（缓冲被回收，非泄漏） |
-| M1 | Niri IPC + `motion.rs`（§4.3 全部用例）+ frame callback 的 OutCubic 视差 + CLI + 配置文件 | `cargo test` 覆盖 §4.3；实测切列位移 = 102.4 px（2560 宽、scale 1.1、span 6）且逐帧单调；静置零开销。**M0b 的"每帧新建 buffer"要换成 buffer 池**（连续帧下不能每帧 `gbm_bo_create`）。**缓冲必须跟着"当前" feedback 走**：`main_device` 可能运行时变化（会话恢复、设备变化），变了就要重建缓冲与 GL 导入；日志里必须记下"选了哪个设备 / vendor / modifier"（§7 风险 1 的失败是静默的） |
+| M1 | Niri IPC + `motion.rs`（§4.3 全部用例）+ frame callback 的 OutCubic 视差 + CLI + 配置文件 | **已验证**：`cargo test` 覆盖 §4.3（18 个用例）；逐帧单调（两段动画 30/35 帧，`--trace` 可复现）；静置 8 s：0 帧、0 目标变化、0 CPU 滴答；buffer 池 68 帧 / 68 release / 0 丢帧。**待补**：切列位移的 102.4 px 那条需要 3 列工作区（本机各工作区只有 ≤2 列），已测得 Δrank=1 为 **51–52 px**（预期 51.2）。**配置文件**尚未实现。**缓冲必须跟着"当前" feedback 走**：`main_device` 可能运行时变化（会话恢复、设备变化），变了就要重建缓冲与 GL 导入；日志里必须记下"选了哪个设备 / vendor / modifier"（§7 风险 1 的失败是静默的） |
 | M2 | V2 视频（libmpv 纹理）+ 换图过渡 | 视频壁纸下切列时，可见画面与**模糊区域**一起动；任意内容组合换图无空窗 |
 | M3 | Noctalia 插件（镜像壁纸选择 + 设置 + 开关 + 原生层交接） | 关闭插件无残留进程；改壁纸 1 s 内生效；原生层恢复自愈 |
 | M4 | 开源：README / 教程 / 示例 / CI（`cargo test` + `clippy` + `fmt`）、AUR / Releases | 新用户照 README 从零到出效果 |
