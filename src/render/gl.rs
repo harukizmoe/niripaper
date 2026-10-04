@@ -14,6 +14,17 @@ pub const GL_VERSION: u32 = 0x1F02;
 pub const GL_EXTENSIONS: u32 = 0x1F03;
 
 pub const GL_TEXTURE_2D: u32 = 0x0DE1;
+pub const GL_TEXTURE0: u32 = 0x84C0;
+pub const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
+pub const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
+pub const GL_TEXTURE_WRAP_S: u32 = 0x2802;
+pub const GL_TEXTURE_WRAP_T: u32 = 0x2803;
+pub const GL_LINEAR: u32 = 0x2601;
+pub const GL_CLAMP_TO_EDGE: u32 = 0x812F;
+pub const GL_RGB: u32 = 0x1907;
+pub const GL_RGB8: u32 = 0x8051;
+pub const GL_UNSIGNED_BYTE: u32 = 0x1401;
+pub const GL_UNPACK_ALIGNMENT: u32 = 0x0CF5;
 pub const GL_COLOR_ATTACHMENT0: u32 = 0x8CE0;
 pub const GL_FRAMEBUFFER: u32 = 0x8D40;
 pub const GL_FRAMEBUFFER_COMPLETE: u32 = 0x8CD5;
@@ -33,6 +44,20 @@ extern "C" {
 
     fn glGenTextures(n: i32, textures: *mut u32);
     fn glBindTexture(target: u32, texture: u32);
+    fn glActiveTexture(texture: u32);
+    fn glTexImage2D(
+        target: u32,
+        level: i32,
+        internal_format: i32,
+        width: i32,
+        height: i32,
+        border: i32,
+        format: u32,
+        kind: u32,
+        pixels: *const c_void,
+    );
+    fn glPixelStorei(pname: u32, param: i32);
+    fn glTexParameteri(target: u32, pname: u32, param: i32);
     fn glDeleteTextures(n: i32, textures: *const u32);
     fn glEGLImageTargetTexture2DOES(target: u32, image: *mut c_void);
 
@@ -135,6 +160,63 @@ pub enum Pattern {
     Blocks,
 }
 
+/// An RGB texture, sized to the canvas.
+#[derive(Debug)]
+pub struct Texture {
+    pub id: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Texture {
+    /// Upload tightly packed 8-bit RGB pixels.
+    pub fn from_rgb(width: u32, height: u32, pixels: &[u8]) -> Self {
+        assert_eq!(
+            pixels.len(),
+            (width as usize) * (height as usize) * 3,
+            "pixel buffer does not match {width}x{height} RGB"
+        );
+        let id = gen_texture();
+        unsafe {
+            glBindTexture(GL_TEXTURE_2D, id);
+            // Rows are tightly packed; the default 4-byte alignment would
+            // corrupt odd widths.
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+            glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_RGB8 as i32,
+                width as i32,
+                height as i32,
+                0,
+                GL_RGB,
+                GL_UNSIGNED_BYTE,
+                pixels.as_ptr().cast(),
+            );
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        Self { id, width, height }
+    }
+}
+
+impl Drop for Texture {
+    fn drop(&mut self) {
+        // Requires the owning context to be current.
+        delete_texture(self.id);
+    }
+}
+
+/// What to draw: a real wallpaper, or the procedural pattern when there is none.
+#[derive(Debug, Clone, Copy)]
+pub enum Content<'a> {
+    Wallpaper(&'a Texture),
+    Pattern(Pattern),
+}
+
 /// Where the canvas sits relative to the screen.
 #[derive(Debug, Clone, Copy)]
 pub struct View {
@@ -166,6 +248,8 @@ struct Uniforms {
     scale: i32,
     offset: i32,
     pattern: i32,
+    wallpaper: i32,
+    has_wallpaper: i32,
 }
 
 /// A shader program plus the empty VAO core-profile GL insists on.
@@ -203,6 +287,8 @@ impl Renderer {
             scale: uniform(program, "u_scale"),
             offset: uniform(program, "u_offset"),
             pattern: uniform(program, "u_pattern"),
+            wallpaper: uniform(program, "u_wallpaper"),
+            has_wallpaper: uniform(program, "u_has_wallpaper"),
         };
         Ok(Self {
             program,
@@ -212,21 +298,28 @@ impl Renderer {
     }
 
     /// Draw the pattern over the whole current framebuffer.
-    pub fn draw(&self, view: View) {
+    pub fn draw(&self, view: View, content: Content<'_>) {
         unsafe {
             glBindVertexArray(self.vao);
             glUseProgram(self.program);
             glUniform2f(self.uniforms.screen, view.screen.0, view.screen.1);
             glUniform1f(self.uniforms.scale, view.scale);
             glUniform2f(self.uniforms.offset, view.offset.0, view.offset.1);
-            glUniform1i(
-                self.uniforms.pattern,
-                if view.pattern == Pattern::Blocks {
-                    1
-                } else {
-                    0
-                },
-            );
+            match content {
+                Content::Wallpaper(texture) => {
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, texture.id);
+                    glUniform1i(self.uniforms.wallpaper, 0);
+                    glUniform1i(self.uniforms.has_wallpaper, 1);
+                }
+                Content::Pattern(pattern) => {
+                    glUniform1i(
+                        self.uniforms.pattern,
+                        if pattern == Pattern::Blocks { 1 } else { 0 },
+                    );
+                    glUniform1i(self.uniforms.has_wallpaper, 0);
+                }
+            }
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindVertexArray(0);
         }
@@ -253,6 +346,8 @@ uniform vec2 u_screen;
 uniform float u_scale;
 uniform vec2 u_offset;
 uniform int u_pattern;
+uniform sampler2D u_wallpaper;
+uniform int u_has_wallpaper;
 out vec4 color;
 
 float hash(vec2 p) {
@@ -263,6 +358,13 @@ void main() {
     vec2 canvas = u_screen * u_scale;
     vec2 origin = (canvas - u_screen) * 0.5 + u_offset;
     vec2 c = (uv * u_screen + origin) / canvas;
+
+    if (u_has_wallpaper == 1) {
+        // The texture is already canvas-sized and cover-cropped, so this is a
+        // straight 1:1 lookup.
+        color = vec4(texture(u_wallpaper, c).rgb, 1.0);
+        return;
+    }
 
     vec3 base;
     if (u_pattern == 1) {

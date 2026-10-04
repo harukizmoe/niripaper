@@ -66,7 +66,7 @@ fn usage() {
          commands:\n\
          \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
          \x20        [--scale F] [--span N] [--duration-ms N]\n\
-         \x20        [--pattern blocks|bands] [--trace]\n\
+         \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
     );
@@ -180,6 +180,7 @@ struct Overrides {
     span: Option<usize>,
     duration_ms: Option<u64>,
     pattern: Option<Pattern>,
+    wallpaper: Option<PathBuf>,
     config: Option<PathBuf>,
     trace: bool,
 }
@@ -193,6 +194,7 @@ fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
             "--output" => over.output = Some(value()?.clone()),
             "--namespace" => over.namespace = Some(value()?.clone()),
             "--config" => over.config = Some(PathBuf::from(value()?)),
+            "--wallpaper" => over.wallpaper = Some(PathBuf::from(value()?)),
             "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
             "--span" => over.span = Some(value()?.parse().map_err(|e| format!("--span: {e}"))?),
             "--duration-ms" => {
@@ -255,6 +257,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.span = over.span.unwrap_or(params.span);
     options.duration = Duration::from_millis(over.duration_ms.unwrap_or(config.duration_ms));
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
+    options.wallpaper = over.wallpaper.or(params.wallpaper);
     if let Some(pattern) = over.pattern {
         options.pattern = pattern;
     }

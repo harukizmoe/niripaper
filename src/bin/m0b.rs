@@ -350,10 +350,13 @@ fn run() -> Result<(), String> {
             );
         }
         frame.begin();
-        renderer.draw(gl::View::flat(
-            (frame.width as f32, frame.height as f32),
-            gl::Pattern::Bands,
-        ));
+        renderer.draw(
+            gl::View::flat(
+                (frame.width as f32, frame.height as f32),
+                gl::Pattern::Bands,
+            ),
+            gl::Content::Pattern(gl::Pattern::Bands),
+        );
         frame.finish();
         if let Some(err) = gl::last_error() {
             return Err(format!("GL error after drawing: 0x{err:x}"));

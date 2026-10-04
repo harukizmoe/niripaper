@@ -9,8 +9,8 @@
 
 ```
 位置：~/workspace/rust/niripaper      # 已 git init（main）；尚无提交、无 remote
-进度：M0a ✔、M0b ✔、**M1 ✔**（§4.3 全部用例、事件流、帧回调视差、buffer 池、CLI、配置文件，均已实测）。
-      下一步 M2：静态图 → 视频 → 换图过渡
+进度：M0a ✔、M0b ✔、**M1 ✔**；**M2 进行中**——静态图已可用（`render/image.rs`）。
+      还剩 M2 的：换图过渡、libmpv 视频纹理
 ```
 
 ```sh
@@ -18,7 +18,12 @@ cd ~/workspace/rust/niripaper
 cargo build
 
 # 0) 真画壁纸层（跟随 niri 布局；静置时阻塞在 poll()，零开销）
-./target/debug/niripaper daemon --output DP-1 --pattern blocks --trace
+./target/debug/niripaper daemon --output DP-1 --wallpaper ~/Pictures/Wallpapers/anime_car_sunset.webp
+#    看效果最省事的方式：切到一个空工作区（没有窗口遮挡），图层就是可见背景。
+#    namespace 默认 `niripaper`：用户没加 layer-rule 时它属于"工作区背景"，
+#    有窗口的工作区只会露出 10 px 边距；加 --namespace mpvpaper 会命中本机既有
+#    规则、进 backdrop，于是到处可见（会盖住 Noctalia 的壁纸，退出即恢复）。
+#    不加 --wallpaper 时画的是程序化测试图案（--pattern blocks|bands）。
 #    配置：~/.config/niripaper/config.toml（可缺省）；优先级 CLI > 配置文件 > §2 默认值
 #    daemon --config <路径> 可指定文件；启动日志会打印"生效值"与配置文件来源
 #    注意：namespace 默认 `niripaper`，需要用户在 rules.kdl 里加 place-within-backdrop；
@@ -91,7 +96,7 @@ niripaper（Rust 守护进程）
 │   ├── gbm.rs     GBM 设备与 buffer（O_RDWR 打开 render node；plane fd/offset/stride/modifier）
 │   ├── dmabuf.rs  Frame：GBM BO → EGLImage → GL 纹理 → FBO，可直接作为 wl_buffer 提交
 │   ├── gl.rs      GL 子集（链 libGL，GLVND 按当前 EGL 上下文分发）+ 测试图案
-│   ├── image.rs   静态图：解码一次 → 缩放到 ceil(output × scale) 纹理
+│   ├── image.rs   已实现：解码 → cover 裁剪 → 缩放到画布（output × scale）→ 纹理
 │   ├── video.rs   libmpv render API → 纹理
 │   └── anim.rs    frame callback 驱动的动画：视差平移 + 换图过渡
 └── cli.rs      niripaper {daemon|set|video|query|reload|kill}；另有 `watch`（打印视差目标，纯观测、不用 GPU）
@@ -246,6 +251,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | **`wl_surface.frame` 只在 `wl_surface.commit` 时生效**：单独发出请求、不 commit，回调永远不来（表现为"动画一帧都不走"）。正确做法是与 buffer 同一次 commit，或在没有新 buffer 时单独 commit 一次 | M1 实测（第一次实现踩到） |
 | **缓冲池空时不能只"跳过绘制"**：那样既没有 commit 也没有新的帧请求，动画会卡死。必须补一次只带帧请求的 commit | M1 实测 |
 | 测量用的条带：窗口上下沿的 10 px 外边距、左右 10 px 边距都是纯壁纸；**屏幕底部有 `noctalia-dock` 图层**、顶部有 bar，用它们做剖面会被污染 | M1 实测 |
+| **做逐像素比对时要扣掉窗口阴影**：本机 `layout { shadow { on; softness 10; spread 4; color "#00000070" } }`，于是窗口外的 10 px 边距被阴影压暗——实测比值从离窗口远处 0.884 单调降到贴窗口处 0.823（纯乘性、有梯度）。这是配置效果，不是渲染 bug；要干净的比对就切到空工作区 | M2 实测 |
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
 | 测 3 列位移时，图层**必须**在 backdrop（`--namespace mpvpaper` 命中既有规则）：否则工作区滚动会把壁纸一起平移，测到的就不是视差位移 | M1 实测 |
 | `--dump-stats` 是**抽样**输出（不能用来数帧率）；`nvidia-smi` 在桌面负载下噪声大（基线 26–65%），难以量测边际成本 | 实测 |
@@ -260,7 +266,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | M0a ✔ | EGL 按 GPU 绑定 | 结论修正为"按合成器 main device 绑定"，机制见 §5；`eglpin` 可复现 |
 | **M0b ✔** | 最小 layer 客户端 + 自建 dmabuf 交换链 | ① `niri msg --json layers` 出现 `{"namespace":"niripaper","output":"DP-1","layer":"Background"}`；② 用 `--namespace mpvpaper` 命中既有 rule 后，半透明窗口的模糊区域确实显示我们的画面（无 rule 时显示 Noctalia 壁纸）；③ 进程只打开 `/dev/dri/renderD128`；④ 静置 6 s：0 事件、0.0 ms CPU、0 字节写 socket、不请求 frame callback；⑤ 5 帧提交收到 4 次 `wl_buffer::release`（缓冲被回收，非泄漏） |
 | **M1 ✔** | Niri IPC + `motion.rs`（§4.3 全部用例）+ frame callback 的 OutCubic 视差 + CLI + 配置文件 | **已验证**：`cargo test` 覆盖 §4.3（18 个用例）；逐帧单调（两段动画 30/35 帧，`--trace` 可复现）；静置 8 s：0 帧、0 目标变化、0 CPU 滴答；buffer 池 68 帧 / 68 release / 0 丢帧。**已实测切列位移**：3 列工作区（临时开 3 个终端造列，测完关闭）从第 1 列到第 3 列 = **102 px**（预期 102.4；相关性搜索是 1 px 粒度），纯壁纸条带上的 mse 160 vs 零位移 326；2 列时 Δrank=1 = **51–52 px**（预期 51.2）。**配置文件已实现**：`~/.config/niripaper/config.toml`，优先级 CLI > 文件 > 默认值；实测 `duration_ms = 150` 时动画段为 7/10 帧（600 ms 时约 36 帧），证明配置确实驱动到缓动。**缓冲必须跟着"当前" feedback 走**：`main_device` 可能运行时变化（会话恢复、设备变化），变了就要重建缓冲与 GL 导入；日志里必须记下"选了哪个设备 / vendor / modifier"（§7 风险 1 的失败是静默的） |
-| M2 | V2 视频（libmpv 纹理）+ 换图过渡 | 视频壁纸下切列时，可见画面与**模糊区域**一起动；任意内容组合换图无空窗 |
+| **M2 进行中** | 静态图 ✔ / 换图过渡 / V2 视频（libmpv 纹理） | 静态图已实测：截图与"源图 → cover → 缩放 → 视差偏移"的独立复算**相关系数 0.9847**，偏移误差 ≤1 px。剩余验收：视频壁纸下切列时可见画面与**模糊区域**一起动；任意内容组合换图无空窗 |
 | M3 | Noctalia 插件（镜像壁纸选择 + 设置 + 开关 + 原生层交接） | 关闭插件无残留进程；改壁纸 1 s 内生效；原生层恢复自愈 |
 | M4 | 开源：README / 教程 / 示例 / CI（`cargo test` + `clippy` + `fmt`）、AUR / Releases | 新用户照 README 从零到出效果 |
 

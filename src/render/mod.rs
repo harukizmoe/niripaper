@@ -5,4 +5,5 @@ pub mod dmabuf;
 pub mod egl;
 pub mod gbm;
 pub mod gl;
+pub mod image;
 pub mod layer;

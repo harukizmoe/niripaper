@@ -53,6 +53,8 @@ pub struct Options {
     pub scale: f64,
     pub span: usize,
     pub pattern: Pattern,
+    /// A static wallpaper to draw instead of the procedural pattern.
+    pub wallpaper: Option<std::path::PathBuf>,
     /// Easing duration (§4.2.6).
     pub duration: Duration,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
@@ -69,6 +71,7 @@ impl Options {
             scale: motion::DEFAULT_SCALE,
             span: DEFAULT_SPAN,
             pattern: Pattern::Blocks,
+            wallpaper: None,
             duration: crate::render::anim::DEFAULT_DURATION,
             trace: false,
         }
@@ -147,6 +150,24 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         ));
     }
 
+    // The canvas is the output enlarged by `scale` (§4.1); a wallpaper is
+    // fitted to exactly that, so the shader samples it 1:1.
+    // `round`, not `ceil`: 1440 × 1.1 is 1584 exactly in decimal but
+    // 1584.0000000000002 in binary, and `ceil` would hand the shader a canvas
+    // one pixel too tall — which shifts the whole vertical travel by a pixel.
+    let canvas = (
+        (surface.width as f64 * options.scale).round() as u32,
+        (surface.height as f64 * options.scale).round() as u32,
+    );
+    let wallpaper = match &options.wallpaper {
+        Some(path) => {
+            let loaded = crate::render::image::Wallpaper::load(path, canvas)?;
+            log(&format!("wallpaper {}", loaded.describe()));
+            Some(loaded)
+        }
+        None => None,
+    };
+
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect()?;
     niri.wait_for_full_state()?;
@@ -176,6 +197,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         animator.target(),
         screen,
         options,
+        wallpaper.as_ref(),
         false,
     )?;
     drawn += 1;
@@ -229,9 +251,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             client.wait_events(Duration::ZERO)?;
         }
 
-        if fds[0].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
-            log(&format!("wayland revents {:#x}", fds[0].revents));
-        }
         if client.state.frames_done > seen_frames {
             seen_frames = client.state.frames_done;
             let now = Instant::now();
@@ -246,6 +265,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 progress,
                 screen,
                 options,
+                wallpaper.as_ref(),
                 moving,
             )?;
             drawn += u64::from(submitted);
@@ -301,6 +321,7 @@ fn draw(
     progress: motion::Progress,
     screen: (f64, f64),
     options: &Options,
+    wallpaper: Option<&crate::render::image::Wallpaper>,
     want_next_frame: bool,
 ) -> Result<bool, String> {
     let released = std::mem::take(&mut client.state.released);
@@ -314,12 +335,19 @@ fn draw(
     let offset = offset_px(progress, screen, options.scale);
     let frame = pool.frame(slot);
     frame.begin();
-    renderer.draw(gl::View {
-        screen: (screen.0 as f32, screen.1 as f32),
-        scale: options.scale as f32,
-        offset: (offset.0 as f32, offset.1 as f32),
-        pattern: options.pattern,
-    });
+    let content = match wallpaper {
+        Some(wallpaper) => gl::Content::Wallpaper(&wallpaper.texture),
+        None => gl::Content::Pattern(options.pattern),
+    };
+    renderer.draw(
+        gl::View {
+            screen: (screen.0 as f32, screen.1 as f32),
+            scale: options.scale as f32,
+            offset: (offset.0 as f32, offset.1 as f32),
+            pattern: options.pattern,
+        },
+        content,
+    );
     frame.finish();
     if let Some(err) = gl::last_error() {
         return Err(format!("GL error after drawing: 0x{err:x}"));

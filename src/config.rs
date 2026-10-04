@@ -12,6 +12,7 @@
 //! span = 6             # fixed column span (§4.2.1); >= 2
 //! duration_ms = 600    # easing duration (§4.2.6)
 //! namespace = "niripaper"
+//! wallpaper = "~/Pictures/wall.png"
 //!
 //! [outputs."eDP-1"]    # per-output overrides of the motion parameters
 //! scale = 1.2
@@ -36,7 +37,9 @@ pub struct Config {
     pub span: usize,
     pub duration_ms: u64,
     pub namespace: String,
-    /// Per-output overrides of the motion parameters.
+    /// Static wallpaper for every output that does not override it.
+    pub wallpaper: Option<PathBuf>,
+    /// Per-output overrides.
     pub outputs: BTreeMap<String, OutputOverride>,
 }
 
@@ -47,6 +50,7 @@ impl Default for Config {
             span: DEFAULT_SPAN,
             duration_ms: DEFAULT_DURATION.as_millis() as u64,
             namespace: DEFAULT_NAMESPACE.to_owned(),
+            wallpaper: None,
             outputs: BTreeMap::new(),
         }
     }
@@ -58,13 +62,15 @@ impl Default for Config {
 pub struct OutputOverride {
     pub scale: Option<f64>,
     pub span: Option<usize>,
+    pub wallpaper: Option<PathBuf>,
 }
 
-/// The motion parameters in effect for one output.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The parameters in effect for one output.
+#[derive(Debug, Clone, PartialEq)]
 pub struct OutputParams {
     pub scale: f64,
     pub span: usize,
+    pub wallpaper: Option<PathBuf>,
 }
 
 impl Config {
@@ -96,6 +102,9 @@ impl Config {
         if let Some(duration) = raw.duration_ms {
             config.duration_ms = check_duration(duration)?;
         }
+        if let Some(wallpaper) = raw.wallpaper {
+            config.wallpaper = Some(check_wallpaper("wallpaper", wallpaper)?);
+        }
         if let Some(namespace) = raw.namespace {
             if namespace.is_empty() {
                 return Err("namespace must not be empty".to_owned());
@@ -109,6 +118,9 @@ impl Config {
             if let Some(span) = output.span {
                 check_span(&format!("outputs.{name}.span"), span)?;
             }
+            if let Some(wallpaper) = &output.wallpaper {
+                check_wallpaper(&format!("outputs.{name}.wallpaper"), wallpaper.clone())?;
+            }
             config.outputs.insert(name, output);
         }
         Ok(config)
@@ -120,6 +132,9 @@ impl Config {
         OutputParams {
             scale: over.and_then(|o| o.scale).unwrap_or(self.scale),
             span: over.and_then(|o| o.span).unwrap_or(self.span),
+            wallpaper: over
+                .and_then(|o| o.wallpaper.clone())
+                .or_else(|| self.wallpaper.clone()),
         }
     }
 }
@@ -160,6 +175,15 @@ fn check_span(key: &str, span: usize) -> Result<usize, String> {
     Ok(span)
 }
 
+/// The file has to exist: a wallpaper that silently does not load is exactly
+/// the kind of failure this project keeps getting bitten by.
+fn check_wallpaper(key: &str, path: PathBuf) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("{key} {} does not exist", path.display()));
+    }
+    Ok(path)
+}
+
 fn check_duration(duration_ms: u64) -> Result<u64, String> {
     if duration_ms == 0 {
         return Err("duration_ms must be greater than 0".to_owned());
@@ -176,6 +200,7 @@ struct RawConfig {
     span: Option<usize>,
     duration_ms: Option<u64>,
     namespace: Option<String>,
+    wallpaper: Option<PathBuf>,
     #[serde(default)]
     outputs: BTreeMap<String, OutputOverride>,
 }
@@ -203,6 +228,7 @@ mod tests {
 
             [outputs."eDP-1"]
             span = 4
+            wallpaper = "/etc/hostname"
             "#,
         )
         .expect("parses");
@@ -210,28 +236,19 @@ mod tests {
         assert_eq!(config.span, 8);
         assert_eq!(config.duration_ms, 250);
         assert_eq!(config.namespace, "custom");
+        assert_eq!(config.output("DP-1").scale, 1.3);
+        assert_eq!(config.output("DP-1").span, 8);
+        assert_eq!(config.output("eDP-1").scale, 1.2);
+        assert_eq!(config.output("eDP-1").span, 4);
+        // The per-output wallpaper wins over the global one.
         assert_eq!(
-            config.output("DP-1"),
-            OutputParams {
-                scale: 1.3,
-                span: 8
-            }
-        );
-        assert_eq!(
-            config.output("eDP-1"),
-            OutputParams {
-                scale: 1.2,
-                span: 4
-            }
+            config.output("eDP-1").wallpaper.as_deref(),
+            Some(Path::new("/etc/hostname"))
         );
         // An output with no section gets the global values.
-        assert_eq!(
-            config.output("HDMI-A-1"),
-            OutputParams {
-                scale: 1.2,
-                span: 8
-            }
-        );
+        assert_eq!(config.output("HDMI-A-1").scale, 1.2);
+        assert_eq!(config.output("HDMI-A-1").span, 8);
+        assert_eq!(config.output("HDMI-A-1").wallpaper, None);
     }
 
     #[test]
@@ -249,6 +266,8 @@ mod tests {
         assert!(per_output.contains("outputs.DP-1.scale"), "{per_output}");
         let namespace = Config::parse("namespace = \"\"").unwrap_err();
         assert!(namespace.contains("namespace"), "{namespace}");
+        let wallpaper = Config::parse("wallpaper = \"/nope/missing.png\"").unwrap_err();
+        assert!(wallpaper.contains("wallpaper"), "{wallpaper}");
     }
 
     #[test]
