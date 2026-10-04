@@ -150,8 +150,8 @@ written in this file wins over what niri says.
 - **The wallpaper does not move.** If niri's config turns animations off globally
   (`animations { off }`), the overview transition is off here too. The parallax is
   unaffected — it is not one of niri's animations.
-- **You already have layer rules for `mpvpaper`.** Set `namespace = "mpvpaper"` and
-  your existing rules apply to this daemon as well.
+- **Your layer rules match a different name.** Layer rules are matched by namespace,
+  so set `namespace` to whatever name your existing rules already use.
 
 ## License
 
@@ -161,5 +161,3 @@ GPL-3.0-or-later © 2026 harukizmoe. See [LICENSE](LICENSE).
 
 - **[niri](https://github.com/niri-wm/niri)** — the compositor this is written for,
   and the source of the event stream it follows.
-- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** — where the `mpvpaper`
-  layer-shell namespace convention comes from.
