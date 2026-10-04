@@ -22,11 +22,12 @@ cargo build
 #    看效果最省事的方式：切到一个空工作区（没有窗口遮挡），图层就是可见背景。
 #    namespace 默认 `niripaper`：用户没加 layer-rule 时它属于"工作区背景"，
 #    有窗口的工作区只会露出 10 px 边距；加 --namespace mpvpaper 会命中本机既有
-#    规则、进 backdrop，于是到处可见（会盖住 Noctalia 的壁纸，退出即恢复）。
+#    规则、进 backdrop，于是连总览背景都是壁纸（会盖住 Noctalia 的壁纸，退出即恢复）。
 #    不加 --wallpaper 时画的是程序化测试图案（--pattern blocks|bands）。
 #    配置：~/.config/niripaper/config.toml（可缺省）；优先级 CLI > 配置文件 > §2 默认值
 #    daemon --config <路径> 可指定文件；启动日志会打印"生效值"与配置文件来源
-#    注意：namespace 默认 `niripaper`，需要用户在 rules.kdl 里加 place-within-backdrop；
+#    注意：namespace 默认 `niripaper`；**不加规则**时它是工作区背景（推荐默认，总览背景干净、
+#    窗口照样有壁纸和模糊）；想让它进 backdrop 才需要用户加 place-within-backdrop；
 #    要零配置验证，用 --namespace mpvpaper 命中本机既有规则
 
 # 0b) 只看视差目标（不需要 GPU，改列/切工作区时实时打印）
@@ -70,7 +71,7 @@ cargo build
 | **选 GPU 的规则** | **跟随合成器的 dmabuf feedback `main_device`**，不是"输出所在的 GPU"。合成器在哪个 GPU 上合成，就在哪个 GPU 上渲染（M0b 实测：本机 DP-1 由 NVIDIA 输出，但 niri 在 AMD 上合成）。**"选哪块卡"完全不属于本项目**：不提供选卡开关，不写 niri 配置，不碰 MUX/BIOS。我们只负责"按它说的那张卡把缓冲做对"（§7 风险 1） |
 | EGL vendor | 由目标 GPU 的 PCI vendor id 决定（`0x10de` → NVIDIA ICD，其余 → Mesa），在**本进程第一次 EGL 调用之前**用 `__EGL_VENDOR_LIBRARY_FILENAMES` 钉住（§5）。**一个进程只能钉一个 vendor** |
 | 进度来源 | 守护进程**自己**连 `$NIRI_SOCKET` 读 event stream，不依赖外部推送 |
-| 命名空间 / layer rule | 守护进程用 `niripaper`；用户需在 `~/.config/niri/rules.kdl` 加 `match namespace="niripaper"` + `place-within-backdrop true` |
+| 命名空间 / layer rule | 守护进程用 `niripaper`。**规则是可选的**（见下）：默认（不加规则）= 壁纸是**工作区背景**；加 `match namespace="niripaper"` + `place-within-backdrop true` = 壁纸进 **backdrop**。两者**模糊效果相同**（实测），区别只有两处：① backdrop 时总览背景整屏都是壁纸、且切工作区时壁纸不跟着滑；② 工作区背景时总览背景干净、壁纸出现在各工作区缩略图里（所有缩略图共用一张、同一偏移——layer 是 per-output，做不到按工作区独立视差） |
 | Noctalia 交接 | 插件在某输出启用守护进程时调用 `setWallpaperEnabled(connector, false)` 撤掉原生壁纸层（保证 backdrop 一致）；插件启动时自愈式恢复 `true` |
 | Noctalia UI | 不自己造选择器：镜像官方壁纸选择（Material You 取色继续生效）+ 状态栏开关 + 插件设置项 |
 | 分发 | 源码 `cargo install` + AUR + GitHub Releases 预编译；Noctalia 插件为可选集成 |
@@ -233,7 +234,9 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | **NVIDIA 不能把 LINEAR dmabuf 当渲染目标**：`gbm_bo_create_with_modifiers([LINEAR])` 成功、`eglCreateImageKHR` 成功，但挂 FBO 得 `GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT`；NVIDIA EGL 自报 XR24 有 13 个 modifier、12 个 renderable，**没有 LINEAR**。NVIDIA 的 GBM 后端还要求显式 modifier（`gbm_bo_create` 不带 modifier 直接失败） | 探针输出（`eglQueryDmaBufModifiersEXT` + FBO 检查） |
 | **M0a 的 "AMD 侧 EGL 失败" 是探针自己的 bug**：当时用 `File::open`（`O_RDONLY`）打开 render node，导致 `amdgpu_bo_cpu_map failed (-13)`；改成 `O_RDWR` 后 AMD 侧完全正常（§7 风险 8 已消除） | 重写后的 `eglpin`（`gbm::Device::open` 用 `OpenOptions::read(true).write(true)`） |
 | `place-within-backdrop` 语义（Niri，`Since: 25.05`）：把 background 层放进 backdrop，在 Overview 与工作区之间可见；backdrop 内的层忽略输入。配合 `layout { background-color "transparent" }` 得到"壁纸不随工作区滑动" | Niri wiki：`Configuration:-Layer-Rules#place-within-backdrop`、`Overview#backdrop-customization` |
-| 窗口/图层模糊由 `background-effect { blur true }` 提供（`xray` = 只模糊背景），采样对象是 **backdrop**；因此壁纸层必须进 backdrop，窗口背景才会与可见壁纸一致 | Niri wiki + 本机 `rules.kdl` / `effects.kdl`（本机全局 window-rule 就是 `opacity 0.9 + blur + xray`） |
+| 窗口模糊由 `background-effect { blur true }` 提供；`xray`（blur 打开时 niri 默认启用）让窗口背景"看穿到壁纸"。**壁纸放在哪它采哪**——放进 backdrop 或作为工作区背景都行，实测两者对窗口内部的影响只差 0.6/255 | 实测（纯红标记图，见 §8）|
+| **总览里视差照样工作**：总览打开期间 niri 仍发 `WorkspaceActivated`，守护进程照常重画。实测切 workspace 1→3 时总览的整屏壁纸竖直位移 **72 px = 144 × Δv(0.5)**，且逐像素完美（mse 0.0） | 实测 |
+| `place-within-backdrop` 换到的其实是"切工作区时壁纸不跟着滑"（壁纸属于工作区时会随工作区平移），以及"总览背景整屏是壁纸"；**不是**模糊的前提 | Niri wiki + 实测 |
 | 本机 Niri 规则现状：`^noctalia-wallpaper*` 与 `^mpvpaper$` 两条均为 `place-within-backdrop true`；`layout { background-color "transparent" }`；另有若干应用 `background-effect { blur true }` | `~/.config/niri/rules.kdl`、`layout.kdl` |
 | 静态壁纸由 Noctalia 自己渲染（其 `noctalia-wallpaper` 层，跑在 `renderD128`）；mpvpaper 只服务视频壁纸 | 官方 `noctalia/mpvpaper` 插件 README 与源码、`/proc/<noctalia>/fd` |
 | 官方视频插件在分配视频后调 `setWallpaperEnabled(name, false)` 撤掉原生壁纸层（`mpvpaper_service.luau:451`），清除视频时恢复 `true` | 读源码 |
@@ -253,7 +256,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | 测量用的条带：窗口上下沿的 10 px 外边距、左右 10 px 边距都是纯壁纸；**屏幕底部有 `noctalia-dock` 图层**、顶部有 bar，用它们做剖面会被污染 | M1 实测 |
 | **做逐像素比对时要扣掉窗口阴影**：本机 `layout { shadow { on; softness 10; spread 4; color "#00000070" } }`，于是窗口外的 10 px 边距被阴影压暗——实测比值从离窗口远处 0.884 单调降到贴窗口处 0.823（纯乘性、有梯度）。这是配置效果，不是渲染 bug；要干净的比对就切到空工作区 | M2 实测 |
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
-| 测 3 列位移时，图层**必须**在 backdrop（`--namespace mpvpaper` 命中既有规则）：否则工作区滚动会把壁纸一起平移，测到的就不是视差位移 | M1 实测 |
+| 测 3 列位移时用 backdrop 放置（`--namespace mpvpaper` 命中既有规则）只是为了让**测量更干净**：工作区背景的壁纸会随工作区滚动一起平移，混进位移里 | M1 实测 |
 | `--dump-stats` 是**抽样**输出（不能用来数帧率）；`nvidia-smi` 在桌面负载下噪声大（基线 26–65%），难以量测边际成本 | 实测 |
 | 工具链：`cargo` / `rustc` / `gcc` / `grim` 在位；`socat` 未安装 | `command -v` |
 
@@ -321,7 +324,16 @@ grim -o DP-1 /tmp/b.png     # 状态 B（例如焦点在第 3 列）
 - 若相关性给出 0 位移：先按 §7 风险 8 查层序，再怀疑算法。
 - `grim` 单次约 20–40 ms，**不能**用来数帧率；要测帧率需在渲染循环里打点或录屏（本机无 `wf-recorder`）。
 
-**测 backdrop 归属**（M0b 用过的差分法，窗口内容必须静止）：
+**判定"模糊到底采样谁"**（比 M0b 那套差分法可靠；M0b 的结论已被此法推翻）：
+
+1. 做一张**纯色**标记图（例如纯红 `#ff0044`）当壁纸；
+2. 分别用 `--namespace niripaper`（工作区背景）与 `--namespace mpvpaper`（backdrop）各跑一次，各截一张图，另截一张**不跑守护进程**的基线；
+3. 只在**窗口内部**（基线里偏暗的像素）求均值：基线 (34.4, 45.8, 56.6)、工作区背景 (65.6, 25.5, 43.6)、backdrop (63.7, 22.7, 42.3) → R−B 从 −22 变成 +22 / +21，**两者只差 0.6**，即放置位置不影响模糊。
+   ⚠️ 深色图案测不出这个差别（透过窗口只贡献约 10%，会落在噪声里）——这就是 M0b 当初误判的原因。
+
+**测总览状态下的视差**：打开总览后用 `niri msg action focus-workspace N` 切换，对**缩略图之外**的背景竖条（x≈0..30）做竖直一维相关性；实测 72 px（= 144 × Δv），mse 0.0。
+
+**旧的差分法**（窗口内容必须静止，仅供参照）：
 
 1. 用 `--namespace mpvpaper`（命中既有 rule）跑一次，切到一个只有静态窗口（如终端）的工作区，`grim` 截图；
 2. 换成 `--namespace niripaper`（无 rule）再截一次；
