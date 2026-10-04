@@ -260,7 +260,21 @@ impl Motion {
                 // The remembered column stays: that is what "记忆保留" means.
             }
             Event::WindowFocusChanged { id } => {
-                self.focused_id = *id;
+                // `None` means the compositor has nothing focused *right now*,
+                // which is what niri reports while the overview is open — and
+                // it reports it *instead of* naming the window the overview is
+                // working with. Forgetting the focus there freezes the
+                // parallax for the whole overview: the horizontal has no focus
+                // to follow, so moving a window around in the overview stops
+                // panning the wallpaper (measured: `WindowLayoutsChanged` fires
+                // with the column change, and the target never moves).
+                //
+                // Keep the last window that was focused. A focus that is really
+                // gone arrives as `WindowClosed`, or as a full `WindowsChanged`
+                // that no longer contains it.
+                if id.is_some() {
+                    self.focused_id = *id;
+                }
             }
             Event::WindowLayoutsChanged { changes } => {
                 for (id, column, tile) in changes {
@@ -790,8 +804,12 @@ mod tests {
             id: 1,
             focused: true,
         });
-        motion.apply(&Event::WindowFocusChanged { id: Some(1) });
         assert_progress(&motion, "DP-1", 0.4, 0.0);
+        // …and a focus move inside it pans, as it does anywhere else. (The
+        // `None` above no longer forgets window 4, so this is a real horizontal
+        // move: column 3 → column 1.)
+        motion.apply(&Event::WindowFocusChanged { id: Some(1) });
+        assert_progress(&motion, "DP-1", 0.0, 0.0);
     }
 
     #[test]
@@ -1128,6 +1146,44 @@ mod tests {
             let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
             assert!(motion.apply(&event), "{event:?} must be accepted");
         }
+    }
+
+    #[test]
+    fn a_none_focus_change_keeps_the_last_focused_window() {
+        // The overview reports `WindowFocusChanged(None)` while it is open, and
+        // moving a window around in it must still pan the wallpaper. Clearing
+        // the focus on that event froze the horizontal for the whole overview.
+        let ws1 = Workspace {
+            is_focused: true,
+            active_window_id: Some(2),
+            ..default_workspace()
+        };
+        let mut motion = motion_with(
+            vec![ws1],
+            vec![
+                Window {
+                    is_focused: true,
+                    ..window(1, 1, 1)
+                },
+                window(2, 2, 1),
+            ],
+        );
+        assert_progress(&motion, "DP-1", 0.0, 0.5);
+
+        // Entering the overview: the focus is reported as gone.
+        motion.apply(&Event::WindowFocusChanged { id: None });
+        assert_eq!(motion.focused_id(), Some(1), "the focus is remembered");
+
+        // Moving that window one column right pans, as it would outside the
+        // overview.
+        motion.apply(&Event::WindowLayoutsChanged {
+            changes: vec![(1, 2, 1), (2, 1, 1)],
+        });
+        assert_progress(&motion, "DP-1", 0.2, 0.5);
+
+        // A focus that really disappears still clears it.
+        motion.apply(&Event::WindowClosed { id: 1 });
+        assert_eq!(motion.focused_id(), None);
     }
 
     #[test]
