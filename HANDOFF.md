@@ -226,9 +226,20 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
     实测（修后，用户 4 个工作区）：纵向目标 0.2 / 0.4 / 0.6（每级 28.8 px），八个动作段仍全部轴向纯净。
     两轴**各自独立**（`column_span` / `workspace_span`）：它们数的是不同的东西，工作区多的人不该为此缩小列步长。想让纵向像旧的"走满 overflow"那样大，把 `workspace_span` 设成工作区数即可，横向不受影响。
     同一次改动还修掉一个潜伏 bug：`Niri::connect()` 里写死 `Motion::new(DEFAULT_SPAN)`，**配置里的 span 从未接上线** ✗（默认值与当时配置里的值都是 6，所以看不出来 ✗）。现在由 daemon 把生效的跨度传进去；实测 `--config` 写 `column_span = 11` / `workspace_span = 3` → 启动日志 `spans 11/3`，每列 25.6 px、每级 72 px。
-11. **总览期间 niri 报 `WindowFocusChanged(None)`，不能因此忘记焦点**。打开总览时 niri 发的是 `WindowFocusChanged id=None`（而且**不是**报"总览正在操作的那个窗口"），在总览里按左右移动窗口时只发 `WindowLayoutsChanged`，**不发任何焦点事件** ✗。原先 `WindowFocusChanged(None)` 直接把 `focused_id` 清空 ✗ → 横向失去可跟随的对象 ✗ → 整段时间里横向冻结 ✗。实测（修前）：总览内 `move-column-right` 时 `WindowLayoutsChanged` 明确带了列变化（139 列 1→2），而守护进程**一条 target 都没有** ✗。
-    修法：`WindowFocusChanged(None)` 保留最后一个已知焦点；真正消失的焦点由 `WindowClosed` 或完整的 `WindowsChanged`（列表里已无该窗口）来清。
-    实测（修后，scale 1.2 → overflow 512×288 px）：总览内 `move-column-right/left` → Δh ±124 px、Δv +0.0 px；普通视图 `focus-column-*` → Δh ±124 px、Δv +0.0 px；`focus-workspace-up/down` → Δh +0.0 px、Δv ±92 px。四者互不串扰。
+11. **总览的"左右"走的是"活动窗口"，不是焦点**。实测抓到的真实事件（总览打开期间）：
+    * `Mod+←/→`（`focus-column-or-monitor-*`）→ **`WorkspaceActiveWindowChanged`**（该工作区的活动窗口在换）——横向移动 ✗
+    * `Mod+↑/↓`（`focus-window-or-workspace-*`）→ **`WorkspaceActivated`**——切换工作区 ✗
+    * 打开总览时先发一次 **`WindowFocusChanged(None)`** ✗
+
+    所以总览里唯一携带横向变化的信号是**活动窗口** ✗。由此定死四条：
+    ① `focused_id` 照实记（`None` 就清空）——**不要**"保留最后焦点"：那样会让过期的焦点在 ② 里盖住活动窗口信号 ✗（实测：壁纸在整个总览期间横向冻结 ✗）。
+    ② 记忆列的优先级（§4.4 第 2 条）里，焦点**只在真有焦点时**覆盖活动窗口 —— 总览没有焦点，于是活动窗口说了算 ✗。
+    ③ 横向刷新判据补一支：**当前没有焦点也要刷新** ✗（总览正是这种情况；只认"焦点在该输出的活动工作区上"会把总览整段冻住 ✗）。
+    ④ 但**该输出的活动工作区一旦变了就必须保持** ✗ —— 否则总览里 ↑↓（只有 `WorkspaceActivated`、没有焦点）会走进 ③ 那一支，把横向跳到新工作区的值 ✗（单测抓到过：0.0 被跳成 0.5 ✗）。
+
+    实测（修后，用户的确切按键，scale 1.2 → overflow 512×288 px）：
+    * 总览内 `focus-column-or-monitor-right/left` → Δh **±125 px**、Δv **+0.0 px**
+    * 总览内 `focus-window-or-workspace-down/up` → Δh **+0.0 px**、Δv **±93 px**
 9. **过期的 `is_focused` 标志会把焦点抢回去**（修 8 时一并发现）。`WindowOpenedOrChanged` 对**标题/app_id 变化**也会触发，其载荷窗口并非焦点窗口 ✗；而 `adopt_reported_focus` 会在窗口列表里扫描 `is_focused` ✗ —— 我们自己从不清除旧标志 ✗，于是这类事件会把焦点（以及横向视差）拽回上一个焦点窗口 ✗。修正：只有**载荷窗口自称被聚焦**时才采纳（`WindowsChanged` 是完整列表，仍可整体扫描），采纳时把其余窗口的标志清掉（niri 的语义：一个窗口报告被聚焦即意味着其他都不是）。
 
 ---
@@ -273,7 +284,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | **做逐像素比对时要扣掉窗口阴影**：本机 `layout { shadow { on; softness 10; spread 4; color "#00000070" } }`，于是窗口外的 10 px 边距被阴影压暗——实测比值从离窗口远处 0.884 单调降到贴窗口处 0.823（纯乘性、有梯度）。这是配置效果，不是渲染 bug；要干净的比对就切到空工作区 | M2 实测 |
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
 | 测 3 列位移时用 backdrop 放置（`--namespace mpvpaper` 命中既有规则）只是为了让**测量更干净**：工作区背景的壁纸会随工作区滚动一起平移，混进位移里 | M1 实测 |
-| **总览期间横向冻结**：niri 在总览打开时报 `WindowFocusChanged(None)`，且总览内左右移动窗口只发 `WindowLayoutsChanged`。若在这条事件上清空焦点，横向就再也没有可跟随的对象 ✗（实测：事件带了列变化，target 却一动不动）。修法见 §4.4 第 11 条 | 实测 |
+| **总览期间横向冻结**：总览里 niri 用 `WorkspaceActiveWindowChanged` 表达"左右"，而打开时又发 `WindowFocusChanged(None)`。两条坑：① 在 `None` 上"保留最后焦点"会让过期焦点盖住活动窗口信号 ✗；② 只认"焦点在该输出的活动工作区上"会把整段总览冻住 ✗。正解见 §4.4 第 11 条（四条规则缺一不可）| 实测 |
 | **配置键写了但没接上线**：`span` 曾只存在于配置与日志里，`Niri::connect()` 写死默认值 ✗ —— 因为默认值恰好等于当时配置的值，一直没暴露。改动配置管线时务必实机验证"改一个非默认值，行为跟着变" | 实测 |
 | **竖直移动工作区时横向被带着走 → 斜向**：`horizontal` 若跟着新工作区重算，两个轴就锁在一起走 ✗（实测逐帧增量完全相同）。修复见 §4.4 第 8 条；判据是"焦点此前是否已在该输出的活动工作区上"，不是事件类型 | 实测 |
 | **niri 不暴露它的动画参数**：`niri msg` 没有 dump 配置的命令、`niri validate` 只打印 "config is valid"、事件流里与配置有关的只有 `{"ConfigLoaded":{"failed":false}}`。唯一来源是它的 KDL 配置文件（含 `include`，本机动画在 `__custom__.kdl` 里） | `niri msg --help`、`niri validate`、事件流实测 |

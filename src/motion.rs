@@ -177,15 +177,16 @@ impl Motion {
 
     /// Apply one event. Returns whether it is one of the events §4.2.7 lists.
     pub fn apply(&mut self, event: &Event) -> bool {
-        // Which workspace the focus sits on, per output, before the event: the
-        // horizontal only pans when that does not change (see
-        // [`Motion::refresh_horizontal`]).
-        let focus_before: Vec<(String, Option<u64>)> = self
+        // Per output, before the event: which workspace is displayed, and which
+        // one the focus sits on. The horizontal only pans when neither moved in
+        // the wrong way — see [`Motion::refresh_horizontal`].
+        let before: Vec<(String, Option<u64>, Option<u64>)> = self
             .outputs()
             .into_iter()
             .map(|output| {
-                let ws = self.focus_workspace_on(&output);
-                (output, ws)
+                let active = self.active_workspace(&output).map(|w| w.id);
+                let focus = self.focus_workspace_on(&output);
+                (output, active, focus)
             })
             .collect();
         match event {
@@ -260,21 +261,12 @@ impl Motion {
                 // The remembered column stays: that is what "记忆保留" means.
             }
             Event::WindowFocusChanged { id } => {
-                // `None` means the compositor has nothing focused *right now*,
-                // which is what niri reports while the overview is open — and
-                // it reports it *instead of* naming the window the overview is
-                // working with. Forgetting the focus there freezes the
-                // parallax for the whole overview: the horizontal has no focus
-                // to follow, so moving a window around in the overview stops
-                // panning the wallpaper (measured: `WindowLayoutsChanged` fires
-                // with the column change, and the target never moves).
-                //
-                // Keep the last window that was focused. A focus that is really
-                // gone arrives as `WindowClosed`, or as a full `WindowsChanged`
-                // that no longer contains it.
-                if id.is_some() {
-                    self.focused_id = *id;
-                }
+                // Keep the compositor's literal answer, including `None`. The
+                // overview reports no focused window while it is open, and
+                // *instead* reports what it is working with as
+                // `WorkspaceActiveWindowChanged` — so a remembered focus here
+                // would mask the very signal the overview moves with.
+                self.focused_id = *id;
             }
             Event::WindowLayoutsChanged { changes } => {
                 for (id, column, tile) in changes {
@@ -286,7 +278,7 @@ impl Motion {
             }
         }
         self.refresh_memory();
-        self.refresh_horizontal(&focus_before);
+        self.refresh_horizontal(&before);
         true
     }
 
@@ -395,15 +387,27 @@ impl Motion {
     /// `WindowFocusChanged` niri sends right after it naming the new
     /// workspace's window — leaves the horizontal where it is and moves the
     /// vertical alone.
-    fn refresh_horizontal(&mut self, focus_before: &[(String, Option<u64>)]) {
-        for (output, before) in focus_before {
+    fn refresh_horizontal(&mut self, before: &[(String, Option<u64>, Option<u64>)]) {
+        for (output, active_before, focus_before) in before {
             let Some(active) = self.active_workspace(output) else {
                 continue;
             };
             let active_id = active.id;
+            // A different workspace is displayed now: that is the workspace
+            // strip sliding, a vertical move. Nothing horizontal happened, so
+            // the value holds — even in the overview, where the focus is
+            // reported as absent and would otherwise pass the test below.
+            if *active_before != Some(active_id) {
+                continue;
+            }
             // The focus was on this output's active workspace and still is:
             // whatever moved was the horizontal scroll, not the workspace strip.
-            let pans = *before == Some(active_id);
+            //
+            // No focus at all counts too: that is the overview, which reports
+            // its selection as `WorkspaceActiveWindowChanged` instead of as a
+            // focus change. Holding there would freeze the horizontal for the
+            // whole overview.
+            let pans = *focus_before == Some(active_id) || focus_before.is_none();
             // Establish it once the state is meaningful (a window is focused),
             // so that a workspace switch arriving before the first horizontal
             // move freezes the right value instead of re-deriving one for the
@@ -1149,41 +1153,60 @@ mod tests {
     }
 
     #[test]
-    fn a_none_focus_change_keeps_the_last_focused_window() {
-        // The overview reports `WindowFocusChanged(None)` while it is open, and
-        // moving a window around in it must still pan the wallpaper. Clearing
-        // the focus on that event froze the horizontal for the whole overview.
+    fn the_overview_pans_horizontally_but_switches_workspaces_vertically() {
+        // The exact events niri emits with the overview open, captured from a
+        // live session:
+        //
+        //   ← → : WorkspaceActiveWindowChanged (the workspace's active window
+        //         cycles) — the overview moves horizontally
+        //   ↑ ↓ : WorkspaceActivated — it switches workspaces
+        //
+        // The overview reports no focused window while it is open, so the
+        // active-window signal is the only one carrying the horizontal move.
+        // Letting a remembered focus override it froze the horizontal.
         let ws1 = Workspace {
             is_focused: true,
-            active_window_id: Some(2),
+            active_window_id: Some(1),
+            ..default_workspace()
+        };
+        let ws2 = Workspace {
+            id: 2,
+            idx: 2,
+            is_active: false,
+            active_window_id: None,
             ..default_workspace()
         };
         let mut motion = motion_with(
-            vec![ws1],
-            vec![
-                Window {
-                    is_focused: true,
-                    ..window(1, 1, 1)
-                },
-                window(2, 2, 1),
-            ],
+            vec![ws1, ws2],
+            vec![window(1, 1, 1), window(2, 2, 1), window(3, 3, 1)],
         );
-        assert_progress(&motion, "DP-1", 0.0, 0.5);
+        motion.apply(&Event::WindowFocusChanged { id: Some(1) });
+        assert_progress(&motion, "DP-1", 0.0, 0.0);
 
-        // Entering the overview: the focus is reported as gone.
+        // The overview opens: niri reports no focused window.
         motion.apply(&Event::WindowFocusChanged { id: None });
-        assert_eq!(motion.focused_id(), Some(1), "the focus is remembered");
-
-        // Moving that window one column right pans, as it would outside the
-        // overview.
-        motion.apply(&Event::WindowLayoutsChanged {
-            changes: vec![(1, 2, 1), (2, 1, 1)],
-        });
-        assert_progress(&motion, "DP-1", 0.2, 0.5);
-
-        // A focus that really disappears still clears it.
-        motion.apply(&Event::WindowClosed { id: 1 });
         assert_eq!(motion.focused_id(), None);
+
+        // ← → : the workspace's active window cycles right and back.
+        for (active, horizontal) in [(2u64, 0.2f64), (3, 0.4), (1, 0.0)] {
+            motion.apply(&Event::WorkspaceActiveWindowChanged {
+                workspace_id: 1,
+                active_window_id: Some(active),
+            });
+            assert_progress(&motion, "DP-1", horizontal, 0.0);
+        }
+
+        // ↑ ↓ : switching workspaces still moves the vertical alone.
+        motion.apply(&Event::WorkspaceActivated {
+            id: 2,
+            focused: true,
+        });
+        assert_progress(&motion, "DP-1", 0.0, 0.2);
+        motion.apply(&Event::WorkspaceActivated {
+            id: 1,
+            focused: true,
+        });
+        assert_progress(&motion, "DP-1", 0.0, 0.0);
     }
 
     #[test]
