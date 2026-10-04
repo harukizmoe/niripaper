@@ -60,6 +60,10 @@ extern "C" {
     fn glGetProgramiv(program: u32, pname: u32, params: *mut i32);
     fn glGetProgramInfoLog(program: u32, max: i32, len: *mut i32, log: *mut i8);
     fn glUseProgram(program: u32);
+    fn glGetUniformLocation(program: u32, name: *const i8) -> i32;
+    fn glUniform1f(location: i32, v0: f32);
+    fn glUniform1i(location: i32, v0: i32);
+    fn glUniform2f(location: i32, v0: f32, v1: f32);
     fn glDeleteProgram(program: u32);
     fn glGenVertexArrays(n: i32, arrays: *mut u32);
     fn glBindVertexArray(array: u32);
@@ -118,10 +122,57 @@ pub fn finish() {
     unsafe { glFinish() };
 }
 
+/// Which test pattern to draw. Both live in canvas space, so they slide with
+/// the parallax offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pattern {
+    /// Four colour bands: unambiguous in a screenshot, used to check that a
+    /// layer really is inside the backdrop.
+    Bands,
+    /// Pseudo-random blocks with a vertical gradient. §8 needs *unique*
+    /// structure for the pixel-displacement correlation: a repeating pattern
+    /// aliases and reports "no movement".
+    Blocks,
+}
+
+/// Where the canvas sits relative to the screen.
+#[derive(Debug, Clone, Copy)]
+pub struct View {
+    /// Screen size in pixels.
+    pub screen: (f32, f32),
+    /// Canvas scale (§4.1 `scale`): the canvas is `screen * scale`.
+    pub scale: f32,
+    /// Offset of the canvas relative to centred, in pixels
+    /// ([`crate::motion::offset_px`]).
+    pub offset: (f32, f32),
+    pub pattern: Pattern,
+}
+
+impl View {
+    /// A still, unzoomed view — the M0b probe's test pattern.
+    pub fn flat(screen: (f32, f32), pattern: Pattern) -> Self {
+        Self {
+            screen,
+            scale: 1.0,
+            offset: (0.0, 0.0),
+            pattern,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Uniforms {
+    screen: i32,
+    scale: i32,
+    offset: i32,
+    pattern: i32,
+}
+
 /// A shader program plus the empty VAO core-profile GL insists on.
 pub struct Renderer {
     program: u32,
     vao: u32,
+    uniforms: Uniforms,
 }
 
 impl Renderer {
@@ -147,14 +198,35 @@ impl Renderer {
         }
         let mut vao = 0;
         unsafe { glGenVertexArrays(1, &mut vao) };
-        Ok(Self { program, vao })
+        let uniforms = Uniforms {
+            screen: uniform(program, "u_screen"),
+            scale: uniform(program, "u_scale"),
+            offset: uniform(program, "u_offset"),
+            pattern: uniform(program, "u_pattern"),
+        };
+        Ok(Self {
+            program,
+            vao,
+            uniforms,
+        })
     }
 
-    /// Draw the test pattern over the whole current framebuffer.
-    pub fn draw_pattern(&self) {
+    /// Draw the pattern over the whole current framebuffer.
+    pub fn draw(&self, view: View) {
         unsafe {
             glBindVertexArray(self.vao);
             glUseProgram(self.program);
+            glUniform2f(self.uniforms.screen, view.screen.0, view.screen.1);
+            glUniform1f(self.uniforms.scale, view.scale);
+            glUniform2f(self.uniforms.offset, view.offset.0, view.offset.1);
+            glUniform1i(
+                self.uniforms.pattern,
+                if view.pattern == Pattern::Blocks {
+                    1
+                } else {
+                    0
+                },
+            );
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindVertexArray(0);
         }
@@ -171,23 +243,47 @@ impl Drop for Renderer {
     }
 }
 
-/// Four vertical bands plus a white frame: unambiguous in a screenshot, and
-/// comparable enough that a blurred backdrop copy is obvious.
+/// The pattern is evaluated in *canvas* space, so the offset slides it.
+///
+/// `Blocks` is a hash of the block coordinate: unique structure everywhere,
+/// which is what the §8 displacement measurement needs.
 const FRAGMENT_SRC: &str = r#"#version 330 core
 in vec2 uv;
+uniform vec2 u_screen;
+uniform float u_scale;
+uniform vec2 u_offset;
+uniform int u_pattern;
 out vec4 color;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
 void main() {
-    int band = int(clamp(uv.x, 0.0, 0.999) * 4.0);
-    vec3 c = band == 0 ? vec3(1.0, 0.0, 0.0)
-           : band == 1 ? vec3(0.0, 1.0, 0.0)
-           : band == 2 ? vec3(0.0, 0.0, 1.0)
-                       : vec3(1.0, 1.0, 0.0);
-    c *= 0.35 + 0.65 * uv.y;
-    float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    if (edge < 0.002) {
-        c = vec3(1.0);
+    vec2 canvas = u_screen * u_scale;
+    vec2 origin = (canvas - u_screen) * 0.5 + u_offset;
+    vec2 c = (uv * u_screen + origin) / canvas;
+
+    vec3 base;
+    if (u_pattern == 1) {
+        vec2 cell = floor(c * vec2(96.0, 54.0));
+        float h = hash(cell);
+        base = vec3(h, fract(h * 7.13), fract(h * 13.7));
+    } else {
+        int band = int(clamp(c.x, 0.0, 0.999) * 4.0);
+        base = band == 0 ? vec3(1.0, 0.0, 0.0)
+             : band == 1 ? vec3(0.0, 1.0, 0.0)
+             : band == 2 ? vec3(0.0, 0.0, 1.0)
+                         : vec3(1.0, 1.0, 0.0);
     }
-    color = vec4(c, 1.0);
+    base *= 0.35 + 0.65 * c.y;
+
+    // The canvas edge, visible at the extremes of the travel.
+    float edge = min(min(c.x, 1.0 - c.x), min(c.y, 1.0 - c.y));
+    if (edge < 0.002) {
+        base = vec3(1.0);
+    }
+    color = vec4(base, 1.0);
 }
 "#;
 
@@ -215,6 +311,11 @@ fn compile(kind: u32, source: &str) -> Result<u32, String> {
         return Err(format!("shader compile failed: {log}"));
     }
     Ok(shader)
+}
+
+fn uniform(program: u32, name: &str) -> i32 {
+    let c_name = CString::new(name).expect("no interior nul");
+    unsafe { glGetUniformLocation(program, c_name.as_ptr()) }
 }
 
 fn info_log(fetch: impl Fn(i32, *mut i32, *mut i8)) -> String {

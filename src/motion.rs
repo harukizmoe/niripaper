@@ -104,6 +104,14 @@ impl Progress {
             vertical,
         }
     }
+
+    /// Linear interpolation towards `to`, used by the easing in `render::anim`.
+    pub fn lerp(self, to: Self, t: f64) -> Self {
+        Self {
+            horizontal: self.horizontal + (to.horizontal - self.horizontal) * t,
+            vertical: self.vertical + (to.vertical - self.vertical) * t,
+        }
+    }
 }
 
 #[derive(Debug, Default)]

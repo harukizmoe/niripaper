@@ -10,8 +10,26 @@
 
 use std::process::ExitCode;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use niripaper::daemon::{self, Options};
 use niripaper::motion::{offset_px, Progress, DEFAULT_SCALE, DEFAULT_SPAN};
 use niripaper::niri::Niri;
+use niripaper::render::gl::Pattern;
+
+static EXIT: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_signal: libc::c_int) {
+    EXIT.store(true, Ordering::SeqCst);
+}
+
+fn install_signal_handlers() {
+    let handler = on_signal as extern "C" fn(libc::c_int) as *const () as libc::sighandler_t;
+    unsafe {
+        libc::signal(libc::SIGINT, handler);
+        libc::signal(libc::SIGTERM, handler);
+    }
+}
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -21,6 +39,7 @@ fn main() -> ExitCode {
     };
     let rest: Vec<String> = args.collect();
     let result = match command.as_str() {
+        "daemon" => daemon_command(&rest),
         "watch" => watch(&rest),
         "-h" | "--help" | "help" => {
             usage();
@@ -42,6 +61,9 @@ fn usage() {
         "usage: niripaper <command>\n\
          \n\
          commands:\n\
+         \x20 daemon [--output NAME] [--namespace NAME] [--scale F] [--span N]\n\
+         \x20        [--pattern blocks|bands] [--trace]\n\
+         \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
     );
 }
@@ -142,4 +164,55 @@ fn summarize(event: &niripaper::motion::Event) -> String {
             format!("WindowLayoutsChanged({})", changes.len())
         }
     }
+}
+
+/// Draw the wallpaper layer for one output until asked to stop.
+fn daemon_command(args: &[String]) -> Result<(), String> {
+    install_signal_handlers();
+    let mut options = Options::new("");
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--output" => options.output = iter.next().ok_or("--output needs a value")?.clone(),
+            "--namespace" => {
+                options.namespace = iter.next().ok_or("--namespace needs a value")?.clone()
+            }
+            "--scale" => {
+                options.scale = iter
+                    .next()
+                    .ok_or("--scale needs a value")?
+                    .parse()
+                    .map_err(|e| format!("--scale: {e}"))?
+            }
+            "--span" => {
+                options.span = iter
+                    .next()
+                    .ok_or("--span needs a value")?
+                    .parse()
+                    .map_err(|e| format!("--span: {e}"))?
+            }
+            "--pattern" => {
+                options.pattern = match iter.next().ok_or("--pattern needs a value")?.as_str() {
+                    "blocks" => Pattern::Blocks,
+                    "bands" => Pattern::Bands,
+                    other => return Err(format!("unknown --pattern {other}")),
+                }
+            }
+            "--trace" => options.trace = true,
+            other => return Err(format!("unknown argument {other}")),
+        }
+    }
+    if options.output.is_empty() {
+        // Pick the first output niri reports a workspace on.
+        let mut niri = Niri::connect()?;
+        niri.wait_for_full_state()?;
+        options.output = niri
+            .motion
+            .workspaces()
+            .iter()
+            .map(|w| w.output.clone())
+            .find(|name| !name.is_empty())
+            .ok_or("niri reported no outputs; pass --output")?;
+    }
+    daemon::run(&options, &|| !EXIT.load(Ordering::SeqCst))
 }

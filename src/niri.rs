@@ -69,19 +69,17 @@ impl Niri {
         self.reader.get_ref().as_raw_fd()
     }
 
-    /// Whether complete lines are already buffered (so a read will not block).
-    pub fn has_buffered(&self) -> bool {
-        !self.reader.buffer().is_empty()
-    }
-
-    /// Apply every already-buffered line, without blocking. Returns the last
-    /// parallax event seen, if any.
+    /// Apply the events waiting on the socket. Returns the last parallax event
+    /// seen, if any.
+    ///
+    /// The caller is expected to have polled [`Niri::fd`] and seen it readable,
+    /// so the first read does not block. Only *complete* lines are consumed
+    /// after that: a partial line would block, and it can wait for the rest.
     pub fn drain(&mut self) -> Result<Option<Event>, String> {
-        let mut last = None;
-        while self.has_buffered() {
-            match self.read_line()? {
-                Some(event) => last = Some(event),
-                None => continue,
+        let mut last = self.read_line()?;
+        while self.reader.buffer().contains(&b'\n') {
+            if let Some(event) = self.read_line()? {
+                last = Some(event);
             }
         }
         Ok(last)

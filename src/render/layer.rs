@@ -10,7 +10,9 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
-use wayland_client::protocol::{wl_buffer, wl_compositor, wl_output, wl_registry, wl_surface};
+use wayland_client::protocol::{
+    wl_buffer, wl_callback, wl_compositor, wl_output, wl_registry, wl_surface,
+};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
@@ -18,6 +20,8 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use super::dmabuf::Frame;
+use super::egl::Egl;
+use super::gbm::Device;
 
 /// Per-output state, keyed by object id in [`State::output_info`].
 #[derive(Debug, Default, Clone)]
@@ -43,6 +47,10 @@ pub struct State {
     pub preferred_buffer_scale: i32,
     /// `wl_buffer::release` events seen — the compositor handing buffers back.
     pub releases: u32,
+    /// Ids of the buffers the compositor has released, for the pool to recycle.
+    pub released: Vec<ObjectId>,
+    /// `wl_callback::done` events: the compositor asking for the next frame.
+    pub frames_done: u64,
     /// Device the compositor prefers for buffers (dev_t as an integer).
     pub main_device: Option<u64>,
     pub formats: Vec<FormatModifier>,
@@ -252,6 +260,14 @@ impl Client {
         Ok(())
     }
 
+    /// The connection fd, for an event loop that wants to poll it.
+    pub fn fd(&self) -> std::os::fd::RawFd {
+        self.conn
+            .prepare_read()
+            .map(|guard| std::os::fd::AsRawFd::as_raw_fd(&guard.connection_fd()))
+            .unwrap_or(-1)
+    }
+
     pub fn handle(&self) -> QueueHandle<State> {
         self.queue.handle()
     }
@@ -339,6 +355,19 @@ pub struct LayerSurface {
 }
 
 impl LayerSurface {
+    /// Ask the compositor to tell us when it wants the next frame.
+    ///
+    /// **The caller must commit**: `wl_surface.frame` only takes effect on the
+    /// next `wl_surface.commit`, so a request without one is silently dropped
+    /// and the callback never arrives. Commit the frame request together with
+    /// the buffer being submitted, or on its own when no draw is due yet.
+    ///
+    /// This is the only thing that drives redrawing: while no callback is
+    /// outstanding the process sits in `poll()` and costs nothing.
+    pub fn request_frame(&self, qh: &QueueHandle<State>) -> wl_callback::WlCallback {
+        self.surface.frame(qh, ())
+    }
+
     pub fn destroy(&self) {
         self.layer_surface.destroy();
         self.surface.destroy();
@@ -420,7 +449,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
 impl Dispatch<wl_buffer::WlBuffer, ()> for State {
     fn event(
         state: &mut Self,
-        _proxy: &wl_buffer::WlBuffer,
+        proxy: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
         _data: &(),
         _conn: &Connection,
@@ -428,7 +457,21 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for State {
     ) {
         if let wl_buffer::Event::Release = event {
             state.releases += 1;
+            state.released.push(proxy.id());
         }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_callback::WlCallback,
+        _event: wl_callback::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        state.frames_done += 1;
     }
 }
 
@@ -621,4 +664,150 @@ fn read_format_table(fd: BorrowedFd<'_>, size: u32) -> Option<Vec<FormatModifier
             })
             .collect(),
     )
+}
+
+/// A few interchangeable buffers, recycled when the compositor releases them.
+///
+/// A wallpaper only redraws while an animation runs, but that is still ~100
+/// frames per column switch at 180 Hz: allocating a 14 MB GBM buffer per frame
+/// would be absurd, and a single buffer would stall the pipeline. Two slots are
+/// enough — while one is on screen the other is being drawn — and when both are
+/// in flight the right thing to do is skip the frame rather than queue it up.
+pub struct Pool<'a> {
+    slots: Vec<Slot<'a>>,
+    /// The modifiers the first buffer was created with — the compositor
+    /// advertised them, or the driver chose.
+    chosen: Vec<u64>,
+    /// Attempts that failed, for the log: a modifier the compositor advertises
+    /// but the driver cannot render into is worth reporting.
+    failures: Vec<(Vec<u64>, String)>,
+}
+
+struct Slot<'a> {
+    frame: Frame<'a>,
+    /// The `wl_buffer` on screen for this frame, until it is released.
+    in_flight: Option<ObjectId>,
+}
+
+impl<'a> Pool<'a> {
+    /// Allocate `depth` buffers, searching `advertised` for a modifier this
+    /// driver can actually render into. The successful attempt is kept as the
+    /// first slot instead of being thrown away.
+    pub fn new(
+        egl: &'a Egl,
+        device: &'a Device,
+        width: u32,
+        height: u32,
+        format: u32,
+        advertised: &[u64],
+        depth: usize,
+    ) -> Result<Self, String> {
+        let renderable: Vec<u64> = egl
+            .dmabuf_modifiers(format)
+            .into_iter()
+            .filter(|(_, external_only)| !external_only)
+            .map(|(modifier, _)| modifier)
+            .collect();
+
+        let mut failures = Vec::new();
+        let mut first = None;
+        let mut chosen = Vec::new();
+        for candidate in super::dmabuf::modifier_candidates(advertised, &renderable) {
+            match Frame::new(egl, device, width, height, format, &candidate) {
+                Ok(frame) => {
+                    first = Some(frame);
+                    chosen = candidate;
+                    break;
+                }
+                Err(err) => failures.push((candidate, err)),
+            }
+        }
+        let Some(first) = first else {
+            let mut report = String::from("no renderable buffer:");
+            for (modifiers, err) in &failures {
+                report.push_str(&format!("\n  {}: {err}", describe_modifiers(modifiers)));
+            }
+            return Err(report);
+        };
+
+        let mut slots = vec![Slot {
+            frame: first,
+            in_flight: None,
+        }];
+        for index in 1..depth.max(1) {
+            let frame = Frame::new(egl, device, width, height, format, &chosen)
+                .map_err(|e| format!("buffer {index}: {e}"))?;
+            slots.push(Slot {
+                frame,
+                in_flight: None,
+            });
+        }
+        Ok(Self {
+            slots,
+            chosen,
+            failures,
+        })
+    }
+
+    /// The modifiers the pool ended up using.
+    pub fn chosen(&self) -> &[u64] {
+        &self.chosen
+    }
+
+    /// Attempts that failed, for the log.
+    pub fn failures(&self) -> &[(Vec<u64>, String)] {
+        &self.failures
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    pub fn in_flight(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|slot| slot.in_flight.is_some())
+            .count()
+    }
+
+    /// Recycle everything in `released`, then hand out a free slot.
+    ///
+    /// `None` means every buffer is still on screen: drop this frame.
+    pub fn acquire(&mut self, released: &[ObjectId]) -> Option<usize> {
+        for slot in &mut self.slots {
+            if slot
+                .in_flight
+                .as_ref()
+                .is_some_and(|id| released.contains(id))
+            {
+                slot.in_flight = None;
+            }
+        }
+        self.slots.iter().position(|slot| slot.in_flight.is_none())
+    }
+
+    pub fn frame(&self, index: usize) -> &Frame<'a> {
+        &self.slots[index].frame
+    }
+
+    /// Record that slot `index` is now on screen.
+    pub fn mark_submitted(&mut self, index: usize, buffer: &wl_buffer::WlBuffer) {
+        self.slots[index].in_flight = Some(buffer.id());
+    }
+}
+
+/// `LINEAR`, `nv:0x…`, or "driver-chosen" — for log lines.
+pub fn describe_modifiers(modifiers: &[u64]) -> String {
+    if modifiers.is_empty() {
+        return "driver-chosen modifier".to_owned();
+    }
+    modifiers
+        .iter()
+        .map(|m| super::gbm::modifier_name(*m))
+        .collect::<Vec<_>>()
+        .join("+")
 }
