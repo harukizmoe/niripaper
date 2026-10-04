@@ -350,7 +350,13 @@ fn run() -> Result<(), String> {
             );
         }
         frame.begin();
-        renderer.draw_pattern();
+        renderer.draw(
+            gl::View::flat(
+                (frame.width as f32, frame.height as f32),
+                gl::Pattern::Bands,
+            ),
+            gl::Content::Pattern(gl::Pattern::Bands),
+        );
         frame.finish();
         if let Some(err) = gl::last_error() {
             return Err(format!("GL error after drawing: 0x{err:x}"));
@@ -510,10 +516,15 @@ impl Proc {
     }
 }
 
+/// `sa_flags = 0` (not `libc::signal`, which sets `SA_RESTART`): the polling
+/// loop only notices the stop flag when its syscall is interrupted.
 fn install_signal_handlers() {
-    let handler = on_signal as extern "C" fn(libc::c_int) as *const () as libc::sighandler_t;
     unsafe {
-        libc::signal(libc::SIGINT, handler);
-        libc::signal(libc::SIGTERM, handler);
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = 0;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
     }
 }

@@ -10,8 +10,38 @@
 
 use std::process::ExitCode;
 
-use niripaper::motion::{offset_px, Progress, DEFAULT_SCALE, DEFAULT_SPAN};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use niripaper::config::Config;
+use niripaper::daemon::{self, Options};
+use niripaper::motion::{
+    offset_px, Progress, DEFAULT_COLUMN_SPAN, DEFAULT_SCALE, DEFAULT_WORKSPACE_SPAN,
+};
 use niripaper::niri::Niri;
+use niripaper::render::gl::Pattern;
+
+static EXIT: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_signal: libc::c_int) {
+    EXIT.store(true, Ordering::SeqCst);
+}
+
+/// Install SIGINT/SIGTERM handlers that make blocking syscalls return `EINTR`.
+///
+/// `libc::signal` sets `SA_RESTART`, which makes `poll()` (and `read()`) resume
+/// after the handler runs — so an idle daemon would ignore Ctrl-C until some
+/// unrelated event happened to wake it. Clearing `sa_flags` is the whole point.
+fn install_signal_handlers() {
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = 0;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+    }
+}
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -21,6 +51,7 @@ fn main() -> ExitCode {
     };
     let rest: Vec<String> = args.collect();
     let result = match command.as_str() {
+        "daemon" => daemon_command(&rest),
         "watch" => watch(&rest),
         "-h" | "--help" | "help" => {
             usage();
@@ -42,12 +73,17 @@ fn usage() {
         "usage: niripaper <command>\n\
          \n\
          commands:\n\
+         \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
+         \x20        [--scale F] [--column-span N] [--workspace-span N]\n\
+         \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
+         \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
     );
 }
 
 /// Follow the event stream and print every change of the parallax target.
 fn watch(args: &[String]) -> Result<(), String> {
+    install_signal_handlers();
     let mut output = String::new();
     let mut screen = (0.0f64, 0.0f64);
     let mut iter = args.iter();
@@ -66,7 +102,9 @@ fn watch(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let mut niri = Niri::connect()?;
+    // `watch` is an observation tool: it takes no config, so it runs the
+    // built-in defaults (as it already did for `scale`).
+    let mut niri = Niri::connect(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN)?;
     // The first events are the full state; wait for them so the first line we
     // print is the state we start from.
     niri.wait_for_full_state()?;
@@ -83,15 +121,21 @@ fn watch(args: &[String]) -> Result<(), String> {
             .ok_or("niri reported no outputs; pass --output")?;
     }
     println!(
-        "watching {} (span {}, scale {}), {} event(s) ignored so far",
-        output, DEFAULT_SPAN, DEFAULT_SCALE, niri.ignored
+        "watching {} (built-in spans {}/{}, scale {}), {} event(s) ignored so far",
+        output, DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN, DEFAULT_SCALE, niri.ignored
     );
     let mut last = Progress::CENTER;
     report(&niri, &output, screen, &mut last, "initial");
     loop {
-        let event = niri.next_event()?;
-        let summary = summarize(&event);
-        report(&niri, &output, screen, &mut last, &summary);
+        match niri.next_event() {
+            Ok(event) => {
+                let summary = summarize(&event);
+                report(&niri, &output, screen, &mut last, &summary);
+            }
+            // A signal interrupts the blocking read; that is how Ctrl-C stops us.
+            Err(_) if EXIT.load(Ordering::SeqCst) => return Ok(()),
+            Err(err) => return Err(err),
+        }
     }
 }
 
@@ -142,4 +186,112 @@ fn summarize(event: &niripaper::motion::Event) -> String {
             format!("WindowLayoutsChanged({})", changes.len())
         }
     }
+}
+
+/// Flags given on the command line. Each one overrides the config file, which
+/// in turn overrides the built-in defaults.
+#[derive(Default)]
+struct Overrides {
+    output: Option<String>,
+    namespace: Option<String>,
+    scale: Option<f64>,
+    column_span: Option<usize>,
+    workspace_span: Option<usize>,
+    pattern: Option<Pattern>,
+    wallpaper: Option<PathBuf>,
+    config: Option<PathBuf>,
+    trace: bool,
+}
+
+fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
+    let mut over = Overrides::default();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let mut value = || iter.next().ok_or_else(|| format!("{arg} needs a value"));
+        match arg.as_str() {
+            "--output" => over.output = Some(value()?.clone()),
+            "--namespace" => over.namespace = Some(value()?.clone()),
+            "--config" => over.config = Some(PathBuf::from(value()?)),
+            "--wallpaper" => over.wallpaper = Some(PathBuf::from(value()?)),
+            "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
+            "--column-span" => {
+                over.column_span = Some(
+                    value()?
+                        .parse()
+                        .map_err(|e| format!("--column-span: {e}"))?,
+                )
+            }
+            "--workspace-span" => {
+                over.workspace_span = Some(
+                    value()?
+                        .parse()
+                        .map_err(|e| format!("--workspace-span: {e}"))?,
+                )
+            }
+            "--pattern" => {
+                over.pattern = Some(match value()?.as_str() {
+                    "blocks" => Pattern::Blocks,
+                    "bands" => Pattern::Bands,
+                    other => return Err(format!("unknown --pattern {other}")),
+                })
+            }
+            "--trace" => over.trace = true,
+            other => return Err(format!("unknown argument {other}")),
+        }
+    }
+    Ok(over)
+}
+
+/// Draw the wallpaper layer for one output until asked to stop.
+fn daemon_command(args: &[String]) -> Result<(), String> {
+    install_signal_handlers();
+    let over = parse_overrides(args)?;
+
+    let (config, source) = match &over.config {
+        Some(path) => (Config::load_from(path)?, path.display().to_string()),
+        None => {
+            let config = Config::load()?;
+            let source = match niripaper::config::default_path() {
+                Some(path) if path.exists() => path.display().to_string(),
+                _ => "built-in defaults (no config file)".to_owned(),
+            };
+            (config, source)
+        }
+    };
+
+    // The output name may have to come from niri, and the per-output overrides
+    // are keyed by it, so resolve it before building the effective options.
+    let output = match over.output.clone() {
+        Some(name) => name,
+        None => {
+            // This connection only reads the output list — the per-output
+            // spans are not known until the output name is — so the global
+            // ones stand in.
+            let mut niri = Niri::connect(config.column_span, config.workspace_span)?;
+            niri.wait_for_full_state()?;
+            niri.motion
+                .workspaces()
+                .iter()
+                .map(|w| w.output.clone())
+                .find(|name| !name.is_empty())
+                .ok_or("niri reported no outputs; pass --output")?
+        }
+    };
+
+    let params = config.output(&output);
+    let mut options = Options::new(output);
+    options.scale = over.scale.unwrap_or(params.scale);
+    options.column_span = over.column_span.unwrap_or(params.column_span);
+    options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
+    options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
+    // Animations come from the config only: they are tuned by feel, and a flag
+    // per parameter would be noise.
+    options.animations = config.animations.clone();
+    options.wallpaper = over.wallpaper.or(params.wallpaper);
+    if let Some(pattern) = over.pattern {
+        options.pattern = pattern;
+    }
+    options.trace = over.trace;
+    println!("niripaper: config {source}");
+    daemon::run(&options, &|| !EXIT.load(Ordering::SeqCst))
 }

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::motion::{Event, Motion, Window, Workspace, DEFAULT_SPAN};
+use crate::motion::{Event, Motion, Window, Workspace};
 
 /// The socket the compositor is listening on.
 ///
@@ -41,15 +41,22 @@ pub struct Niri {
     pub path: PathBuf,
     /// Lines read that were not parallax events (`{"Ok":...}`, urgency, casts…).
     pub ignored: u64,
+    /// Whether niri's overview is open. Not a parallax input, but the daemon
+    /// animates the wallpaper on it.
+    pub overview_open: bool,
 }
 
 impl Niri {
     /// Connect using `$NIRI_SOCKET`.
-    pub fn connect() -> Result<Self, String> {
-        Self::connect_path(&socket_path()?)
+    pub fn connect(column_span: usize, workspace_span: usize) -> Result<Self, String> {
+        Self::connect_path(&socket_path()?, column_span, workspace_span)
     }
 
-    pub fn connect_path(path: &Path) -> Result<Self, String> {
+    pub fn connect_path(
+        path: &Path,
+        column_span: usize,
+        workspace_span: usize,
+    ) -> Result<Self, String> {
         let mut stream = UnixStream::connect(path)
             .map_err(|e| format!("connecting to {}: {e}", path.display()))?;
         stream
@@ -58,9 +65,10 @@ impl Niri {
             .map_err(|e| format!("requesting the event stream: {e}"))?;
         Ok(Self {
             reader: BufReader::new(stream),
-            motion: Motion::new(DEFAULT_SPAN),
+            motion: Motion::new(column_span, workspace_span),
             path: path.to_owned(),
             ignored: 0,
+            overview_open: false,
         })
     }
 
@@ -69,19 +77,17 @@ impl Niri {
         self.reader.get_ref().as_raw_fd()
     }
 
-    /// Whether complete lines are already buffered (so a read will not block).
-    pub fn has_buffered(&self) -> bool {
-        !self.reader.buffer().is_empty()
-    }
-
-    /// Apply every already-buffered line, without blocking. Returns the last
-    /// parallax event seen, if any.
+    /// Apply the events waiting on the socket. Returns the last parallax event
+    /// seen, if any.
+    ///
+    /// The caller is expected to have polled [`Niri::fd`] and seen it readable,
+    /// so the first read does not block. Only *complete* lines are consumed
+    /// after that: a partial line would block, and it can wait for the rest.
     pub fn drain(&mut self) -> Result<Option<Event>, String> {
-        let mut last = None;
-        while self.has_buffered() {
-            match self.read_line()? {
-                Some(event) => last = Some(event),
-                None => continue,
+        let mut last = self.read_line()?;
+        while self.reader.buffer().contains(&b'\n') {
+            if let Some(event) = self.read_line()? {
+                last = Some(event);
             }
         }
         Ok(last)
@@ -124,12 +130,17 @@ impl Niri {
             self.ignored += 1;
             return Ok(None);
         }
-        match parse_event(line)? {
-            Some(event) => {
+        match parse_line(line)? {
+            Parsed::Event(event) => {
                 self.motion.apply(&event);
                 Ok(Some(event))
             }
-            None => {
+            Parsed::Overview { is_open } => {
+                self.overview_open = is_open;
+                self.ignored += 1;
+                Ok(None)
+            }
+            Parsed::Ignored => {
                 self.ignored += 1;
                 Ok(None)
             }
@@ -137,18 +148,30 @@ impl Niri {
     }
 }
 
-/// Parse one event line. `Ok(None)` means "not one of §4.2.7's eight events".
-pub fn parse_event(line: &str) -> Result<Option<Event>, String> {
+/// What one event-stream line turned out to be.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Parsed {
+    /// One of §4.2.7's eight parallax events.
+    Event(Event),
+    /// `OverviewOpenedOrClosed`: not a parallax input, but the daemon animates
+    /// the wallpaper when it opens and closes.
+    Overview { is_open: bool },
+    /// Everything else: urgency, casts, config reloads, multi-key envelopes.
+    Ignored,
+}
+
+/// Parse one event line.
+pub fn parse_line(line: &str) -> Result<Parsed, String> {
     let value: serde_json::Value =
         serde_json::from_str(line).map_err(|e| format!("unparsable event {line:?}: {e}"))?;
     let serde_json::Value::Object(object) = value else {
         // `{"Ok":"Handled"}` is an object; anything else is not an event.
-        return Ok(None);
+        return Ok(Parsed::Ignored);
     };
     // A multi-key envelope is not a valid single event (§4.2.7) — ignore it
     // rather than guess which half applies.
     if object.len() != 1 {
-        return Ok(None);
+        return Ok(Parsed::Ignored);
     }
     let (name, payload) = object.into_iter().next().expect("len == 1");
     let event = match name.as_str() {
@@ -205,10 +228,24 @@ pub fn parse_event(line: &str) -> Result<Option<Event>, String> {
                     .collect(),
             }
         }
-        // Everything else: urgency, overview, casts, config, timestamps…
-        _ => return Ok(None),
+        "OverviewOpenedOrClosed" => {
+            let raw: RawOverviewOpenedOrClosed = from(payload)?;
+            return Ok(Parsed::Overview {
+                is_open: raw.is_open,
+            });
+        }
+        // Everything else: urgency, casts, config, timestamps…
+        _ => return Ok(Parsed::Ignored),
     };
-    Ok(Some(event))
+    Ok(Parsed::Event(event))
+}
+
+/// Convenience for callers that only care about parallax events.
+pub fn parse_event(line: &str) -> Result<Option<Event>, String> {
+    Ok(match parse_line(line)? {
+        Parsed::Event(event) => Some(event),
+        _ => None,
+    })
 }
 
 fn from<T: for<'de> Deserialize<'de>>(payload: serde_json::Value) -> Result<T, String> {
@@ -276,6 +313,11 @@ struct RawWindowClosed {
 }
 
 #[derive(Deserialize)]
+struct RawOverviewOpenedOrClosed {
+    is_open: bool,
+}
+
+#[derive(Deserialize)]
 struct RawWindowFocusChanged {
     id: Option<u64>,
 }
@@ -319,6 +361,7 @@ impl From<RawWindow> for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 
     /// Real lines captured from the live socket (`nc -U $NIRI_SOCKET`).
     const WORKSPACES_CHANGED: &str = r#"{"WorkspacesChanged":{"workspaces":[{"id":22,"idx":4,"name":null,"output":"DP-1","is_urgent":false,"is_active":false,"is_focused":false,"active_window_id":null},{"id":15,"idx":2,"name":null,"output":"DP-1","is_urgent":false,"is_active":true,"is_focused":true,"active_window_id":180}]}}"#;
@@ -407,12 +450,25 @@ mod tests {
     }
 
     #[test]
+    fn surfaces_the_overview_state() {
+        // Not a parallax event, but the daemon animates on it.
+        assert_eq!(
+            parse_line(r#"{"OverviewOpenedOrClosed":{"is_open":true}}"#).expect("parses"),
+            Parsed::Overview { is_open: true }
+        );
+        assert!(
+            parse_event(r#"{"OverviewOpenedOrClosed":{"is_open":false}}"#)
+                .expect("parses")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn ignores_everything_that_is_not_a_parallax_event() {
         // The request acknowledgement, and events §4.2.7 does not list.
         for line in [
             r#"{"Ok":"Handled"}"#,
             r#"{"WindowUrgencyChanged":{"id":1,"urgent":true}}"#,
-            r#"{"OverviewOpenedOrClosed":{"is_open":false}}"#,
             r#"{"ConfigLoaded":{"failed":false}}"#,
             r#"{"KeyboardLayoutsChanged":{"keyboard_layouts":{"names":[]}}}"#,
             r#"{"CastsChanged":{"casts":[]}}"#,
@@ -437,7 +493,7 @@ mod tests {
 
     #[test]
     fn state_follows_a_realistic_sequence() {
-        let mut motion = Motion::new(DEFAULT_SPAN);
+        let mut motion = Motion::new(DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN);
         for line in [WORKSPACES_CHANGED, WINDOWS_CHANGED] {
             let event = parse_event(line).expect("parses").expect("is an event");
             motion.apply(&event);
