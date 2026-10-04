@@ -25,6 +25,9 @@ cargo clippy --all-targets      # 必须 0 警告
 cargo test
 ```
 
+装到 `PATH`：`cargo install --path . --locked --bin niripaper` —— **必须带 `--bin niripaper`**，
+否则 `src/bin/` 下的两个诊断探针也会被一起装进 `~/.cargo/bin`。
+
 改动渲染路径或事件解析后，**必须实机跑一次**：启动 `./target/release/niripaper daemon --trace`，
 观察逐帧的 `h` / `v` / `zoom` 与目标值，而不是只看编译通过。改动配置项时，用**非默认值**验证
 它真的生效（历史上出现过"配置键写了但从未接上线"）。
