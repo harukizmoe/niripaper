@@ -1,0 +1,14 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# 构建/运行产生的本地文件
+*.log
+/perf.data*
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
