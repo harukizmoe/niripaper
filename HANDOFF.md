@@ -75,7 +75,7 @@ cargo build
 | Noctalia 交接 | 插件在某输出启用守护进程时调用 `setWallpaperEnabled(connector, false)` 撤掉原生壁纸层（保证 backdrop 一致）；插件启动时自愈式恢复 `true` |
 | Noctalia UI | 不自己造选择器：镜像官方壁纸选择（Material You 取色继续生效）+ 状态栏开关 + 插件设置项 |
 | 分发 | 源码 `cargo install` + AUR + GitHub Releases 预编译；Noctalia 插件为可选集成 |
-| 默认参数 | `scale = 1.1`、`span = 6`、视差 `ease-out-cubic 600 ms`、总览过渡 `spring 1.0/800/0.0001` + `zoom 0.96`、换图过渡 `fade 250 ms`、视频静音、`hwdec=auto-safe` |
+| 默认参数 | `scale = 1.1`、`column_span = 6`、`workspace_span = 6`、视差 `ease-out-cubic 600 ms`、总览过渡 `spring 1.0/800/0.0001` + `zoom 0.96`、换图过渡 `fade 250 ms`、视频静音、`hwdec=auto-safe` |
 | 动画配置 | **语义与写法对齐 niri 的 `animations { }`**：每个动画三选一——`off`、缓动（`duration_ms` + `curve`）、或 `spring`（`damping_ratio` / `stiffness` / `epsilon`，质量固定 1，与 niri 同）。`curve` 取 niri 的五个：`linear` / `ease-out-quad` / `ease-out-cubic` / `ease-out-expo` / `cubic-bezier`（后者配 `cubic_bezier = [x1,y1,x2,y2]`）。另有顶层 `off` 与 `slowdown`。当前两项：`animations.parallax`（§4.2.6：ease-out-cubic 600 ms）、`animations.overview-open-close`（`zoom` + 动画，默认用 **niri 自己的默认弹簧** 1.0/800/0.0001）。两种动画类型都能驱动任何被动画量。
 | **跟随 niri 配置** | `animations.follow_niri`（默认 **true**）：读 niri 自己的 `config.kdl`（含 `include`），取用两者共享的 `overview-open-close` 与 `slowdown`；niri 的全局 `off` 只关掉总览过渡，**不动视差**（视差不是 niri 的动画）。优先级：**本文件显式值 > niri 配置 > 我们的默认值**，来源会写进启动日志（`from niri's config: …`），避免静默偏离。`follow_niri = false` 则完全不读 |
 | 总览过渡 | 总览打开/关闭时画布做一次轻微后撤，由 `OverviewOpenedOrClosed` 驱动。zoom 实现为 **`scale` 的动画化乘数**，所以画布/overflow/视差行程/纹理采样全部自动跟随，shader 不用改、纹理不用重传（只采样子区域）。niri 不报告它自己的过渡进度，所以只能近似同步——把参数设成与 niri 配置里 `overview-open-close` 相同的弹簧，手感就基本一致 |
@@ -91,7 +91,7 @@ niripaper（Rust 守护进程）
 │               （只认 §4.2.7 的 8 个事件，其余含多键信封一律丢弃）→ 喂给 motion.rs
 ├── motion.rs   已实现：§4 的运动规格（纯逻辑、无 IO，§4.3 全部用例 + §4.4 的实现注记）
 ├── ipc.rs      控制 socket：$XDG_RUNTIME_DIR/niripaper.sock（行协议：set/video/query/kill）
-├── config.rs   已实现：~/.config/niripaper/config.toml（scale / span / duration_ms /
+├── config.rs   已实现：~/.config/niripaper/config.toml（scale / column_span / workspace_span /
 │               namespace + [outputs.<名>] 覆盖）；未知键与越界值都报错并指出键名
 ├── render/
 │   ├── layer.rs   Wayland 客户端：registry / wl_output / wlr-layer-shell 表面（namespace = "niripaper"）
@@ -146,14 +146,14 @@ offset_px  = axisScreenSize × (scale - 1) × (progress - 0.5)     // 相对"居
 canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照，等价于 video-zoom = log2(scale)）
 ```
 
-`span` 默认 6，`scale` 默认 1.1。参考换算（若与 mpv 单位对照：pan 单位 = 已缩放画布宽度）：
+`column_span`（每工作区的列跨度）与 `workspace_span`（每输出的工作区跨度）各默认 6，`scale` 默认 1.1。两者**分开设**：它们数的是不同的东西，工作区多的人不该为此缩小列步长。参考换算（若与 mpv 单位对照：pan 单位 = 已缩放画布宽度）：
 `pan = (scale-1)/scale × (0.5 - progress)`，`zoom = log2(scale)`——**新渲染器不要照搬这一行**，直接用上面的像素偏移。
 
-数值例子（2560×1440、scale 1.1、span 6）：`overflow = 256 px` 横向、`144 px` 纵向；3 列时 rank 0/1/2 → progress 0 / 0.2 / 0.4 → **首列到末列共移动 102.4 px**；**纵向同理用 span**（见 §4.4 第 10 条）：工作区 idx 1…4 → progress 0 / 0.2 / 0.4 / 0.6，每级 28.8 px。
+数值例子（2560×1440、scale 1.1、两个 span 都取 6）：`overflow = 256 px` 横向、`144 px` 纵向；3 列时 rank 0/1/2 → progress 0 / 0.2 / 0.4 → **首列到末列共移动 102.4 px**（每列 51.2 px）；工作区 idx 1…4 → progress 0 / 0.2 / 0.4 / 0.6（每级 28.8 px）。两者都用固定跨度，见 §4.4 第 10 条。
 
 ### 4.2 事件与记忆规则
 
-1. `span` 是**固定值**，不是"该工作区实际列数"（理由见 §7 风险 2）。**纵向同理**：工作区这轴也用 `span`，不用活动工作区数（见 §4.4 第 10 条）。
+1. `column_span` 是**固定值**，不是"该工作区实际列数"（理由见 §7 风险 2）。**纵向同理**：`workspace_span` 是固定值，不是活动工作区数（见 §4.4 第 10 条）。两者独立配置。
 2. 每个工作区**各自记忆焦点列**（存列号）；列消失时解析到**最近的现存列**（nearest，不是 lower-bound）。
 3. 记忆只在**活动工作区**上更新；活动窗口是**浮动窗口**时保留上一个平铺列（不重置）。
 4. 该工作区没有任何列 → `horizontal = 0.5`；**只有一列 → 0**（贴左边，属规格，不要"修正"为 0.5）。
@@ -193,7 +193,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | `WindowUrgencyChanged` | `apply()` 返回 false |
 | 双键信封 | `apply()` 返回 false |
 | `reset()` 之后 | (0.5, 0.5)，且 `focused_id == nil` |
-| 聚焦第 2 列，span = 6 / 3 / 11 | (0.2, 0.0) / (0.5, 0.0) / (0.1, 0.0) |
+| 聚焦第 2 列，`column_span` = 6 / 3 / 11 | (0.2, 0.0) / (0.5, 0.0) / (0.1, 0.0) |
 | `panFor((0.5,0.5), 1.1)` | pan = (0, 0) |
 | `panFor(_, 1.1)` 的 zoom | `log2(1.1)` |
 | progress (0,0) → 像素（2560×1440、scale 1.1） | `x = +128`（首列位于中心右侧半个 overflow） |
@@ -222,9 +222,10 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
    * 判据：**"焦点此前就在该输出的活动工作区上"** → 说明正在发生的是横向滚动，不是工作区带在滑动。其余情况（`WorkspaceActivated`、以及它后面那个 `WindowFocusChanged`）只改竖直。
    * 首次建立时机：状态有意义（已知焦点窗口）时建立一次。否则"切换早于首次横向移动"会回落到按新工作区重算 ✗，又变回斜向。
    * 实测（修后，八个动作段全部轴向纯净）：ws-down/up → Δh **+0.0 px**、Δv ±61…68 px；col-right/left → Δh ±46…47 px、Δv **+0.0 px**。
-10. **纵向也用固定跨度 `span`**（对 §4.2/§4.3 的修正）。原式 `activeIndex / (count - 1)` 用的是**活动工作区数** ✗，于是同一个活动工作区的位置随工作区总数变化 ✗：实测（修前）idx 2 在 3/4/5 个工作区时分别是 **72 / 48 / 36 px** —— 新建或关闭一个工作区，壁纸就跳一下 ✗，视差比例也跟着变 ✗。这与 §4.2.1 给列定"固定值"的理由**完全相同**，只是当初漏了这一轴 ✗。改为 `clamp01(activeIndex / (span - 1))`，保留"该输出只有 ≤1 个工作区时取 0.5"（没有可平移的对象 → 居中，§4.3 的单工作区行都依赖它）。
+10. **纵向也用固定跨度**（对 §4.2/§4.3 的修正），即 `workspace_span`。原式 `activeIndex / (count - 1)` 用的是**活动工作区数** ✗，于是同一个活动工作区的位置随工作区总数变化 ✗：实测（修前）idx 2 在 3/4/5 个工作区时分别是 **72 / 48 / 36 px** —— 新建或关闭一个工作区，壁纸就跳一下 ✗，视差比例也跟着变 ✗。这与 §4.2.1 给列定"固定值"的理由**完全相同**，只是当初漏了这一轴 ✗。改为 `clamp01(activeIndex / (span - 1))`，保留"该输出只有 ≤1 个工作区时取 0.5"（没有可平移的对象 → 居中，§4.3 的单工作区行都依赖它）。
     实测（修后，用户 4 个工作区）：纵向目标 0.2 / 0.4 / 0.6（每级 28.8 px），八个动作段仍全部轴向纯净。
-    影响：`span` 现在同时是两轴的跨度；想恢复旧的"纵向走满 overflow"手感，把它设成工作区数即可（但横向也会跟着变小）。
+    两轴**各自独立**（`column_span` / `workspace_span`）：它们数的是不同的东西，工作区多的人不该为此缩小列步长。想让纵向像旧的"走满 overflow"那样大，把 `workspace_span` 设成工作区数即可，横向不受影响。
+    同一次改动还修掉一个潜伏 bug：`Niri::connect()` 里写死 `Motion::new(DEFAULT_SPAN)`，**配置里的 span 从未接上线** ✗（默认值与当时配置里的值都是 6，所以看不出来 ✗）。现在由 daemon 把生效的跨度传进去；实测 `--config` 写 `column_span = 11` / `workspace_span = 3` → 启动日志 `spans 11/3`，每列 25.6 px、每级 72 px。
 9. **过期的 `is_focused` 标志会把焦点抢回去**（修 8 时一并发现）。`WindowOpenedOrChanged` 对**标题/app_id 变化**也会触发，其载荷窗口并非焦点窗口 ✗；而 `adopt_reported_focus` 会在窗口列表里扫描 `is_focused` ✗ —— 我们自己从不清除旧标志 ✗，于是这类事件会把焦点（以及横向视差）拽回上一个焦点窗口 ✗。修正：只有**载荷窗口自称被聚焦**时才采纳（`WindowsChanged` 是完整列表，仍可整体扫描），采纳时把其余窗口的标志清掉（niri 的语义：一个窗口报告被聚焦即意味着其他都不是）。
 
 ---
@@ -269,6 +270,7 @@ canvas     = 画布按 scale 放大后裁剪铺满输出（若用 mpv 作参照�
 | **做逐像素比对时要扣掉窗口阴影**：本机 `layout { shadow { on; softness 10; spread 4; color "#00000070" } }`，于是窗口外的 10 px 边距被阴影压暗——实测比值从离窗口远处 0.884 单调降到贴窗口处 0.823（纯乘性、有梯度）。这是配置效果，不是渲染 bug；要干净的比对就切到空工作区 | M2 实测 |
 | niri **不会**因为 `focus-workspace <不存在的索引>` 而新建工作区（实测 5/6/9 均无效）；空工作区只有已有的那些，而 niri 会在最后一个空工作区被填满后自动补一个空工作区 | M1 实测 |
 | 测 3 列位移时用 backdrop 放置（`--namespace mpvpaper` 命中既有规则）只是为了让**测量更干净**：工作区背景的壁纸会随工作区滚动一起平移，混进位移里 | M1 实测 |
+| **配置键写了但没接上线**：`span` 曾只存在于配置与日志里，`Niri::connect()` 写死默认值 ✗ —— 因为默认值恰好等于当时配置的值，一直没暴露。改动配置管线时务必实机验证"改一个非默认值，行为跟着变" | 实测 |
 | **竖直移动工作区时横向被带着走 → 斜向**：`horizontal` 若跟着新工作区重算，两个轴就锁在一起走 ✗（实测逐帧增量完全相同）。修复见 §4.4 第 8 条；判据是"焦点此前是否已在该输出的活动工作区上"，不是事件类型 | 实测 |
 | **niri 不暴露它的动画参数**：`niri msg` 没有 dump 配置的命令、`niri validate` 只打印 "config is valid"、事件流里与配置有关的只有 `{"ConfigLoaded":{"failed":false}}`。唯一来源是它的 KDL 配置文件（含 `include`，本机动画在 `__custom__.kdl` 里） | `niri msg --help`、`niri validate`、事件流实测 |
 | **niri 的配置路径顺序**（`src/main.rs`）：`-c/--config` > `$NIRI_CONFIG` > 用户配置（`$XDG_CONFIG_HOME/niri/config.kdl`，否则 `~/.config/niri/config.kdl`）> `/etc/niri/config.kdl`。注意 niri 启动后**会把 `NIRI_CONFIG` 从自己的环境里删掉**，子进程看不到 → 跟随它的唯一可靠办法是读 `/proc/<niri pid>/cmdline` 里的 `--config` | 读 niri 源码 + 实测 |
