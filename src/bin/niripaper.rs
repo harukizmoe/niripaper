@@ -26,11 +26,19 @@ extern "C" fn on_signal(_signal: libc::c_int) {
     EXIT.store(true, Ordering::SeqCst);
 }
 
+/// Install SIGINT/SIGTERM handlers that make blocking syscalls return `EINTR`.
+///
+/// `libc::signal` sets `SA_RESTART`, which makes `poll()` (and `read()`) resume
+/// after the handler runs — so an idle daemon would ignore Ctrl-C until some
+/// unrelated event happened to wake it. Clearing `sa_flags` is the whole point.
 fn install_signal_handlers() {
-    let handler = on_signal as extern "C" fn(libc::c_int) as *const () as libc::sighandler_t;
     unsafe {
-        libc::signal(libc::SIGINT, handler);
-        libc::signal(libc::SIGTERM, handler);
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = 0;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
     }
 }
 
@@ -74,6 +82,7 @@ fn usage() {
 
 /// Follow the event stream and print every change of the parallax target.
 fn watch(args: &[String]) -> Result<(), String> {
+    install_signal_handlers();
     let mut output = String::new();
     let mut screen = (0.0f64, 0.0f64);
     let mut iter = args.iter();
@@ -115,9 +124,15 @@ fn watch(args: &[String]) -> Result<(), String> {
     let mut last = Progress::CENTER;
     report(&niri, &output, screen, &mut last, "initial");
     loop {
-        let event = niri.next_event()?;
-        let summary = summarize(&event);
-        report(&niri, &output, screen, &mut last, &summary);
+        match niri.next_event() {
+            Ok(event) => {
+                let summary = summarize(&event);
+                report(&niri, &output, screen, &mut last, &summary);
+            }
+            // A signal interrupts the blocking read; that is how Ctrl-C stops us.
+            Err(_) if EXIT.load(Ordering::SeqCst) => return Ok(()),
+            Err(err) => return Err(err),
+        }
     }
 }
 
