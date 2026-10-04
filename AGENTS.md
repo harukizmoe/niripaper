@@ -45,8 +45,10 @@ cargo test
   squash 之后 `dev` 的提交不再是 `main` 的祖先，不做这一步下一个 PR 会带一堆旧提交并报 `CONFLICTING`。
   冲突通常只在 README / LICENSE / Cargo.toml 这类两边都改过的文件上，取 `dev` 的版本（它更新）：
   `git checkout --ours -- <files>`。判断是否需要：`git merge-base --is-ancestor origin/main origin/dev || echo 需要`。
-- **提交信息用中文**，`type: 摘要` 形式（`feat:` / `fix:` / `docs:` / `chore:` / `refactor:`），
-  正文写清"为什么"以及实测数据。
+- **提交信息**：`dev` 上的开发提交用**中文**，`type: 摘要` 形式（`feat:` / `fix:` / `docs:` /
+  `chore:` / `refactor:`），正文写清"为什么"以及实测数据。**`main` 上的提交用英文**——
+  它是面向外部读者的历史，而且那条提交的标题就是 PR 标题，所以 PR 标题要用英文写。
+  （唯一的例外是 `ab4be5a`，它是 `dev` 与 `main` 的共同根，改成英文会让两边变成无关历史。）
 
 ## 代码与文档约定
 
