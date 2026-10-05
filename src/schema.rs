@@ -279,7 +279,7 @@ pub fn keys() -> Vec<Key> {
             default: json!([transition.center.0, transition.center.1]),
             unit: None,
             hot: true,
-            about: "Where iris, portal and zoom start, as a fraction of the screen.",
+            about: "Where iris, portal and zoom start: a fraction of the screen, [0, 0] being the top-left.",
         },
         Key {
             name: "transition.direction",
