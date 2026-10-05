@@ -9,6 +9,7 @@
 pub mod config;
 pub mod daemon;
 pub mod gpu;
+pub mod ipc;
 pub mod motion;
 pub mod niri;
 pub mod niri_config;

@@ -16,6 +16,9 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 - **视差。** 在窗口之间、工作区之间移动时，壁纸朝同一方向移动几十像素。
 - **自己绘制壁纸。** 不需要 mpv，不需要 shell 脚本，也没有辅助进程：一个二进制，
   在 background 层放一个 layer-shell 表面，直接往里渲染。
+- **视频壁纸。** mp4、webm、mkv、mov、m4v、avi，**硬件解码**。
+  [mpv](https://mpv.io) 在这里是**库**：没有 mpv 进程、没有窗口、没有 IPC、不读它自己的配置；
+  它把解码好的帧画进我们自己的纹理，于是视频和静态图一样，按视差偏移采样。
 - **总览过渡跟随 niri。** 默认 `follow_niri = true`：它的弹簧或缓动曲线从 niri 的配置里读，
   所以壁纸和工作区是同步动的。
 - **总览缩放。** 打开 niri 总览时，壁纸跟着一起缩小。
@@ -26,13 +29,15 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 
 版本 0.1.0，早期。
 
-现在能用：静态图像（PNG / JPEG / WebP）、视差、总览过渡、配置文件、按输出配置。
+现在能用：静态图像（PNG / JPEG / WebP）、**视频壁纸**（硬件解码）、视差、总览过渡、
+配置文件、按输出配置，以及给运行中的守护进程换壁纸。
 
-还没有：视频壁纸，以及换图时的交叉淡入。
+还没有：换图时的交叉淡入。
 
 ## 环境要求
 
 - **niri。** 开发时用的是 26.04。
+- **libmpv** —— 视频那条路链接它。Arch 上就是 `mpv` 这个包。
 - **Rust**（较新的 stable 工具链），如果你要自己编译。
 
 ## 安装
@@ -57,6 +62,18 @@ niripaper watch                           # 只打印视差目标值，不绘制
 `watch` 是排查工具：niri 布局变化时它会打印目标位置，
 有助于判断问题出在 niri 的事件上还是渲染上。
 
+### 给运行中的守护进程换壁纸
+
+守护进程监听一个小控制 socket（`$XDG_RUNTIME_DIR/niripaper.sock`）：
+
+```bash
+niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
+niripaper query                       # 现在屏幕上是什么
+niripaper kill                        # 让它退出
+```
+
+`set` 会**先加载成功再换** —— 路径写错就回报错误并保持原壁纸，而不是把屏幕搞空。
+
 ### 随 niri 启动
 
 在 `~/.config/niri/config.kdl` 里加上：
@@ -78,6 +95,7 @@ spawn-at-startup "niripaper" "daemon"
 | `--scale F` | 画布放大倍数，`1.0`–`1.35` |
 | `--column-span N`、`--workspace-span N` | 视差铺开多少级 |
 | `--pattern blocks\|bands` | 内置测试图案，未指定壁纸时使用 |
+| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper.sock`） |
 | `--trace` | 逐帧打印（位置、缩放、耗时）—— 排查用 |
 
 ## 配置
@@ -87,7 +105,8 @@ spawn-at-startup "niripaper" "daemon"
 所以文件里只需要写和默认不同的部分。
 
 ```toml
-wallpaper = "~/Pictures/wall.webp"
+wallpaper = "~/Pictures/wall.webp"   # 图片或视频（按扩展名路由）
+video_fps = 25                       # 视频帧率上限（0 = 跟着源帧率走）
 
 scale = 1.1           # 画布放大倍数；越大，可移动的余地越大
 column_span = 6       # 横向视差铺开多少列
@@ -113,7 +132,8 @@ scale = 1.2
 
 | 配置项 | 含义 |
 | --- | --- |
-| `wallpaper` | 要绘制的图像（PNG / JPEG / WebP） |
+| `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi） |
+| `video_fps` | 视频帧率上限（默认 `0`，即跟着源帧率走） |
 | `scale` | 画布放大倍数（默认 `1.1`，上限 `1.35`） |
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |
 | `workspace_span` | 纵向视差的固定工作区跨度（默认 `6`，最小 `2`） |
@@ -131,6 +151,10 @@ scale = 1.2
 
 开着 `follow_niri = true` 时，总览过渡的参数取自 niri 的配置，
 所以改 niri 的设置也会改变壁纸的运动。本文件里显式写的值优先于 niri 的值。
+
+视频会**硬件解码**，并缩放到画布（输出尺寸 × `scale`）—— 从不按源分辨率出图。
+`video_fps` 决定每秒呈现多少次：niri 给图层表面的帧回调是 60 Hz，所以 60 fps 的源
+正好卡在那个临界点上。本机实测 25 足够顺滑、不丢帧；换更快的硬件值得往上调。
 
 ## 排查
 

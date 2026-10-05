@@ -53,6 +53,9 @@ fn main() -> ExitCode {
     let result = match command.as_str() {
         "daemon" => daemon_command(&rest),
         "watch" => watch(&rest),
+        "set" => control("set", &rest),
+        "query" => control("query", &rest),
+        "kill" => control("kill", &rest),
         "-h" | "--help" | "help" => {
             usage();
             Ok(())
@@ -68,6 +71,36 @@ fn main() -> ExitCode {
     }
 }
 
+/// Talk to the running daemon over its control socket (`HANDOFF.md` §3).
+fn control(command: &str, args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut argument = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--socket" => {
+                path = Some(std::path::PathBuf::from(
+                    iter.next().ok_or("--socket needs a value")?,
+                ))
+            }
+            other if other.starts_with("--") => return Err(format!("unknown argument {other}")),
+            other => argument = Some(other.to_owned()),
+        }
+    }
+    let path = match path {
+        Some(path) => path,
+        None => niripaper::ipc::default_path()?,
+    };
+    let request = match (command, argument) {
+        ("set", Some(target)) => format!("set {target}"),
+        ("set", None) => return Err("set needs a path".to_owned()),
+        (other, None) => other.to_owned(),
+        (other, Some(_)) => return Err(format!("{other} takes no argument")),
+    };
+    println!("{}", niripaper::ipc::request(&path, &request)?);
+    Ok(())
+}
+
 fn usage() {
     eprintln!(
         "usage: niripaper <command>\n\
@@ -77,7 +110,11 @@ fn usage() {
          \x20        [--scale F] [--column-span N] [--workspace-span N]\n\
          \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
-         \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n"
+         \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n\
+         \n\
+         \x20 set PATH [--socket PATH]    switch the running daemon's wallpaper\n\
+         \x20 query    [--socket PATH]    what is on screen right now\n\
+         \x20 kill     [--socket PATH]    ask the daemon to shut down\n"
     );
 }
 
@@ -282,6 +319,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let mut options = Options::new(output);
     options.scale = over.scale.unwrap_or(params.scale);
     options.column_span = over.column_span.unwrap_or(params.column_span);
+    options.video_fps = config.video_fps;
     options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
     // Animations come from the config only: they are tuned by feel, and a flag

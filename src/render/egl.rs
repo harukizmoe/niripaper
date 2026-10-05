@@ -220,6 +220,17 @@ pub struct DmaBufDesc {
 }
 
 /// An EGL display/config/context bound to one GBM device.
+/// `eglGetProcAddress`, for libraries that resolve GL entry points themselves.
+/// libmpv's OpenGL render API does exactly that, and the pointers must come from
+/// the same context we render with — which is why this is `eglGetProcAddress`
+/// and not `dlsym`.
+pub fn get_proc_address(name: &str) -> *mut c_void {
+    let Ok(name) = std::ffi::CString::new(name) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { eglGetProcAddress(name.as_ptr()) }
+}
+
 pub struct Egl {
     pub display: EglDisplay,
     pub config: EglConfig,
