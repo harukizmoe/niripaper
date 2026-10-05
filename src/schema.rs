@@ -325,6 +325,17 @@ pub fn keys() -> Vec<Key> {
             about: "How far portal pushes the old frame outward; 0 makes it an iris.",
         },
         Key {
+            name: "transition.start_radius",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(transition.start_radius),
+            unit: None,
+            hot: true,
+            about: "How wide the hole already is at the start, as a fraction of the screen height.",
+        },
+        Key {
             name: "transition.on_start",
             kind: Kind::Bool,
             default: json!(transition.on_start),

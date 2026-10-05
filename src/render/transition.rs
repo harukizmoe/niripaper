@@ -216,6 +216,11 @@ pub struct Settings {
     /// How far `portal` pushes the old frame outward as the hole opens, as a
     /// multiple of its distance from the centre. `0` makes it an iris.
     pub push: f64,
+    /// How big the hole already is when the transition starts, as a fraction of
+    /// the screen's height. `0` (the default) begins as a point; anything larger
+    /// begins as a complete circle, which is what makes the shape readable from
+    /// the first frame.
+    pub start_radius: f64,
     /// Play one when the daemon starts, so logging in is not a hard cut.
     pub on_start: bool,
 }
@@ -243,6 +248,8 @@ impl Default for Settings {
             // Enough that portal and iris are told apart at a glance. Below about
             // 0.3 the push reads as "a slight zoom" on a photograph.
             push: 0.55,
+            // A point, which is what a circle growing from nothing looks like.
+            start_radius: 0.0,
             on_start: true,
         }
     }
@@ -367,6 +374,7 @@ impl Transition {
             direction: self.settings.direction.vector(),
             params: (self.settings.stripes as f32, self.settings.cell as f32),
             push: self.settings.push as f32,
+            start_radius: self.settings.start_radius as f32,
         })
     }
 
@@ -431,6 +439,7 @@ mod tests {
             stripes: 12,
             cell: 0.12,
             push: 0.55,
+            start_radius: 0.0,
             on_start: true,
         }
     }

@@ -170,9 +170,11 @@ scale = 1.2
 | `[transition] effect`、`effects` | `fixed` 时用的效果，以及 `rotate`/`random` 挑选的范围 |
 | `[transition] duration_ms`、`curve` | 过渡多长、怎么缓动 |
 | `[transition] softness` | 移动边缘多宽（`0` 硬边，`1` 很软） |
-| `[transition] center`、`direction` | 径向效果的起点；wipe/stripes/slide 的方向 |
+| `[transition] center` | 径向效果的起点：`[x, y]` 为屏幕比例，`[0, 0]` 是**左上角** |
+| `[transition] direction` | wipe/stripes/slide 的方向 |
 | `[transition] stripes`、`cell` | `stripes` 的条数；`honeycomb` 的六边形大小 |
 | `[transition] push` | `portal` 把旧画面往外推多远；`0` 就等于 `iris` |
+| `[transition] start_radius` | 过渡开始时圆已经有的大（屏幕高度的比例） |
 | `[transition] allow_overshoot`、`on_start` | 允许曲线回弹；启动时也播一次 |
 | `[outputs."NAME"]` | 按输出覆盖上面任意一项 |
 
@@ -192,6 +194,11 @@ scale = 1.2
 
 `iris` 与 `portal` 是同一个圆：`portal` 额外把旧画面向外推，所以观感是你**穿过去**，
 而不是看着它被挖掉。差别只有这一处，`push` 就是推多远。
+
+圆本身也可以调：`center` 是它从哪里开 —— `[x, y]` 为屏幕比例，**从左上角读起**，
+和看截图的习惯一致 —— `start_radius` 是过渡开始时它已经有的大。留 `0` 就是从一点长起；
+给个 `0.25` 左右就会**一上来就看得见一个完整的圆**，形状从第一帧就认得出来。
+无论放在哪，它都会一直长到盖住离 `center` 最远的那个角。
 
 `niripaper schema` 会列出上面每一个配置项，连同类型、取值范围、以及运行中改文件
 是否即时生效。

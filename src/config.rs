@@ -646,6 +646,7 @@ struct RawTransition {
     stripes: Option<u32>,
     cell: Option<f64>,
     push: Option<f64>,
+    start_radius: Option<f64>,
     on_start: Option<bool>,
 }
 
@@ -730,6 +731,13 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         ));
     }
 
+    let start_radius = raw.start_radius.unwrap_or(defaults.start_radius);
+    if !(0.0..=1.0).contains(&start_radius) {
+        return Err(format!(
+            "{key}.start_radius is a fraction of the screen's height; 0 to 1, got {start_radius}"
+        ));
+    }
+
     Ok(Settings {
         // A hard cut is the honest reading of "no animations": nothing to pick.
         selection: if global_off {
@@ -748,6 +756,7 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         stripes,
         cell,
         push,
+        start_radius,
         on_start: raw.on_start.unwrap_or(defaults.on_start),
     })
 }

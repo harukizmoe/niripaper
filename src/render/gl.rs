@@ -343,6 +343,7 @@ struct Uniforms {
     direction: i32,
     params: i32,
     push: i32,
+    start_radius: i32,
 }
 
 /// What the shader needs to blend the previous frame in.
@@ -364,6 +365,8 @@ pub struct Blend {
     pub params: (f32, f32),
     /// How far `portal` pushes the old frame outward; 0 makes it an iris.
     pub push: f32,
+    /// How big the hole already is at t = 0, as a fraction of the screen height.
+    pub start_radius: f32,
 }
 
 /// A shader program plus the empty VAO core-profile GL insists on.
@@ -412,6 +415,7 @@ impl Renderer {
             direction: uniform(program, "u_direction"),
             params: uniform(program, "u_params"),
             push: uniform(program, "u_push"),
+            start_radius: uniform(program, "u_start_radius"),
         };
         Ok(Self {
             program,
@@ -467,6 +471,7 @@ impl Renderer {
                     );
                     glUniform2f(self.uniforms.params, blend.params.0, blend.params.1);
                     glUniform1f(self.uniforms.push, blend.push);
+                    glUniform1f(self.uniforms.start_radius, blend.start_radius);
                 }
                 // Nothing to blend from. Say so explicitly rather than leaning on
                 // a sentinel progress: an unbound sampler reads undefined memory.
@@ -513,6 +518,7 @@ uniform vec2 u_center;
 uniform vec2 u_direction;
 uniform vec2 u_params;
 uniform float u_push;
+uniform float u_start_radius;
 out vec4 color;
 
 float hash(vec2 p) {
@@ -534,10 +540,15 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
     old_uv = uv;
     new_uv = uv;
 
+    // `uv.y` counts from the bottom — GL's convention — while everyone reads a
+    // screenshot from the top, so the centre is flipped once, here. `[0, 0]` is
+    // the top-left: that is how the position is documented, and how the five
+    // positions in a hand-annotated screenshot are read.
+    vec2 centre = vec2(u_center.x, 1.0 - u_center.y);
     // Distances are measured in aspect-corrected space, or a circle comes out an
     // ellipse on a 16:9 screen.
     float aspect = u_screen.x / u_screen.y;
-    vec2 p = (uv - u_center) * vec2(aspect, 1.0);
+    vec2 p = (uv - centre) * vec2(aspect, 1.0);
 
     // The moving edge's half-width. Softness is a fraction of the screen: the
     // 0.3 default is a visible gradient, 1 is most of the way across.
@@ -571,18 +582,27 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
         mask = 1.0 - smoothstep(band_sweep - edge, band_sweep + edge, along);
     } else if (u_effect == 5 || u_effect == 6) {
         // Iris, and the portal below it: a hole opening at u_center.
-        // `p` spans half the screen either way, so the farthest corner is half
-        // the diagonal — the full diagonal would have the circle cover
-        // everything a third of the way in.
-        float reach = 0.5 * length(vec2(aspect, 1.0));
-        float radius = sweep * reach;
+        //
+        // It has to reach the *farthest corner from u_center*. That is half the
+        // diagonal only while the centre is the middle; once it moves, the far
+        // corner is further away, and a circle sized for the middle leaves a
+        // corner of the old wallpaper behind for good.
+        vec2 far = max(centre, 1.0 - centre) * vec2(aspect, 1.0);
+        float reach = length(far);
+        // `u_start_radius` is how wide the hole already is at t = 0, so it can
+        // begin as a complete circle on screen instead of a point (0 is the
+        // default, and is a point). The band is centred on that plus the edge, so
+        // the hole is exactly as wide as asked rather than that minus the
+        // softness.
+        float revealed = u_start_radius + (reach - u_start_radius) * clamp(t, 0.0, 1.0);
+        float radius = revealed + edge;
         mask = 1.0 - smoothstep(radius - edge, radius + edge, length(p));
         if (u_effect == 6) {
             // Portal: the old frame is pushed outward as the hole opens, so you
             // move *through* it rather than watch it get cut away. The new side
             // is live, which is the point: a video arrives already moving.
             // `u_push = 0` makes this an iris.
-            old_uv = u_center + (uv - u_center) / (1.0 + u_push * clamp(t, 0.0, 1.0));
+            old_uv = centre + (uv - centre) / (1.0 + u_push * clamp(t, 0.0, 1.0));
         }
     } else if (u_effect == 7) {
         // Honeycomb: hexagonal cells, each opening in its own order.
@@ -615,7 +635,7 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
     } else if (u_effect == 8) {
         // Zoom: the new image arrives magnified and settles. This is where an
         // overshooting curve is visible — t past 1 pushes it the other way.
-        new_uv = u_center + (uv - u_center) / (1.0 + 0.25 * (1.0 - t));
+        new_uv = centre + (uv - centre) / (1.0 + 0.25 * (1.0 - t));
     } else if (u_effect == 9) {
         // Slide: the new image comes in from the far side, the old one leaves
         // toward u_direction. Both move with the edge — that is what makes it a

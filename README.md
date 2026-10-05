@@ -185,9 +185,11 @@ scale = 1.2
 | `[transition] effect`, `effects` | the effect used when `fixed`, and the pool `rotate` and `random` pick from |
 | `[transition] duration_ms`, `curve` | how long it takes and how it is eased |
 | `[transition] softness` | how wide the moving edge is (`0` hard, `1` very soft) |
-| `[transition] center`, `direction` | where radial effects start; which way wipes, stripes and slides go |
+| `[transition] center` | where radial effects start: `[x, y]` as fractions of the screen, `[0, 0]` being the top-left |
+| `[transition] direction` | which way wipes, stripes and slides go |
 | `[transition] stripes`, `cell` | bands in `stripes`; hexagon size in `honeycomb` |
 | `[transition] push` | how far `portal` pushes the old frame outward; `0` makes it an `iris` |
+| `[transition] start_radius` | how wide the hole already is at the start (a fraction of the screen height) |
 | `[transition] allow_overshoot`, `on_start` | let the curve bounce; play one at startup |
 | `[outputs."NAME"]` | per-output overrides of any of the above |
 
@@ -210,6 +212,13 @@ where the two frames are exactly adjacent and the seam is a step.
 `iris` and `portal` are the same circle: `portal` additionally pushes the old frame
 outward as the hole opens, so you move *through* it rather than watch it get cut away.
 That is the whole difference, and `push` is how far it goes.
+
+The circle itself is tunable: `center` is where it opens — `[x, y]` as fractions of the
+screen, read from the **top-left**, so it matches how a screenshot is read — and
+`start_radius` is how wide it already is when the transition begins. Left at `0` it
+grows from a point; set to something like `0.25` it begins as a **complete circle** on
+screen, which makes the shape readable from the first frame. However it is placed, it
+grows until it has covered the farthest corner from `center`.
 
 `niripaper schema` lists every key above, with its type, bounds and whether editing
 the file while the daemon runs takes effect.
