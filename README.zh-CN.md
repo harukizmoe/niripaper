@@ -62,11 +62,12 @@ cargo install --path . --locked --bin niripaper
 `packaging/aur/` 里有一份给 AUR 用的 `PKGBUILD`（**还没发布到 AUR** —— AUR 现在
 不收新账号，见 `packaging/aur/README.md`）。
 
-Release 里带**两个** `x86_64` 二进制 —— 因为一个链接 `libmpv`、`libEGL`、`libgbm`、
-`libwayland-client` 的守护进程会被钉在构建它的那个发行版的 ABI 上：Ubuntu 那份要
-`libmpv.so.1`（mpv 0.34），而 Arch 装的是 `libmpv.so.2`（mpv 0.41），一个包没法同时
-服务两边。取和你发行版匹配的那个 —— Arch 及其衍生版用 `-arch-`，Ubuntu 22.04 及更新
-版本用 `-ubuntu-22.04-` —— 或者从源码构建，那是到处都能用的方式。
+Release 里带**两个** `x86_64` 二进制。它们按**链接的库**命名，不按构建它的发行版命名 ——
+因为真正有差别的只有这一件事：链接 `libmpv` 的守护进程被它的 soname 钉住。
+`mpv --version` 报 0.35 或更新的 —— Arch、Fedora、Debian 12 及更新 —— 取 `-mpv0.41`；
+报 0.34 的（Ubuntu 22.04）取 `-mpv0.34`。两者都要 glibc 2.34 或更新（两份构建的这个
+数字相同），真正有差别的只有 soname。每个包里的 `INSTALL.txt` 写出这两个数字，且是
+**从二进制里量出来的**而不是写死的。从源码构建则在任何地方都可用。
 
 ## 用法
 
