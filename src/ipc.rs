@@ -5,6 +5,8 @@
 //! ```text
 //! set <path>   switch the wallpaper (image or video, routed by extension)
 //! query        what is on screen right now
+//! schema       every config key a UI can offer, as JSON (`schema.rs`)
+//! state        what the daemon is doing right now, as JSON
 //! kill         shut the daemon down
 //! ```
 //!
@@ -29,6 +31,10 @@ pub enum Request {
     /// `set <path>` — an absolute or relative path to an image or a video.
     Set(PathBuf),
     Query,
+    /// The configuration's shape, so a panel never hardcodes a key name.
+    Schema,
+    /// Everything the daemon is doing: effective config, wallpaper, position.
+    State,
     Kill,
 }
 
@@ -48,6 +54,8 @@ impl Request {
                 Ok(Self::Set(PathBuf::from(argument)))
             }
             "query" => Ok(Self::Query),
+            "schema" => Ok(Self::Schema),
+            "state" => Ok(Self::State),
             "kill" => Ok(Self::Kill),
             "" => Err("empty request".to_owned()),
             other => Err(format!("unknown request {other:?}")),

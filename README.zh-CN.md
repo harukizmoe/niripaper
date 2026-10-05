@@ -70,10 +70,20 @@ niripaper watch                           # 只打印视差目标值，不绘制
 ```bash
 niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
 niripaper query                       # 现在屏幕上是什么
+niripaper schema                      # 全部配置项，JSON
+niripaper state                       # 守护进程当前状态，JSON
 niripaper kill                        # 让它退出
 ```
 
 `set` 会**先加载成功再换** —— 路径写错就回报错误并保持原壁纸，而不是把屏幕搞空。
+
+`schema` 与 `state` 是给面板（Noctalia 插件，或别的什么）用的。`schema` 列出每一个配置项
+及其类型、取值范围、默认值、单位、以及改动后能否即时生效；`state` 用**同一套名字**报出生效值，
+外加输出名、画布尺寸、**实际**在屏的壁纸与视差位置。面板启动时问一次 schema 来生成界面，
+之后只需要 `state` —— 所以在这里加一个配置项，面板不用改。
+
+`state` 里的 `config.values` 是**配置里写的**，而 `wallpaper.path` 是**实际在屏的**：
+`set` 只换画面不动配置，所以两者本来就可能不一样。
 
 ### 随 niri 启动
 

@@ -106,6 +106,10 @@ pub struct Animations {
     pub slowdown: f64,
     /// Whether the shared animations were read from niri's config.
     pub follow_niri: bool,
+    /// The global `off`, as written. The resolved animations already carry it,
+    /// but a client asking `state` has to be able to tell this switch apart from
+    /// an animation that was turned off on its own.
+    pub off: bool,
     /// Which of them actually came from there, for the startup log — a value
     /// that silently stops matching niri is the failure mode to avoid.
     pub from_niri: Vec<&'static str>,
@@ -124,6 +128,7 @@ impl Default for Animations {
             slowdown: 1.0,
             wallpaper_change: default_wallpaper_change(),
             follow_niri: true,
+            off: false,
             from_niri: Vec::new(),
             niri_config: None,
         }
@@ -337,6 +342,15 @@ impl Config {
     }
 }
 
+/// How to name the configuration a daemon is running from: the startup log,
+/// `state`, and anywhere else that has to say it out loud.
+pub fn describe_source(path: Option<&Path>) -> String {
+    match path {
+        Some(path) => path.display().to_string(),
+        None => "built-in defaults (no config file)".to_owned(),
+    }
+}
+
 /// Where the config lives: `$XDG_CONFIG_HOME/niripaper/config.toml`, else
 /// `~/.config/niripaper/config.toml`.
 pub fn default_path() -> Option<PathBuf> {
@@ -503,6 +517,7 @@ fn resolve_animations(
         },
         slowdown,
         follow_niri,
+        off: global_off,
         from_niri,
         niri_config: None,
     })

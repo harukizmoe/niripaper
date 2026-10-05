@@ -78,11 +78,24 @@ The daemon listens on a small control socket, one per output
 ```bash
 niripaper set ~/Pictures/wall.webp    # switch it, image or video
 niripaper query                       # what is on screen right now
+niripaper schema                      # every config key, as JSON
+niripaper state                       # what the daemon is doing, as JSON
 niripaper kill                        # shut it down
 ```
 
 `set` loads the new wallpaper *before* swapping it in, so a bad path reports an error
 and leaves the current one on screen instead of blanking it.
+
+`schema` and `state` are what a panel (the Noctalia plugin, or anything else) talks to.
+`schema` lists every configuration key with its type, bounds, default, unit and whether
+a reload picks it up; `state` reports the effective values under the same names, plus
+the output, the canvas, the wallpaper actually on screen and the parallax position. A
+panel asks for the schema once to build its widgets, and afterwards only needs `state` —
+so adding a key here never requires a panel change.
+
+`state`'s `config.values` is what the configuration says, while `wallpaper.path` is what
+is *actually* on screen: `set` swaps the media without touching the configuration, so
+the two can legitimately differ.
 
 ### Starting it with niri
 

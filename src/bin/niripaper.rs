@@ -55,6 +55,8 @@ fn main() -> ExitCode {
         "watch" => watch(&rest),
         "set" => control("set", &rest),
         "query" => control("query", &rest),
+        "schema" => control("schema", &rest),
+        "state" => control("state", &rest),
         "kill" => control("kill", &rest),
         "-h" | "--help" | "help" => {
             usage();
@@ -100,7 +102,16 @@ fn control(command: &str, args: &[String]) -> Result<(), String> {
         (other, None) => other.to_owned(),
         (other, Some(_)) => return Err(format!("{other} takes no argument")),
     };
-    println!("{}", niripaper::ipc::request(&path, &request)?);
+    let reply = niripaper::ipc::request(&path, &request)?;
+    // `schema` and `state` answer in JSON. It is meant for a panel, but it is
+    // readable enough to be worth indenting when a person asked for it.
+    match (command, serde_json::from_str::<serde_json::Value>(&reply)) {
+        ("schema" | "state", Ok(value)) => match serde_json::to_string_pretty(&value) {
+            Ok(text) => println!("{text}"),
+            Err(_) => println!("{reply}"),
+        },
+        _ => println!("{reply}"),
+    }
     Ok(())
 }
 
@@ -118,6 +129,8 @@ fn usage() {
          \n\
          \x20 set PATH [--output NAME] [--socket PATH]   switch the running daemon's wallpaper\n\
          \x20 query    [--output NAME] [--socket PATH]   what is on screen right now\n\
+         \x20 schema   [--output NAME] [--socket PATH]   every config key a UI can offer (JSON)\n\
+         \x20 state    [--output NAME] [--socket PATH]   what the daemon is doing right now (JSON)\n\
          \x20 kill     [--output NAME] [--socket PATH]   ask the daemon to shut down\n"
     );
 }
@@ -291,26 +304,21 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let over = parse_overrides(args)?;
 
     // The config file to watch for reloads: the explicit one, or the default one
-    // when it exists. Built-in defaults mean nothing to watch.
-    let (config, source, config_path) = match &over.config {
-        Some(path) => (
-            Config::load_from(path)?,
-            path.display().to_string(),
-            Some(path.clone()),
-        ),
-        None => match niripaper::config::default_path() {
-            Some(path) if path.exists() => {
-                let config = Config::load_from(&path)?;
-                let source = path.display().to_string();
-                (config, source, Some(path))
+    // when there is one. Built-in defaults mean nothing to watch.
+    let (config, config_path) = match &over.config {
+        Some(path) => (Config::load_from(path)?, Some(path.clone())),
+        None => {
+            // A `config.d` with no main file beside it is a valid setup — that is
+            // exactly where a tool writes — so it counts as "there is one".
+            let path = niripaper::config::default_path()
+                .filter(|path| path.exists() || path.with_extension("d").is_dir());
+            match path {
+                Some(path) => (Config::load_from(&path)?, Some(path)),
+                None => (Config::load()?, None),
             }
-            _ => (
-                Config::load()?,
-                "built-in defaults (no config file)".to_owned(),
-                None,
-            ),
-        },
+        }
     };
+    let source = niripaper::config::describe_source(config_path.as_deref());
 
     // The output name may have to come from niri, and the per-output overrides
     // are keyed by it, so resolve it before building the effective options.

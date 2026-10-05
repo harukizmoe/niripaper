@@ -537,6 +537,23 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                             ),
                         );
                     }
+                    crate::ipc::Request::Schema => {
+                        crate::ipc::reply(&stream, &json_line(&crate::schema::schema()));
+                    }
+                    crate::ipc::Request::State => {
+                        let now = Instant::now();
+                        let (progress, _) = animator.sample(now);
+                        crate::ipc::reply(
+                            &stream,
+                            &json_line(&state_json(&Snapshot {
+                                options: &options,
+                                media: media.as_ref(),
+                                canvas,
+                                position: (progress.horizontal, progress.vertical),
+                                zoom: zoom.position(now),
+                            })),
+                        );
+                    }
                     crate::ipc::Request::Kill => {
                         crate::ipc::reply(&stream, "ok");
                         log("kill requested");
@@ -620,6 +637,105 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     surface.destroy();
     client.flush()?;
     Ok(())
+}
+
+/// One line of JSON. The protocol is one line in, one line out, so the compact
+/// form is the only one that fits.
+fn json_line(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|e| format!("error serializing: {e}"))
+}
+
+/// What `state` reports, gathered by the caller because only it has these.
+struct Snapshot<'a> {
+    options: &'a Options,
+    media: Option<&'a Media>,
+    canvas: (u32, u32),
+    position: (f64, f64),
+    zoom: f64,
+}
+
+/// The daemon's state, for `state` over the control socket.
+///
+/// Values are keyed by the same dotted names `schema` lists, so a client can zip
+/// the two together without knowing anything about either. `config.values` is
+/// what the configuration says; `wallpaper.path` is what is *actually* on
+/// screen — `set` swaps the media without touching the configuration, so the two
+/// can legitimately differ.
+fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let options = state.options;
+    let mut values = Map::new();
+    let mut put = |name: &str, value: Value| values.insert(name.to_owned(), value);
+    put(
+        "wallpaper",
+        json!(options
+            .wallpaper
+            .as_ref()
+            .map(|path| path.display().to_string())),
+    );
+    put("video_fps", json!(options.video_fps));
+    put("scale", json!(options.scale));
+    put("column_span", json!(options.column_span));
+    put("workspace_span", json!(options.workspace_span));
+    put("namespace", json!(options.namespace));
+    let animations = &options.animations;
+    put("animations.follow_niri", json!(animations.follow_niri));
+    put("animations.off", json!(animations.off));
+    put("animations.slowdown", json!(animations.slowdown));
+    put(
+        "animations.parallax",
+        crate::schema::animation_value(&animations.parallax),
+    );
+    put(
+        "animations.overview-open-close.zoom",
+        json!(animations.overview_open_close.zoom),
+    );
+    put(
+        "animations.overview-open-close",
+        crate::schema::animation_value(&animations.overview_open_close.animation),
+    );
+    put(
+        "animations.wallpaper-change",
+        crate::schema::animation_value(&animations.wallpaper_change),
+    );
+
+    // Which files this configuration is made of: the main one plus every
+    // `config.d/*.toml` merged over it. A panel showing "where does this value
+    // come from" needs exactly this list.
+    let files: Vec<String> = options
+        .config_path
+        .as_deref()
+        .and_then(|path| crate::config::Config::config_files(path).ok())
+        .unwrap_or_default()
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+
+    json!({
+        "output": options.output,
+        "namespace": options.namespace,
+        "canvas": { "width": state.canvas.0, "height": state.canvas.1 },
+        "config": {
+            "source": crate::config::describe_source(options.config_path.as_deref()),
+            "files": files,
+            "values": values,
+            "from_niri": animations.from_niri,
+        },
+        "wallpaper": match state.media {
+            Some(media) => json!({
+                "path": media.path().display().to_string(),
+                "kind": media.kind(),
+                "hwdec": media.hwdec(),
+            }),
+            None => Value::Null,
+        },
+        "position": {
+            "horizontal": state.position.0,
+            "vertical": state.position.1,
+        },
+        "zoom": state.zoom,
+    })
 }
 
 /// Swap the wallpaper, cross-fading from whatever is on screen.

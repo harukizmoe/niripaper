@@ -6,7 +6,7 @@
 //! adding a third kind of media (an animated image, say) touches one file.
 
 use std::os::fd::RawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::render::gl;
 use crate::render::image::Wallpaper;
@@ -16,7 +16,17 @@ use crate::render::video::Video;
 /// that is what keeps the idle cost at zero for stills (§6, M0b criterion ④).
 pub const NO_WAKEUP: RawFd = -1;
 
-pub enum Media {
+/// A wallpaper: what to draw, and where it came from.
+///
+/// The path is kept so a client asking `state` sees what is *actually* on
+/// screen. `set` over the control socket swaps the media without touching the
+/// configuration, so the two could otherwise disagree.
+pub struct Media {
+    path: PathBuf,
+    inner: Inner,
+}
+
+enum Inner {
     Image(Wallpaper),
     Video(Video),
 }
@@ -25,45 +35,65 @@ impl Media {
     /// Load a wallpaper: a still image, or a video routed by extension. Shared
     /// by startup and by `set` over the control socket.
     pub fn load(path: &Path, canvas: (u32, u32), video_fps: u32) -> Result<Self, String> {
-        if is_video(path) {
-            let video = Video::new(path, canvas.0, canvas.1, video_fps)?;
-            return Ok(Self::Video(video));
+        let inner = if is_video(path) {
+            Inner::Video(Video::new(path, canvas.0, canvas.1, video_fps)?)
+        } else {
+            Inner::Image(Wallpaper::load(path, canvas)?)
+        };
+        Ok(Self {
+            path: path.to_owned(),
+            inner,
+        })
+    }
+
+    /// Where this came from, for `state`.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// `"image"` or `"video"`, for `state`.
+    pub fn kind(&self) -> &'static str {
+        match self.inner {
+            Inner::Image(_) => "image",
+            Inner::Video(_) => "video",
         }
-        Ok(Self::Image(Wallpaper::load(path, canvas)?))
+    }
+
+    /// What is *actually* decoding a video — `hwdec=auto-safe` is only a
+    /// request, and a silent fall back to software would be invisible
+    /// otherwise. `None` for a still.
+    pub fn hwdec(&self) -> Option<String> {
+        match &self.inner {
+            Inner::Image(_) => None,
+            Inner::Video(video) => {
+                let hwdec = video.hwdec();
+                (!hwdec.is_empty()).then_some(hwdec)
+            }
+        }
     }
 
     /// How to draw this, in the renderer's terms. Both end up canvas-sized, so
     /// the shader samples them identically.
     pub fn content(&self) -> gl::Content<'_> {
-        match self {
-            Self::Image(wallpaper) => gl::Content::Wallpaper(&wallpaper.texture),
-            Self::Video(video) => gl::Content::Video(video.texture()),
+        match &self.inner {
+            Inner::Image(wallpaper) => gl::Content::Wallpaper(&wallpaper.texture),
+            Inner::Video(video) => gl::Content::Video(video.texture()),
         }
     }
 
     /// One line describing what is on screen, for `query`.
     pub fn describe(&self) -> String {
-        match self {
-            Self::Image(_) => "image".to_owned(),
-            Self::Video(video) => {
-                let hwdec = video.hwdec();
-                if hwdec.is_empty() {
-                    "video".to_owned()
-                } else {
-                    // Say what is *actually* decoding: `hwdec=auto-safe` is only
-                    // a request, and a silent fall back to software would be
-                    // invisible otherwise.
-                    format!("video hwdec={hwdec}")
-                }
-            }
+        match self.hwdec() {
+            Some(hwdec) => format!("{} hwdec={hwdec}", self.kind()),
+            None => self.kind().to_owned(),
         }
     }
 
     /// The fd to watch for "mpv has a frame ready".
     pub fn wakeup_fd(&self) -> RawFd {
-        match self {
-            Self::Image(_) => NO_WAKEUP,
-            Self::Video(video) => video.fd(),
+        match &self.inner {
+            Inner::Image(_) => NO_WAKEUP,
+            Inner::Video(video) => video.fd(),
         }
     }
 
@@ -71,9 +101,9 @@ impl Media {
     /// new frame is now waiting to be presented. A still never has anything to
     /// pump.
     pub fn pump(&mut self) -> Result<bool, String> {
-        match self {
-            Self::Image(_) => Ok(false),
-            Self::Video(video) => {
+        match &mut self.inner {
+            Inner::Image(_) => Ok(false),
+            Inner::Video(video) => {
                 video.drain();
                 video.render()
             }
