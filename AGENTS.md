@@ -25,8 +25,17 @@ cargo clippy --all-targets      # 必须 0 警告
 cargo test
 ```
 
+这三条**在 CI 里也会跑**（`.github/workflows/ci.yml`，push 到 `main`/`dev` 与所有 PR），
+外加一个 release 构建 ✓。所以本地跑通不等于一定能过 —— CI 用的是**最新的 stable 工具链**，
+偶尔会有新 lint 冒出来 ✓；`clippy` 在 CI 里带 `-D warnings` ✓，任何警告都是失败 ✓。
+
+CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些库 ✓：
+`libmpv`（视频 render API）、`libEGL`/`libGL`（渲染器）、`libgbm`（dmabuf 分配）、
+`libwayland-client`（图层表面）✓。测试是纯逻辑 ✓（无 GPU / 无合成器 / 无显示 ✓），
+所以在什么显卡都没有的 runner 上照样跑 ✓。
+
 装到 `PATH`：`cargo install --path . --locked --bin niripaper` —— **必须带 `--bin niripaper`**，
-否则 `src/bin/` 下的两个诊断探针也会被一起装进 `~/.cargo/bin`。
+否则 `src/bin/` 下的那些诊断探针也会被一起装进 `~/.cargo/bin`。
 **改完代码要重装**：`PATH` 上的 `niripaper` 与 `target/release/niripaper` 是两份拷贝 ✗，
 自启动（`spawn-at-startup`）跑的是前者 ✗。实测踩过：新增配置键后只重建没重装，
 自启动拿着旧二进制报 `unknown field` 直接退出，桌面连壁纸都没了 ✗（手动跑 `./target/release/…`
@@ -73,7 +82,10 @@ cargo test
   改一份就要同步另一份。措辞用直白陈述，不要俏皮话，不要写未实现的功能。
 - `src/bin/eglpin.rs`、`src/bin/m0b.rs` 是 M0 阶段的诊断探针（EGL 按设备绑定、dmabuf 通路），
   不是给使用者的工具，但**保留**：排查"这块 GPU 上 EGL/GBM 能不能用"时仍然有用。
-- `src/bin/trprobe.rs` 同样保留：把 10 个换图过渡效果各渲一帧到离屏 dmabuf 并写成 PNG，
+- `src/bin/vidpin.rs` 也是：它把 mpv 解出来的一帧读回来看，排查"解码出来的画面对不对"用。
+  `--fit cover|fit|stretch|center|tile` 可以逐个试填充模式，`--out` 存成 PNG —— 量黑边
+  （逐行/逐列扫边缘）是验证 `fit` 最直接的办法，比截图快也不占屏幕。
+- `src/bin/trprobe.rs` 同样保留：把每个换图过渡效果各渲一帧到离屏 dmabuf 并写成 PNG，
   `trprobe /dev/dri/renderD128 /tmp/tr`。**改 shader 之后用它看一眼** —— 单元测试看不见
   shader，而它已经抓到过三个真 bug：径向效果的 reach 误用整条对角线、honeycomb 用剪切取整
   得到的是平行四边形、以及纹理漏设 `GL_TEXTURE_MIN_FILTER` 导致快照采样恒为黑（后者意味着
