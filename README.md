@@ -178,6 +178,7 @@ scale = 1.2
 | `scale` | canvas enlargement (default `1.1`, max `1.35`) |
 | `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |
 | `workspace_span` | fixed workspace span for the vertical parallax (default `6`, min `2`) |
+| `fit` | how a source that does not match the canvas aspect is placed: `cover` (default), `contain`, `stretch` |
 | `namespace` | layer-shell namespace (default `niripaper`) |
 | `[animations] follow_niri` | take the overview transition's settings from niri (default `true`) |
 | `[animations] slowdown` | stretch every animation's timeline |
@@ -234,6 +235,14 @@ niri's curves are all fast at the start and slow at the end, which is the opposi
 what a reveal wants. For slow-fast-slow, use a bezier — `curve = "cubic-bezier"` with
 `cubic_bezier = [0.42, 0, 0.58, 1]`, which is CSS's `ease-in-out` (solved the same way,
 `x(u) = t`).
+
+`fit` decides what happens when a wallpaper's aspect ratio is not the canvas's.
+`cover` (the default) fills the canvas and crops the overflow, the way every other
+wallpaper tool behaves; `contain` shows the whole source and pads the rest with black,
+which is worth having for film-shaped sources — a 2.35:1 picture loses about a quarter
+of its width to `cover`; `stretch` distorts to fit. It is per output, and both the
+still and the video path use it, so a wallpaper cannot change shape depending on
+whether it happens to be a picture or a film.
 
 `niripaper schema` lists every key above, with its type, bounds and whether editing
 the file while the daemon runs takes effect.

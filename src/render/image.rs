@@ -10,18 +10,21 @@
 use std::path::{Path, PathBuf};
 
 use crate::render::gl;
+use crate::render::Fit;
 
 /// A decoded, canvas-sized wallpaper living in GPU memory.
 pub struct Wallpaper {
     pub texture: gl::Texture,
     pub path: PathBuf,
-    /// Size of the file, before the cover fit.
+    /// Size of the file, before the fit.
     pub source: (u32, u32),
+    /// How it was placed in the canvas.
+    pub fit: Fit,
 }
 
 impl Wallpaper {
     /// Decode `path` and fit it to a `canvas` of `canvas_w`×`canvas_h`.
-    pub fn load(path: &Path, canvas: (u32, u32)) -> Result<Self, String> {
+    pub fn load(path: &Path, canvas: (u32, u32), fit: Fit) -> Result<Self, String> {
         let image = image::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let source = (image.width(), image.height());
         if source.0 == 0 || source.1 == 0 {
@@ -29,31 +32,73 @@ impl Wallpaper {
         }
         let canvas = (canvas.0.max(1), canvas.1.max(1));
 
-        let (x, y, w, h) = cover_rect(source, canvas);
-        let cropped = image.crop_imm(x, y, w, h).to_rgb8();
-        let scaled = image::imageops::resize(
-            &cropped,
-            canvas.0,
-            canvas.1,
-            image::imageops::FilterType::Lanczos3,
-        );
+        let placed = place(&image.to_rgb8(), canvas, fit);
 
         Ok(Self {
-            texture: gl::Texture::from_rgb(canvas.0, canvas.1, scaled.as_raw()),
+            texture: gl::Texture::from_rgb(canvas.0, canvas.1, placed.as_raw()),
             path: path.to_owned(),
             source,
+            fit,
         })
     }
 
     pub fn describe(&self) -> String {
         format!(
-            "{} ({}×{} → {}×{}, cover)",
+            "{} ({}×{} → {}×{}, {})",
             self.path.display(),
             self.source.0,
             self.source.1,
             self.texture.width,
-            self.texture.height
+            self.texture.height,
+            self.fit.name()
         )
+    }
+}
+
+/// Lay `image` out on a `canvas`-sized RGB buffer according to `fit`.
+///
+/// Doing it here, once at load time, is what keeps the shader's sampling a
+/// straight 1:1 lookup (§3): the canvas is filled by the CPU instead of being
+/// filtered every frame.
+pub fn place(image: &image::RgbImage, canvas: (u32, u32), fit: Fit) -> image::RgbImage {
+    let canvas = (canvas.0.max(1), canvas.1.max(1));
+    let source = (image.width().max(1), image.height().max(1));
+    let filter = image::imageops::FilterType::Lanczos3;
+    match fit {
+        Fit::Cover => {
+            let (x, y, w, h) = cover_rect(source, canvas);
+            let cropped = image::imageops::crop_imm(image, x, y, w, h).to_image();
+            image::imageops::resize(&cropped, canvas.0, canvas.1, filter)
+        }
+        Fit::Contain => {
+            let (w, h) = fit_inside(source, canvas);
+            let scaled = image::imageops::resize(image, w, h, filter);
+            // `ImageBuffer::new` zeroes, so the padding is black without asking.
+            let mut out = image::RgbImage::new(canvas.0, canvas.1);
+            image::imageops::overlay(
+                &mut out,
+                &scaled,
+                ((canvas.0 - w) / 2) as i64,
+                ((canvas.1 - h) / 2) as i64,
+            );
+            out
+        }
+        Fit::Stretch => image::imageops::resize(image, canvas.0, canvas.1, filter),
+    }
+}
+
+/// The largest `source`-aspect rectangle that fits inside `canvas`.
+///
+/// Cross-multiplied rather than divided, like `cover_rect`: no floating point,
+/// so no rounding surprise at the boundary.
+fn fit_inside(source: (u32, u32), canvas: (u32, u32)) -> (u32, u32) {
+    let wider = source.0 as u128 * canvas.1 as u128 >= canvas.0 as u128 * source.1 as u128;
+    if wider {
+        let h = (canvas.0 as u128 * source.1 as u128 / source.0 as u128).max(1) as u32;
+        (canvas.0, h.min(canvas.1))
+    } else {
+        let w = (canvas.1 as u128 * source.0 as u128 / source.1 as u128).max(1) as u32;
+        (w.min(canvas.0), canvas.1)
     }
 }
 
@@ -88,6 +133,107 @@ pub fn cover_rect(image: (u32, u32), canvas: (u32, u32)) -> (u32, u32, u32, u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 2×4 source (top half red, bottom half blue) into a 2×2 canvas. All three
+    /// modes give a different answer, so one test covers the geometry of each.
+    fn two_by_four() -> image::RgbImage {
+        let mut image = image::RgbImage::new(2, 4);
+        for (_, y, pixel) in image.enumerate_pixels_mut() {
+            *pixel = if y < 2 {
+                image::Rgb([255, 0, 0])
+            } else {
+                image::Rgb([0, 0, 255])
+            };
+        }
+        image
+    }
+
+    fn pixel(image: &image::RgbImage, x: u32, y: u32) -> (u8, u8, u8) {
+        let p = image.get_pixel(x, y);
+        (p[0], p[1], p[2])
+    }
+
+    /// Resampling is not a copy: Lanczos rings, so "this pixel is the red half"
+    /// has to mean "mostly red" rather than an exact byte. The padding, on the
+    /// other hand, is never resampled — that one is exact.
+    fn mostly(got: (u8, u8, u8), want: (u8, u8, u8)) -> bool {
+        let near = |a: u8, b: u8| (a as i16 - b as i16).abs() < 40;
+        near(got.0, want.0) && near(got.1, want.1) && near(got.2, want.2)
+    }
+
+    const RED: (u8, u8, u8) = (255, 0, 0);
+    const BLUE: (u8, u8, u8) = (0, 0, 255);
+
+    #[test]
+    fn cover_crops_and_fills() {
+        // 1:2 into 1:1: keep the width, take the middle two rows.
+        let placed = place(&two_by_four(), (2, 2), Fit::Cover);
+        assert_eq!(placed.dimensions(), (2, 2));
+        assert!(
+            mostly(pixel(&placed, 0, 0), RED),
+            "{:?}",
+            pixel(&placed, 0, 0)
+        );
+        assert!(
+            mostly(pixel(&placed, 0, 1), BLUE),
+            "{:?}",
+            pixel(&placed, 0, 1)
+        );
+    }
+
+    #[test]
+    fn contain_pads_with_black() {
+        // 1:2 into 1:1: fit by height, so the picture is one column wide and the
+        // other is padding.
+        let placed = place(&two_by_four(), (2, 2), Fit::Contain);
+        assert_eq!(placed.dimensions(), (2, 2));
+        assert!(
+            mostly(pixel(&placed, 0, 0), RED),
+            "{:?}",
+            pixel(&placed, 0, 0)
+        );
+        assert!(
+            mostly(pixel(&placed, 0, 1), BLUE),
+            "{:?}",
+            pixel(&placed, 0, 1)
+        );
+        // Not resampled, so this one is exact.
+        assert_eq!(pixel(&placed, 1, 0), (0, 0, 0), "the padding is black");
+        assert_eq!(pixel(&placed, 1, 1), (0, 0, 0));
+    }
+
+    #[test]
+    fn stretch_ignores_the_aspect() {
+        // 1:2 into 1:1: every output row covers two source rows, so the red and
+        // the blue each fill a whole row across the width.
+        let placed = place(&two_by_four(), (2, 2), Fit::Stretch);
+        assert_eq!(placed.dimensions(), (2, 2));
+        for x in 0..2 {
+            assert!(
+                mostly(pixel(&placed, x, 0), RED),
+                "{:?}",
+                pixel(&placed, x, 0)
+            );
+            assert!(
+                mostly(pixel(&placed, x, 1), BLUE),
+                "{:?}",
+                pixel(&placed, x, 1)
+            );
+        }
+    }
+
+    #[test]
+    fn a_matching_aspect_is_the_same_in_all_three() {
+        let source = two_by_four();
+        // 1:2 source into a 1:2 canvas: nothing to crop, pad or distort.
+        let canvas = (2, 4);
+        for fit in [Fit::Cover, Fit::Contain, Fit::Stretch] {
+            let placed = place(&source, canvas, fit);
+            assert_eq!(placed.dimensions(), canvas);
+            assert!(mostly(pixel(&placed, 0, 0), RED), "{fit:?}");
+            assert!(mostly(pixel(&placed, 0, 3), BLUE), "{fit:?}");
+        }
+    }
 
     #[test]
     fn same_aspect_keeps_the_whole_image() {

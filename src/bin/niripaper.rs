@@ -352,6 +352,8 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     // feel, and a flag per parameter would be noise.
     apply_config_only_settings(&mut options, &config);
     options.wallpaper = over.wallpaper.or(params.wallpaper);
+    // Per output, like the spans and the wallpaper itself.
+    options.fit = params.fit;
     if let Some(pattern) = over.pattern {
         options.pattern = pattern;
     }

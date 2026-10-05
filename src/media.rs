@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::render::gl;
 use crate::render::image::Wallpaper;
 use crate::render::video::Video;
+use crate::render::Fit;
 
 /// A video's wakeup fd is polled; a still's is `-1`, which `poll()` ignores —
 /// that is what keeps the idle cost at zero for stills (§6, M0b criterion ④).
@@ -34,11 +35,11 @@ enum Inner {
 impl Media {
     /// Load a wallpaper: a still image, or a video routed by extension. Shared
     /// by startup and by `set` over the control socket.
-    pub fn load(path: &Path, canvas: (u32, u32), video_fps: u32) -> Result<Self, String> {
+    pub fn load(path: &Path, canvas: (u32, u32), video_fps: u32, fit: Fit) -> Result<Self, String> {
         let inner = if is_video(path) {
-            Inner::Video(Video::new(path, canvas.0, canvas.1, video_fps)?)
+            Inner::Video(Video::new(path, canvas.0, canvas.1, video_fps, fit)?)
         } else {
-            Inner::Image(Wallpaper::load(path, canvas)?)
+            Inner::Image(Wallpaper::load(path, canvas, fit)?)
         };
         Ok(Self {
             path: path.to_owned(),

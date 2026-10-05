@@ -18,6 +18,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::gl;
+use super::Fit;
 
 /// Opaque handles. Zero-sized so a raw pointer to them stays a thin pointer.
 #[repr(C)]
@@ -178,7 +179,7 @@ impl Video {
     /// `fps` caps the frame rate mpv produces (`0` keeps the source's). A
     /// wallpaper does not need 60 fps: niri's layer frame callbacks come at
     /// 60 Hz anyway, and every drawn frame also costs a backdrop re-blur.
-    pub fn new(path: &Path, width: u32, height: u32, fps: u32) -> Result<Self, String> {
+    pub fn new(path: &Path, width: u32, height: u32, fps: u32, fit: Fit) -> Result<Self, String> {
         let ctx = unsafe { mpv_create() };
         if ctx.is_null() {
             return Err("mpv_create failed".to_owned());
@@ -199,14 +200,13 @@ impl Video {
             // (568 MB vs 232 MB anonymous). `auto` picks the same thing as
             // `auto-safe`. Re-measure with `niripaper query` before changing this.
             ("hwdec", "auto-safe"),
-            // Fill the frame instead of fitting inside it. mpv's default is to
-            // scale the video to fit, which leaves black bars whenever the
-            // source's aspect ratio is not the canvas's — and the still-image
-            // path does the opposite (`image.rs` centre-crops to "cover"), so the
-            // two disagreed. `panscan=1.0` is the same "cover": zoom until the
-            // frame is full, crop the overflow. Measured on a 2.34:1 source in a
-            // 16:9 canvas: without this, ~173 px of black top and bottom.
-            ("panscan", "1.0"),
+            // How the video is placed in our FBO, matching `image.rs`'s three
+            // choices: cover zooms until the frame is full and crops the
+            // overflow; contain fits inside (mpv's own default) with black bars;
+            // stretch distorts. Measured on a 2.34:1 source in a 16:9 canvas:
+            // fitting leaves ~173 px of black top and bottom.
+            ("panscan", if fit == Fit::Cover { "1.0" } else { "0.0" }),
+            ("keepaspect", if fit == Fit::Stretch { "no" } else { "yes" }),
             ("loop-file", "inf"),
             ("mute", "yes"),
             ("aid", "no"),

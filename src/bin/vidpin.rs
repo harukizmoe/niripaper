@@ -20,6 +20,7 @@ use niripaper::render::egl::{Egl, EglVendor};
 use niripaper::render::gbm::Device as GbmDevice;
 use niripaper::render::gl;
 use niripaper::render::video::Video;
+use niripaper::render::Fit;
 
 struct Args {
     video: PathBuf,
@@ -29,6 +30,7 @@ struct Args {
     height: u32,
     out: Option<PathBuf>,
     seconds: f64,
+    fit: Fit,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
@@ -40,6 +42,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         height: 1440,
         out: None,
         seconds: 5.0,
+        fit: Fit::Cover,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -56,6 +59,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--height" => {
                 parsed.height = value()?.parse().map_err(|e| format!("--height: {e}"))?;
             }
+            "--fit" => parsed.fit = Fit::parse(value()?)?,
             "--out" => parsed.out = Some(PathBuf::from(value()?)),
             "--seconds" => {
                 parsed.seconds = value()?.parse().map_err(|e| format!("--seconds: {e}"))?;
@@ -103,7 +107,7 @@ fn main() -> Result<(), String> {
         gl::string(gl::GL_RENDERER)
     );
 
-    let mut video = Video::new(&args.video, args.width, args.height, args.fps)?;
+    let mut video = Video::new(&args.video, args.width, args.height, args.fps, args.fit)?;
     match video.video_size() {
         Some((w, h)) => println!(
             "video {} — source {}×{}, render target {}×{}, fps cap {}",
