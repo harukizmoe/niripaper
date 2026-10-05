@@ -200,13 +200,17 @@ impl Video {
             // (568 MB vs 232 MB anonymous). `auto` picks the same thing as
             // `auto-safe`. Re-measure with `niripaper query` before changing this.
             ("hwdec", "auto-safe"),
-            // How the video is placed in our FBO, matching `image.rs`'s three
-            // choices: cover zooms until the frame is full and crops the
-            // overflow; contain fits inside (mpv's own default) with black bars;
-            // stretch distorts. Measured on a 2.34:1 source in a 16:9 canvas:
-            // fitting leaves ~173 px of black top and bottom.
-            ("panscan", if fit == Fit::Cover { "1.0" } else { "0.0" }),
+            // How the video is placed in our FBO, matching `image.rs`'s modes:
+            // fill zooms until the frame is full and crops the overflow; fit fits
+            // inside (mpv's own default) with black bars; stretch distorts;
+            // center does not scale at all. Measured on a 2.34:1 source in a
+            // 16:9 canvas: fitting leaves ~173 px of black top and bottom.
+            ("panscan", if fit == Fit::Fill { "1.0" } else { "0.0" }),
             ("keepaspect", if fit == Fit::Stretch { "no" } else { "yes" }),
+            (
+                "video-unscaled",
+                if fit == Fit::Center { "yes" } else { "no" },
+            ),
             ("loop-file", "inf"),
             ("mute", "yes"),
             ("aid", "no"),

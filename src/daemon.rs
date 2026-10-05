@@ -97,7 +97,7 @@ impl Options {
             socket: None,
             animations: crate::config::Animations::default(),
             transition: crate::render::transition::Settings::default(),
-            fit: Fit::Cover,
+            fit: Fit::Fill,
             trace: false,
         }
     }
@@ -787,6 +787,9 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
                 "path": media.path().display().to_string(),
                 "kind": media.kind(),
                 "hwdec": media.hwdec(),
+                // The *effective* fit: a video cannot be tiled, so `tile` shows
+                // up here as `fill` even when the configuration says otherwise.
+                "fit": media.fit().name(),
             }),
             None => Value::Null,
         },
@@ -833,8 +836,12 @@ fn switch_wallpaper(
     // Say which effect ran: "the transition did something odd" is otherwise
     // impossible to pin on one of ten.
     log(&format!(
-        "wallpaper → {} ({} transition)",
+        "wallpaper → {} ({}, {} transition)",
         path.display(),
+        media
+            .as_ref()
+            .map(|media| media.fit().name())
+            .unwrap_or("?"),
         transition.effect().name()
     ));
 

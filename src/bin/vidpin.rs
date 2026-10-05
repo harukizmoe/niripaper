@@ -42,7 +42,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         height: 1440,
         out: None,
         seconds: 5.0,
-        fit: Fit::Cover,
+        fit: Fit::Fill,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -107,7 +107,9 @@ fn main() -> Result<(), String> {
         gl::string(gl::GL_RENDERER)
     );
 
-    let mut video = Video::new(&args.video, args.width, args.height, args.fps, args.fit)?;
+    // Same resolution the daemon does: a video cannot be tiled.
+    let fit = args.fit.for_video();
+    let mut video = Video::new(&args.video, args.width, args.height, args.fps, fit)?;
     match video.video_size() {
         Some((w, h)) => println!(
             "video {} — source {}×{}, render target {}×{}, fps cap {}",

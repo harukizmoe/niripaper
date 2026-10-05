@@ -84,7 +84,7 @@ impl Default for Config {
             workspace_span: DEFAULT_WORKSPACE_SPAN,
             video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
-            fit: Fit::Cover,
+            fit: Fit::Fill,
             animations: Animations::default(),
             transition: Settings::default(),
             wallpaper: None,

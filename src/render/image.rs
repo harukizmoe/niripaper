@@ -65,16 +65,15 @@ pub fn place(image: &image::RgbImage, canvas: (u32, u32), fit: Fit) -> image::Rg
     let source = (image.width().max(1), image.height().max(1));
     let filter = image::imageops::FilterType::Lanczos3;
     match fit {
-        Fit::Cover => {
+        Fit::Fill => {
             let (x, y, w, h) = cover_rect(source, canvas);
             let cropped = image::imageops::crop_imm(image, x, y, w, h).to_image();
             image::imageops::resize(&cropped, canvas.0, canvas.1, filter)
         }
-        Fit::Contain => {
+        Fit::Fit => {
             let (w, h) = fit_inside(source, canvas);
             let scaled = image::imageops::resize(image, w, h, filter);
-            // `ImageBuffer::new` zeroes, so the padding is black without asking.
-            let mut out = image::RgbImage::new(canvas.0, canvas.1);
+            let mut out = black(canvas);
             image::imageops::overlay(
                 &mut out,
                 &scaled,
@@ -84,7 +83,42 @@ pub fn place(image: &image::RgbImage, canvas: (u32, u32), fit: Fit) -> image::Rg
             out
         }
         Fit::Stretch => image::imageops::resize(image, canvas.0, canvas.1, filter),
+        // No scaling: a canvas-sized window onto the source's centre, or the
+        // source centred on a black canvas if it is the smaller of the two.
+        Fit::Center => {
+            let mut out = black(canvas);
+            let (w, h) = (source.0.min(canvas.0), source.1.min(canvas.1));
+            let (x, y) = ((source.0 - w) / 2, (source.1 - h) / 2);
+            let window = image::imageops::crop_imm(image, x, y, w, h).to_image();
+            image::imageops::overlay(
+                &mut out,
+                &window,
+                ((canvas.0 - w) / 2) as i64,
+                ((canvas.1 - h) / 2) as i64,
+            );
+            out
+        }
+        // Repeat at the source's own size, from the top-left, like Windows does.
+        Fit::Tile => {
+            let mut out = black(canvas);
+            let mut y = 0;
+            while y < canvas.1 {
+                let mut x = 0;
+                while x < canvas.0 {
+                    image::imageops::overlay(&mut out, image, x as i64, y as i64);
+                    x += source.0;
+                }
+                y += source.1;
+            }
+            out
+        }
     }
+}
+
+/// A canvas-sized black buffer. `ImageBuffer::new` zeroes, which is exactly what
+/// every mode that leaves the canvas partly uncovered wants.
+fn black(canvas: (u32, u32)) -> image::RgbImage {
+    image::RgbImage::new(canvas.0, canvas.1)
 }
 
 /// The largest `source`-aspect rectangle that fits inside `canvas`.
@@ -165,9 +199,9 @@ mod tests {
     const BLUE: (u8, u8, u8) = (0, 0, 255);
 
     #[test]
-    fn cover_crops_and_fills() {
+    fn fill_crops_and_fills() {
         // 1:2 into 1:1: keep the width, take the middle two rows.
-        let placed = place(&two_by_four(), (2, 2), Fit::Cover);
+        let placed = place(&two_by_four(), (2, 2), Fit::Fill);
         assert_eq!(placed.dimensions(), (2, 2));
         assert!(
             mostly(pixel(&placed, 0, 0), RED),
@@ -182,10 +216,10 @@ mod tests {
     }
 
     #[test]
-    fn contain_pads_with_black() {
+    fn fit_pads_with_black() {
         // 1:2 into 1:1: fit by height, so the picture is one column wide and the
         // other is padding.
-        let placed = place(&two_by_four(), (2, 2), Fit::Contain);
+        let placed = place(&two_by_four(), (2, 2), Fit::Fit);
         assert_eq!(placed.dimensions(), (2, 2));
         assert!(
             mostly(pixel(&placed, 0, 0), RED),
@@ -223,16 +257,62 @@ mod tests {
     }
 
     #[test]
-    fn a_matching_aspect_is_the_same_in_all_three() {
+    fn a_matching_aspect_is_the_same_in_all_of_them() {
         let source = two_by_four();
-        // 1:2 source into a 1:2 canvas: nothing to crop, pad or distort.
+        // 1:2 source into a 1:2 canvas: nothing to crop, pad or distort. `center`
+        // and `tile` agree here too, because nothing has to be scaled or repeated.
         let canvas = (2, 4);
-        for fit in [Fit::Cover, Fit::Contain, Fit::Stretch] {
+        for fit in [Fit::Fill, Fit::Fit, Fit::Stretch, Fit::Center, Fit::Tile] {
             let placed = place(&source, canvas, fit);
             assert_eq!(placed.dimensions(), canvas);
             assert!(mostly(pixel(&placed, 0, 0), RED), "{fit:?}");
             assert!(mostly(pixel(&placed, 0, 3), BLUE), "{fit:?}");
         }
+    }
+
+    /// `center` never scales, so a source smaller than the canvas sits in the
+    /// middle of it at its own size, black all round.
+    #[test]
+    fn center_does_not_scale() {
+        let placed = place(&two_by_four(), (4, 4), Fit::Center);
+        assert_eq!(placed.dimensions(), (4, 4));
+        for x in [0, 3] {
+            for y in 0..4 {
+                assert_eq!(pixel(&placed, x, y), (0, 0, 0), "column {x} is padding");
+            }
+        }
+        assert!(
+            mostly(pixel(&placed, 1, 0), RED),
+            "{:?}",
+            pixel(&placed, 1, 0)
+        );
+        assert!(
+            mostly(pixel(&placed, 1, 3), BLUE),
+            "{:?}",
+            pixel(&placed, 1, 3)
+        );
+    }
+
+    /// `tile` repeats the source at its own size from the top-left, so the
+    /// pattern comes round again — column 2 is column 0.
+    #[test]
+    fn tile_repeats() {
+        let placed = place(&two_by_four(), (4, 4), Fit::Tile);
+        assert_eq!(placed.dimensions(), (4, 4));
+        for y in 0..4 {
+            assert_eq!(pixel(&placed, 0, y), pixel(&placed, 2, y), "row {y}");
+            assert_eq!(pixel(&placed, 1, y), pixel(&placed, 3, y), "row {y}");
+        }
+        assert!(
+            mostly(pixel(&placed, 0, 0), RED),
+            "{:?}",
+            pixel(&placed, 0, 0)
+        );
+        assert!(
+            mostly(pixel(&placed, 0, 3), BLUE),
+            "{:?}",
+            pixel(&placed, 0, 3)
+        );
     }
 
     #[test]

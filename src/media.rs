@@ -24,6 +24,8 @@ pub const NO_WAKEUP: RawFd = -1;
 /// configuration, so the two could otherwise disagree.
 pub struct Media {
     path: PathBuf,
+    /// The fit this was loaded with, already resolved for the media kind.
+    fit: Fit,
     inner: Inner,
 }
 
@@ -36,6 +38,11 @@ impl Media {
     /// Load a wallpaper: a still image, or a video routed by extension. Shared
     /// by startup and by `set` over the control socket.
     pub fn load(path: &Path, canvas: (u32, u32), video_fps: u32, fit: Fit) -> Result<Self, String> {
+        // A video cannot be repeated, so `tile` means `fill` for one. That is a
+        // property of the *media*, not of the configuration, which is why it is
+        // resolved here — and why `state` reports the effective value next to the
+        // configured one.
+        let fit = if is_video(path) { fit.for_video() } else { fit };
         let inner = if is_video(path) {
             Inner::Video(Video::new(path, canvas.0, canvas.1, video_fps, fit)?)
         } else {
@@ -43,8 +50,18 @@ impl Media {
         };
         Ok(Self {
             path: path.to_owned(),
+            fit,
             inner,
         })
+    }
+
+    /// How this is actually placed in the canvas — for a video, `tile` has
+    /// already become `fill`.
+    pub fn fit(&self) -> Fit {
+        match &self.inner {
+            Inner::Image(wallpaper) => wallpaper.fit,
+            Inner::Video(_) => self.fit,
+        }
     }
 
     /// Where this came from, for `state`.
