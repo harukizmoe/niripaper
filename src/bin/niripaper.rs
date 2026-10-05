@@ -55,6 +55,8 @@ fn main() -> ExitCode {
         "watch" => watch(&rest),
         "set" => control("set", &rest),
         "query" => control("query", &rest),
+        "schema" => control("schema", &rest),
+        "state" => control("state", &rest),
         "kill" => control("kill", &rest),
         "-h" | "--help" | "help" => {
             usage();
@@ -74,6 +76,7 @@ fn main() -> ExitCode {
 /// Talk to the running daemon over its control socket (`HANDOFF.md` §3).
 fn control(command: &str, args: &[String]) -> Result<(), String> {
     let mut path = None;
+    let mut output = None;
     let mut argument = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -83,13 +86,15 @@ fn control(command: &str, args: &[String]) -> Result<(), String> {
                     iter.next().ok_or("--socket needs a value")?,
                 ))
             }
+            "--output" => output = Some(iter.next().ok_or("--output needs a value")?.clone()),
             other if other.starts_with("--") => return Err(format!("unknown argument {other}")),
             other => argument = Some(other.to_owned()),
         }
     }
-    let path = match path {
-        Some(path) => path,
-        None => niripaper::ipc::default_path()?,
+    let path = match (path, output) {
+        (Some(path), _) => path,
+        (None, Some(output)) => niripaper::ipc::default_path(&output)?,
+        (None, None) => niripaper::ipc::find_path()?,
     };
     let request = match (command, argument) {
         ("set", Some(target)) => format!("set {target}"),
@@ -97,7 +102,16 @@ fn control(command: &str, args: &[String]) -> Result<(), String> {
         (other, None) => other.to_owned(),
         (other, Some(_)) => return Err(format!("{other} takes no argument")),
     };
-    println!("{}", niripaper::ipc::request(&path, &request)?);
+    let reply = niripaper::ipc::request(&path, &request)?;
+    // `schema` and `state` answer in JSON. It is meant for a panel, but it is
+    // readable enough to be worth indenting when a person asked for it.
+    match (command, serde_json::from_str::<serde_json::Value>(&reply)) {
+        ("schema" | "state", Ok(value)) => match serde_json::to_string_pretty(&value) {
+            Ok(text) => println!("{text}"),
+            Err(_) => println!("{reply}"),
+        },
+        _ => println!("{reply}"),
+    }
     Ok(())
 }
 
@@ -108,13 +122,16 @@ fn usage() {
          commands:\n\
          \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
          \x20        [--scale F] [--column-span N] [--workspace-span N]\n\
-         \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
+         \x20        [--wallpaper PATH] [--pattern blocks|bands] [--socket PATH]\n\
+         \x20        [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n\
          \n\
-         \x20 set PATH [--socket PATH]    switch the running daemon's wallpaper\n\
-         \x20 query    [--socket PATH]    what is on screen right now\n\
-         \x20 kill     [--socket PATH]    ask the daemon to shut down\n"
+         \x20 set PATH [--output NAME] [--socket PATH]   switch the running daemon's wallpaper\n\
+         \x20 query    [--output NAME] [--socket PATH]   what is on screen right now\n\
+         \x20 schema   [--output NAME] [--socket PATH]   every config key a UI can offer (JSON)\n\
+         \x20 state    [--output NAME] [--socket PATH]   what the daemon is doing right now (JSON)\n\
+         \x20 kill     [--output NAME] [--socket PATH]   ask the daemon to shut down\n"
     );
 }
 
@@ -237,6 +254,7 @@ struct Overrides {
     pattern: Option<Pattern>,
     wallpaper: Option<PathBuf>,
     config: Option<PathBuf>,
+    socket: Option<PathBuf>,
     trace: bool,
 }
 
@@ -249,6 +267,7 @@ fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
             "--output" => over.output = Some(value()?.clone()),
             "--namespace" => over.namespace = Some(value()?.clone()),
             "--config" => over.config = Some(PathBuf::from(value()?)),
+            "--socket" => over.socket = Some(PathBuf::from(value()?)),
             "--wallpaper" => over.wallpaper = Some(PathBuf::from(value()?)),
             "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
             "--column-span" => {
@@ -284,17 +303,22 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     install_signal_handlers();
     let over = parse_overrides(args)?;
 
-    let (config, source) = match &over.config {
-        Some(path) => (Config::load_from(path)?, path.display().to_string()),
+    // The config file to watch for reloads: the explicit one, or the default one
+    // when there is one. Built-in defaults mean nothing to watch.
+    let (config, config_path) = match &over.config {
+        Some(path) => (Config::load_from(path)?, Some(path.clone())),
         None => {
-            let config = Config::load()?;
-            let source = match niripaper::config::default_path() {
-                Some(path) if path.exists() => path.display().to_string(),
-                _ => "built-in defaults (no config file)".to_owned(),
-            };
-            (config, source)
+            // A `config.d` with no main file beside it is a valid setup — that is
+            // exactly where a tool writes — so it counts as "there is one".
+            let path = niripaper::config::default_path()
+                .filter(|path| path.exists() || path.with_extension("d").is_dir());
+            match path {
+                Some(path) => (Config::load_from(&path)?, Some(path)),
+                None => (Config::load()?, None),
+            }
         }
     };
+    let source = niripaper::config::describe_source(config_path.as_deref());
 
     // The output name may have to come from niri, and the per-output overrides
     // are keyed by it, so resolve it before building the effective options.
@@ -320,11 +344,13 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.scale = over.scale.unwrap_or(params.scale);
     options.column_span = over.column_span.unwrap_or(params.column_span);
     options.video_fps = config.video_fps;
+    options.config_path = config_path;
+    options.socket = over.socket;
     options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
-    // Animations come from the config only: they are tuned by feel, and a flag
-    // per parameter would be noise.
-    options.animations = config.animations.clone();
+    // Animations and the transition come from the config only: they are tuned by
+    // feel, and a flag per parameter would be noise.
+    apply_config_only_settings(&mut options, &config);
     options.wallpaper = over.wallpaper.or(params.wallpaper);
     if let Some(pattern) = over.pattern {
         options.pattern = pattern;
@@ -332,4 +358,51 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.trace = over.trace;
     println!("niripaper: config {source}");
     daemon::run(&options, &|| !EXIT.load(Ordering::SeqCst))
+}
+
+/// The settings no flag can override, applied in one place — and tested in one
+/// place, because a config key that never reaches `Options` is invisible until
+/// someone sets a non-default value and wonders why nothing changed. `[transition]`
+/// did exactly that: every one of its keys was ignored at startup, and the
+/// built-in defaults happened to match the documented values, so `state` looked
+/// right the whole time.
+fn apply_config_only_settings(options: &mut Options, config: &Config) {
+    options.animations = config.animations.clone();
+    options.transition = config.transition.clone();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every key of `[transition]` has to reach the daemon. This is the test that
+    /// would have caught the missing line.
+    #[test]
+    fn the_transition_settings_reach_the_daemon() {
+        let config = Config::parse_without_niri(
+            "[transition]\nselection = \"fixed\"\neffect = \"zoom\"\n\
+             duration_ms = 2400\ncurve = \"linear\"\nsoftness = 0.1\n\
+             center = [0.2, 0.8]\nstart_radius = 0.4\npush = 1.2\nstripes = 7\n\
+             hold_ms = 250\non_start = false\nallow_overshoot = true",
+        )
+        .expect("parses");
+        let mut options = Options::new("test");
+        apply_config_only_settings(&mut options, &config);
+
+        let transition = &options.transition;
+        assert_eq!(transition.selection.name(), "fixed");
+        assert_eq!(transition.effect.name(), "zoom");
+        assert_eq!(transition.duration.as_millis(), 2400);
+        assert_eq!(transition.curve.name(), "linear");
+        assert_eq!(transition.softness, 0.1);
+        assert_eq!(transition.center, (0.2, 0.8));
+        assert_eq!(transition.start_radius, 0.4);
+        assert_eq!(transition.push, 1.2);
+        assert_eq!(transition.stripes, 7);
+        assert_eq!(transition.hold.as_millis(), 250);
+        assert!(!transition.on_start);
+        assert!(transition.allow_overshoot);
+        // And the animations beside it, which had the same shape of bug once.
+        assert_eq!(options.animations, config.animations);
+    }
 }

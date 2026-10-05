@@ -356,6 +356,7 @@ fn run() -> Result<(), String> {
                 gl::Pattern::Bands,
             ),
             gl::Content::Pattern(gl::Pattern::Bands),
+            None,
         );
         frame.finish();
         if let Some(err) = gl::last_error() {

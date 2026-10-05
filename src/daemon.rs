@@ -22,13 +22,16 @@
 
 use std::time::{Duration, Instant};
 
-use crate::motion::{offset_px, DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
+use crate::media::{self, Media};
+use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
-use crate::render::anim::Animator;
+use crate::render::anim::{Animator, Curve};
 use crate::render::egl::{Egl, EglVendor};
 use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
-use crate::render::layer::{self, LayerSurface, Pool};
+use crate::render::layer::{self, Pool};
+use crate::render::transition::Transition;
+use crate::scene::Scene;
 use crate::{gpu, motion};
 
 /// The layer-shell namespace, and therefore the name users match in
@@ -59,12 +62,17 @@ pub struct Options {
     pub wallpaper: Option<std::path::PathBuf>,
     /// Frame-rate cap for video wallpapers (`0` keeps the source's).
     pub video_fps: u32,
+    /// The config file this daemon reads, for the reload watcher. `None` means
+    /// the built-in defaults with no file to watch.
+    pub config_path: Option<std::path::PathBuf>,
     /// Control socket to bind (`None` = `$XDG_RUNTIME_DIR/niripaper.sock`).
     /// Overridable so a second instance can be tested without fighting the
     /// session's daemon over one path.
     pub socket: Option<std::path::PathBuf>,
     /// Animation parameters, in niri's vocabulary (see `config.rs`).
     pub animations: crate::config::Animations,
+    /// The transition when the wallpaper changes.
+    pub transition: crate::render::transition::Settings,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -82,8 +90,10 @@ impl Options {
             pattern: Pattern::Blocks,
             wallpaper: None,
             video_fps: 0,
+            config_path: None,
             socket: None,
             animations: crate::config::Animations::default(),
+            transition: crate::render::transition::Settings::default(),
             trace: false,
         }
     }
@@ -92,57 +102,11 @@ impl Options {
 /// What is being drawn: a decoded still, or a playing video. Both end up
 /// canvas-sized and are sampled identically — the only difference is that the
 /// video's texture is redrawn by libmpv as it plays.
-enum Media {
-    Image(crate::render::image::Wallpaper),
-    Video(crate::render::video::Video),
-}
-
-/// Load a wallpaper: a still image, or a video routed by extension. Shared by
-/// startup and by `set` over the control socket.
-fn load_media(path: &std::path::Path, canvas: (u32, u32), video_fps: u32) -> Result<Media, String> {
-    if is_video(path) {
-        let video = crate::render::video::Video::new(path, canvas.0, canvas.1, video_fps)?;
-        return Ok(Media::Video(video));
-    }
-    Ok(Media::Image(crate::render::image::Wallpaper::load(
-        path, canvas,
-    )?))
-}
-
-/// One line describing what is on screen, for `query`.
-fn describe(media: &Option<Media>, progress: motion::Progress, options: &Options) -> String {
-    let kind = match media {
-        Some(Media::Image(_)) => "image".to_owned(),
-        Some(Media::Video(video)) => {
-            let hwdec = video.hwdec();
-            if hwdec.is_empty() {
-                "video".to_owned()
-            } else {
-                format!("video hwdec={hwdec}")
-            }
-        }
-        None => format!("pattern {:?}", options.pattern),
-    };
-    format!(
-        "ok {kind} h={:.4} v={:.4}",
-        progress.horizontal, progress.vertical
-    )
-}
-
-/// Video containers mpv handles and `image` does not. Routed by extension
-/// because guessing wrong is worse than a clear failure: a still handed to mpv
-/// plays as a one-frame video, while a video handed to `image` fails to decode.
-fn is_video(path: &std::path::Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi")
-    )
-}
-
 pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> {
+    // The *effective* configuration, owned so a reload can change it: `set` over
+    // the control socket and a config-file reload both write here. Command-line
+    // flags are a startup-only override, exactly as they are in niri.
+    let mut options = options.clone();
     // --- wayland -----------------------------------------------------------
     let mut client = layer::Client::connect()?;
     let output = client
@@ -244,11 +208,15 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         (surface.height as f64 * options.scale).round() as u32,
     );
     let mut media = match &options.wallpaper {
-        Some(path) if is_video(path) => {
-            let video =
-                crate::render::video::Video::new(path, canvas.0, canvas.1, options.video_fps)?;
+        Some(path) => {
+            let loaded = Media::load(path, canvas, options.video_fps)?;
             log(&format!(
-                "video {} → canvas {}×{}, fps cap {}",
+                "{} {} → canvas {}×{}, fps cap {}",
+                if media::is_video(path) {
+                    "video"
+                } else {
+                    "wallpaper"
+                },
                 path.display(),
                 canvas.0,
                 canvas.1,
@@ -258,12 +226,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     options.video_fps.to_string()
                 }
             ));
-            Some(Media::Video(video))
-        }
-        Some(path) => {
-            let loaded = crate::render::image::Wallpaper::load(path, canvas)?;
-            log(&format!("wallpaper {}", loaded.describe()));
-            Some(Media::Image(loaded))
+            Some(loaded)
         }
         None => None,
     };
@@ -272,13 +235,16 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
     let screen = (surface.width as f64, surface.height as f64);
-    let animations = &options.animations;
-    let mut animator = Animator::new(niri.motion.progress(&options.output), animations.parallax)
-        .with_slowdown(animations.slowdown);
+    let mut animator = Animator::new(
+        niri.motion.progress(&options.output),
+        options.animations.parallax,
+    )
+    .with_slowdown(options.animations.slowdown);
     // The overview transition animates the canvas scale (§4.1): pulling back
     // shows more of the wallpaper, which reads as the workspace receding.
-    let mut zoom = Animator::new(1.0f64, animations.overview_open_close.animation)
-        .with_slowdown(animations.slowdown);
+    let mut zoom = Animator::new(1.0f64, options.animations.overview_open_close.animation)
+        .with_slowdown(options.animations.slowdown);
+    let mut transition = Transition::new(options.transition.clone(), options.animations.slowdown);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -294,34 +260,68 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
 
     // Map the layer straight away. At rest no callback is requested, so the
     // process idles in `poll()` until the layout actually changes.
-    draw(
-        &mut client,
-        &mut pool,
-        &surface,
-        &renderer,
-        animator.target(),
-        1.0,
-        screen,
-        options,
-        media.as_ref(),
-        false,
-    )?;
+    // The slot matters: the cross-fade snapshots the buffer that is on screen.
+    let mut last_slot: Option<usize> = Scene {
+        view: Scene::view(
+            animator.target(),
+            1.0,
+            screen,
+            options.scale,
+            options.pattern,
+        ),
+        content: match &media {
+            Some(media) => media.content(),
+            None => gl::Content::Pattern(options.pattern),
+        },
+        blend: None,
+    }
+    .draw(&mut client, &mut pool, &surface, &renderer, false)?;
     drawn += 1;
+
+    // "Play one at startup" (§2). There is nothing on screen to fade from, so
+    // the effect runs against an empty frame: the wallpaper arrives *through*
+    // it rather than simply appearing. Logging in stops being a hard cut.
+    if options.transition.on_start {
+        transition.restart((screen.0 as u32, screen.1 as u32), Instant::now(), None);
+    }
 
     // The video's wakeup fd is polled too — `-1` when there is no video, which
     // `poll()` ignores. That is what keeps the idle cost at zero for stills.
-    let video_fd = match &media {
-        Some(Media::Video(video)) => video.fd(),
-        _ => -1,
-    };
+    let video_fd = media
+        .as_ref()
+        .map(|media| media.wakeup_fd())
+        .unwrap_or(media::NO_WAKEUP);
     // The control socket (§3). Bound here, after everything that can fail at
     // startup has already failed: a socket that exists means a daemon that works.
     let socket_path = match &options.socket {
         Some(path) => path.clone(),
-        None => crate::ipc::default_path()?,
+        None => crate::ipc::default_path(&options.output)?,
     };
     let ipc = crate::ipc::Server::bind(&socket_path)?;
     log(&format!("control socket {}", socket_path.display()));
+    // Watch the configuration (§2). Directories, not files: tools write
+    // atomically and may create `config.d` long after we started.
+    let mut watcher = crate::watch::Watcher::new()?;
+    let config_dirs: Vec<std::path::PathBuf> = match &options.config_path {
+        Some(path) => {
+            let dir = path.with_extension("d");
+            let parent = path.parent().map(|p| p.to_owned());
+            [parent, Some(dir)].into_iter().flatten().collect()
+        }
+        None => Vec::new(),
+    };
+    watcher.watch(&config_dirs)?;
+    if !config_dirs.is_empty() {
+        log(&format!(
+            "watching {} for config changes",
+            options
+                .config_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        ));
+    }
+
     let mut fds = [
         libc::pollfd {
             fd: client.fd(),
@@ -340,6 +340,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         },
         libc::pollfd {
             fd: ipc.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: watcher.fd(),
             events: libc::POLLIN,
             revents: 0,
         },
@@ -364,6 +369,14 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         fds[0].revents = 0;
         fds[1].revents = 0;
         fds[2].revents = 0;
+        // Re-derive it every iteration: `set` can swap a still for a video, and
+        // the new one has its own wakeup fd. Capturing it once at startup meant
+        // a video switched in later was never pumped — the wallpaper stayed
+        // black.
+        fds[2].fd = media
+            .as_ref()
+            .map(|media| media.wakeup_fd())
+            .unwrap_or(media::NO_WAKEUP);
         fds[3].revents = 0;
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if ready < 0 {
@@ -375,13 +388,12 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         }
 
         if fds[2].revents & libc::POLLIN != 0 {
-            if let Some(Media::Video(video)) = media.as_mut() {
-                video.drain();
+            if let Some(media) = media.as_mut() {
                 // Decode into our texture; the next frame callback presents it.
-                match video.render() {
+                match media.pump() {
                     Ok(true) => video_present = true,
                     Ok(false) => {}
-                    Err(err) => log(&format!("video: {err}")),
+                    Err(err) => log(&format!("media: {err}")),
                 }
             }
         }
@@ -404,7 +416,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             // `retarget` ignores an unchanged target, so this is a no-op unless
             // the overview actually opened or closed.
             let wanted_zoom = if niri.overview_open {
-                animations.overview_open_close.zoom
+                options.animations.overview_open_close.zoom
             } else {
                 1.0
             };
@@ -419,18 +431,103 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 ));
             }
         }
+        if fds[4].revents & libc::POLLIN != 0 && watcher.drain() {
+            let Some(path) = options.config_path.clone() else {
+                continue;
+            };
+            // Watch *before* reloading. A `config.d` created just now is only
+            // discovered by this reload, and inotify reports no past events — so
+            // adding the watch afterwards would miss anything written into it in
+            // the meantime (a tool's `mkdir -p config.d && write`).
+            watcher.watch(&config_dirs)?;
+            match crate::config::Config::load_from(&path) {
+                // A failed reload keeps the running configuration: a tool
+                // writing a file has to be able to get it wrong without the
+                // screen going blank. (niri's `ConfigLoaded { failed: true }`.)
+                Err(err) => log(&format!("config reload failed, keeping current: {err}")),
+                Ok(reloaded) => {
+                    let changed_wallpaper = reloaded.wallpaper != options.wallpaper;
+                    if reloaded.namespace != options.namespace {
+                        log("namespace changed: needs a restart to take effect");
+                    }
+                    if reloaded.video_fps != options.video_fps {
+                        log("video_fps changed: applies to the next video load");
+                    }
+                    options.scale = reloaded.scale;
+                    options.column_span = reloaded.column_span;
+                    options.workspace_span = reloaded.workspace_span;
+                    options.video_fps = reloaded.video_fps;
+                    options.animations = reloaded.animations.clone();
+                    options.transition = reloaded.transition.clone();
+                    // The transition owns its own settings, so a reload has to
+                    // rebuild it — the same way the animators above are rebuilt
+                    // rather than poked. Without this, editing `[transition]`
+                    // while the daemon runs silently does nothing, which is
+                    // exactly what a panel writes to.
+                    transition =
+                        Transition::new(options.transition.clone(), options.animations.slowdown);
+                    options.wallpaper = reloaded.wallpaper.clone();
+                    options.namespace = reloaded.namespace.clone();
+                    niri.motion
+                        .set_spans(options.column_span, options.workspace_span);
+                    // Rebuild the animators at their current position so a
+                    // changed curve or duration applies without a jump.
+                    let now = Instant::now();
+                    let position = animator.position(now);
+                    let target = animator.target();
+                    animator = Animator::new(position, options.animations.parallax)
+                        .with_slowdown(options.animations.slowdown);
+                    animator.retarget(target, now);
+                    let zoom_position = zoom.position(now);
+                    let zoom_target = zoom.target();
+                    zoom = Animator::new(
+                        zoom_position,
+                        options.animations.overview_open_close.animation,
+                    )
+                    .with_slowdown(options.animations.slowdown);
+                    zoom.retarget(zoom_target, now);
+                    if changed_wallpaper {
+                        if let Some(path) = options.wallpaper.clone() {
+                            match switch_wallpaper(
+                                &path,
+                                canvas,
+                                options.video_fps,
+                                &mut media,
+                                &mut transition,
+                                &pool,
+                                last_slot,
+                                screen,
+                            ) {
+                                Ok(()) => {}
+                                Err(err) => log(&format!("reloaded wallpaper: {err}")),
+                            }
+                        } else {
+                            media = None;
+                            log("wallpaper cleared");
+                        }
+                    }
+                    log(&format!("config reloaded from {}", path.display()));
+                }
+            }
+        }
+
         if fds[3].revents & libc::POLLIN != 0 {
             match ipc.accept() {
                 Ok((request, stream)) => match request {
                     crate::ipc::Request::Set(path) => {
                         // Load first, swap after: a bad path must leave the
                         // current wallpaper alone, not blank the screen.
-                        match load_media(&path, canvas, options.video_fps) {
-                            Ok(loaded) => {
-                                media = Some(loaded);
-                                crate::ipc::reply(&stream, "ok");
-                                log(&format!("wallpaper → {}", path.display()));
-                            }
+                        match switch_wallpaper(
+                            &path,
+                            canvas,
+                            options.video_fps,
+                            &mut media,
+                            &mut transition,
+                            &pool,
+                            last_slot,
+                            screen,
+                        ) {
+                            Ok(()) => crate::ipc::reply(&stream, "ok"),
                             Err(err) => {
                                 crate::ipc::reply(&stream, &format!("error {err}"));
                                 log(&format!("set {}: {err}", path.display()));
@@ -439,7 +536,34 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     }
                     crate::ipc::Request::Query => {
                         let (progress, _) = animator.sample(Instant::now());
-                        crate::ipc::reply(&stream, &describe(&media, progress, options));
+                        let kind = match &media {
+                            Some(media) => media.describe(),
+                            None => format!("pattern {:?}", options.pattern),
+                        };
+                        crate::ipc::reply(
+                            &stream,
+                            &format!(
+                                "ok {kind} h={:.4} v={:.4}",
+                                progress.horizontal, progress.vertical
+                            ),
+                        );
+                    }
+                    crate::ipc::Request::Schema => {
+                        crate::ipc::reply(&stream, &json_line(&crate::schema::schema()));
+                    }
+                    crate::ipc::Request::State => {
+                        let now = Instant::now();
+                        let (progress, _) = animator.sample(now);
+                        crate::ipc::reply(
+                            &stream,
+                            &json_line(&state_json(&Snapshot {
+                                options: &options,
+                                media: media.as_ref(),
+                                canvas,
+                                position: (progress.horizontal, progress.vertical),
+                                zoom: zoom.position(now),
+                            })),
+                        );
                     }
                     crate::ipc::Request::Kill => {
                         crate::ipc::reply(&stream, "ok");
@@ -462,46 +586,50 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             last_frame_at = now;
             let (progress, moving) = animator.sample(now);
             let (zoom_now, zoom_moving) = zoom.sample(now);
-            let moving = moving || zoom_moving || video_present;
-            let submitted = draw(
-                &mut client,
-                &mut pool,
-                &surface,
-                &renderer,
-                progress,
-                zoom_now,
-                screen,
-                options,
-                media.as_ref(),
-                moving,
-            )?;
-            drawn += u64::from(submitted);
-            if !submitted {
+            let blend = transition.sample(now);
+            let moving = moving || zoom_moving || video_present || blend.is_some();
+            let submitted_slot = Scene {
+                view: Scene::view(progress, zoom_now, screen, options.scale, options.pattern),
+                content: match &media {
+                    Some(media) => media.content(),
+                    None => gl::Content::Pattern(options.pattern),
+                },
+                blend,
+            }
+            .draw(&mut client, &mut pool, &surface, &renderer, moving)?;
+            drawn += u64::from(submitted_slot.is_some());
+            if submitted_slot.is_none() {
                 skipped += 1;
             } else {
+                last_slot = submitted_slot;
                 // The decoded frame is on screen now; the next one has to wait
                 // for mpv to say so.
                 video_present = false;
             }
             if options.trace {
                 log(&format!(
-                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} dt={:>5.1}ms moving={moving} submitted={submitted} in_flight={} released={} skipped={skipped}",
+                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} effect={} t={:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
                     progress.horizontal,
                     progress.vertical,
+                    transition.effect().name(),
+                    blend.map(|blend| blend.progress).unwrap_or(1.0),
                     dt.as_secs_f64() * 1000.0,
+                    submitted_slot.is_some(),
                     pool.in_flight(),
                     client.state.releases,
                 ));
             }
             // Nothing submitted means the pool was empty: leave `frame_pending`
             // clear so the tail asks for another frame instead of stalling.
-            frame_pending = submitted && moving;
+            frame_pending = submitted_slot.is_some() && moving;
         }
 
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving() || video_present) && !frame_pending {
+        if (animator.is_moving() || zoom.is_moving() || transition.is_moving() || video_present)
+            && !frame_pending
+        {
             surface.request_frame(&client.handle());
             surface.surface.commit();
             client.flush()?;
@@ -523,62 +651,181 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     Ok(())
 }
 
-/// Draw one frame of the parallax pattern.
-#[allow(clippy::too_many_arguments)]
-fn draw(
-    client: &mut layer::Client,
-    pool: &mut Pool<'_>,
-    surface: &LayerSurface,
-    renderer: &gl::Renderer,
-    progress: motion::Progress,
+/// One line of JSON. The protocol is one line in, one line out, so the compact
+/// form is the only one that fits.
+fn json_line(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|e| format!("error serializing: {e}"))
+}
+
+/// What `state` reports, gathered by the caller because only it has these.
+struct Snapshot<'a> {
+    options: &'a Options,
+    media: Option<&'a Media>,
+    canvas: (u32, u32),
+    position: (f64, f64),
     zoom: f64,
-    screen: (f64, f64),
-    options: &Options,
-    media: Option<&Media>,
-    want_next_frame: bool,
-) -> Result<bool, String> {
-    let released = std::mem::take(&mut client.state.released);
-    // Every buffer still on screen: the compositor is behind us. Dropping a
-    // frame is the right answer — queueing them up would just add latency, and
-    // the caller will keep the animation alive with a bare frame request.
-    let Some(slot) = pool.acquire(&released) else {
-        return Ok(false);
-    };
+}
 
-    // The zoom is just an animated multiplier on `scale`: the canvas, the
-    // overflow and therefore the parallax travel all follow from it, and the
-    // wallpaper texture (already canvas-sized) is sampled as a sub-region —
-    // nothing to re-upload.
-    let scale = (options.scale * zoom).max(1.0);
-    let offset = offset_px(progress, screen, scale);
-    let frame = pool.frame(slot);
-    frame.begin();
-    let content = match media {
-        Some(Media::Image(wallpaper)) => gl::Content::Wallpaper(&wallpaper.texture),
-        Some(Media::Video(video)) => gl::Content::Video(video.texture()),
-        None => gl::Content::Pattern(options.pattern),
-    };
-    renderer.draw(
-        gl::View {
-            screen: (screen.0 as f32, screen.1 as f32),
-            scale: scale as f32,
-            offset: (offset.0 as f32, offset.1 as f32),
-            pattern: options.pattern,
-        },
-        content,
+/// The daemon's state, for `state` over the control socket.
+///
+/// Values are keyed by the same dotted names `schema` lists, so a client can zip
+/// the two together without knowing anything about either. `config.values` is
+/// what the configuration says; `wallpaper.path` is what is *actually* on
+/// screen — `set` swaps the media without touching the configuration, so the two
+/// can legitimately differ.
+fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let options = state.options;
+    let mut values = Map::new();
+    let mut put = |name: &str, value: Value| values.insert(name.to_owned(), value);
+    put(
+        "wallpaper",
+        json!(options
+            .wallpaper
+            .as_ref()
+            .map(|path| path.display().to_string())),
     );
-    frame.finish();
-    if let Some(err) = gl::last_error() {
-        return Err(format!("GL error after drawing: 0x{err:x}"));
-    }
+    put("video_fps", json!(options.video_fps));
+    put("scale", json!(options.scale));
+    put("column_span", json!(options.column_span));
+    put("workspace_span", json!(options.workspace_span));
+    put("namespace", json!(options.namespace));
+    let animations = &options.animations;
+    put("animations.follow_niri", json!(animations.follow_niri));
+    put("animations.off", json!(animations.off));
+    put("animations.slowdown", json!(animations.slowdown));
+    put(
+        "animations.parallax",
+        crate::schema::animation_value(&animations.parallax),
+    );
+    put(
+        "animations.overview-open-close.zoom",
+        json!(animations.overview_open_close.zoom),
+    );
+    put(
+        "animations.overview-open-close",
+        crate::schema::animation_value(&animations.overview_open_close.animation),
+    );
+    let transition = &options.transition;
+    put("transition.selection", json!(transition.selection.name()));
+    put("transition.effect", json!(transition.effect.name()));
+    put(
+        "transition.effects",
+        json!(transition
+            .effects
+            .iter()
+            .map(|effect| effect.name())
+            .collect::<Vec<_>>()),
+    );
+    put(
+        "transition.duration_ms",
+        json!(transition.duration.as_millis() as u64),
+    );
+    put("transition.curve", json!(transition.curve.name()));
+    put(
+        "transition.cubic_bezier",
+        match transition.curve {
+            Curve::CubicBezier(points) => json!(points),
+            _ => Value::Null,
+        },
+    );
+    put(
+        "transition.allow_overshoot",
+        json!(transition.allow_overshoot),
+    );
+    put("transition.softness", json!(transition.softness));
+    put(
+        "transition.center",
+        json!([transition.center.0, transition.center.1]),
+    );
+    put("transition.direction", json!(transition.direction.name()));
+    put("transition.stripes", json!(transition.stripes));
+    put("transition.push", json!(transition.push));
+    put("transition.start_radius", json!(transition.start_radius));
+    put(
+        "transition.hold_ms",
+        json!(transition.hold.as_millis() as u64),
+    );
+    put("transition.on_start", json!(transition.on_start));
 
-    // The frame request travels with this commit; on its own it would be
-    // dropped.
-    let _callback = want_next_frame.then(|| surface.request_frame(&client.handle()));
-    let buffer = client.attach(surface, frame);
-    pool.mark_submitted(slot, &buffer);
-    client.flush()?;
-    Ok(true)
+    // Which files this configuration is made of: the main one plus every
+    // `config.d/*.toml` merged over it. A panel showing "where does this value
+    // come from" needs exactly this list.
+    let files: Vec<String> = options
+        .config_path
+        .as_deref()
+        .and_then(|path| crate::config::Config::config_files(path).ok())
+        .unwrap_or_default()
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+
+    json!({
+        "output": options.output,
+        "namespace": options.namespace,
+        "canvas": { "width": state.canvas.0, "height": state.canvas.1 },
+        "config": {
+            "source": crate::config::describe_source(options.config_path.as_deref()),
+            "files": files,
+            "values": values,
+            "from_niri": animations.from_niri,
+        },
+        "wallpaper": match state.media {
+            Some(media) => json!({
+                "path": media.path().display().to_string(),
+                "kind": media.kind(),
+                "hwdec": media.hwdec(),
+            }),
+            None => Value::Null,
+        },
+        "position": {
+            "horizontal": state.position.0,
+            "vertical": state.position.1,
+        },
+        "zoom": state.zoom,
+    })
+}
+
+/// Swap the wallpaper, cross-fading from whatever is on screen.
+///
+/// Shared by `set` over the control socket and by a config reload — both mean
+/// "this is the wallpaper now", and both must behave the same way: load first,
+/// swap after, so a bad path leaves the current one alone.
+#[allow(clippy::too_many_arguments)]
+fn switch_wallpaper(
+    path: &std::path::Path,
+    canvas: (u32, u32),
+    video_fps: u32,
+    media: &mut Option<Media>,
+    transition: &mut Transition,
+    pool: &Pool<'_>,
+    last_slot: Option<usize>,
+    screen: (f64, f64),
+) -> Result<(), String> {
+    let loaded = Media::load(path, canvas, video_fps)?;
+    *media = Some(loaded);
+    // Snapshot *before* the swap: that is what is on screen right now.
+    // `Frame::begin` only binds the framebuffer and sets the viewport, so it
+    // does not disturb the pixels being copied.
+    if let Some(slot) = last_slot {
+        transition.restart(
+            (screen.0 as u32, screen.1 as u32),
+            Instant::now(),
+            Some(&|snapshot: &gl::Snapshot| {
+                pool.frame(slot).begin();
+                snapshot.capture();
+            }),
+        );
+    }
+    // Say which effect ran: "the transition did something odd" is otherwise
+    // impossible to pin on one of ten.
+    log(&format!(
+        "wallpaper → {} ({} transition)",
+        path.display(),
+        transition.effect().name()
+    ));
+    Ok(())
 }
 
 fn log(message: &str) {
@@ -589,4 +836,35 @@ fn log(message: &str) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "niripaper: {message}");
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A panel zips `schema` and `state` together by dotted key name. That only
+    /// works if the two agree, and they are written in two different files — so
+    /// a key added to one and forgotten in the other is a silent hole in the
+    /// panel's UI. This is the test that catches it.
+    #[test]
+    fn state_reports_every_key_the_schema_lists() {
+        let options = Options::new("test");
+        let state = state_json(&Snapshot {
+            options: &options,
+            media: None,
+            canvas: (1920, 1080),
+            position: (0.0, 0.0),
+            zoom: 1.0,
+        });
+        let values = state["config"]["values"]
+            .as_object()
+            .expect("values is an object");
+        for key in crate::schema::keys() {
+            assert!(
+                values.contains_key(key.name),
+                "schema lists {:?} but state does not report it",
+                key.name
+            );
+        }
+    }
 }

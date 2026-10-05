@@ -72,16 +72,30 @@ which helps tell whether a problem is in niri's events or in the rendering.
 
 ### Changing the wallpaper of a running daemon
 
-The daemon listens on a small control socket (`$XDG_RUNTIME_DIR/niripaper.sock`):
+The daemon listens on a small control socket, one per output
+(`$XDG_RUNTIME_DIR/niripaper-DP-1.sock`):
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # switch it, image or video
 niripaper query                       # what is on screen right now
+niripaper schema                      # every config key, as JSON
+niripaper state                       # what the daemon is doing, as JSON
 niripaper kill                        # shut it down
 ```
 
 `set` loads the new wallpaper *before* swapping it in, so a bad path reports an error
 and leaves the current one on screen instead of blanking it.
+
+`schema` and `state` are what a panel (the Noctalia plugin, or anything else) talks to.
+`schema` lists every configuration key with its type, bounds, default, unit and whether
+a reload picks it up; `state` reports the effective values under the same names, plus
+the output, the canvas, the wallpaper actually on screen and the parallax position. A
+panel asks for the schema once to build its widgets, and afterwards only needs `state` —
+so adding a key here never requires a panel change.
+
+`state`'s `config.values` is what the configuration says, while `wallpaper.path` is what
+is *actually* on screen: `set` swaps the media without touching the configuration, so
+the two can legitimately differ.
 
 ### Starting it with niri
 
@@ -104,13 +118,20 @@ The binary has to be on `PATH` for that to work — hence the `install` line abo
 | `--scale F` | canvas enlargement, `1.0`–`1.35` |
 | `--column-span N`, `--workspace-span N` | how many steps the parallax spreads over |
 | `--pattern blocks\|bands` | the built-in test pattern, used when no wallpaper is given |
-| `--socket PATH` | control socket to use (default: `$XDG_RUNTIME_DIR/niripaper.sock`) |
+| `--socket PATH` | control socket to use (default: `$XDG_RUNTIME_DIR/niripaper-<output>.sock`) |
+| `--output NAME` | which output's daemon to talk to; needed only when several are running |
 | `--trace` | log every frame (position, zoom, timing) — for debugging |
 
 ## Configuration
 
 The config file lives at `~/.config/niripaper/config.toml`. It is optional: with no
-file at all, the built-in defaults are used. Values are resolved as
+file at all, the built-in defaults are used. A `config.d/` directory next to it is
+read too — every `*.toml` in it, in filename order, merged over the main file
+(later files win). That is where a tool keeps its own settings without touching
+yours: delete the file and it is gone. A fragment has to spell out its own table
+headers — `[transition]` and the like — since it is merged, not textually
+spliced; a key at the wrong level is an unknown field, which is a hard error. Edits are picked up while the daemon runs;
+a file that fails to parse is reported and the running configuration is kept. Values are resolved as
 **command line → config file → built-in default**, so the file only needs to state
 what differs.
 
@@ -133,6 +154,14 @@ curve = "ease-out-cubic"
 [animations.overview-open-close]
 zoom = 0.96           # 1.0 turns the effect off
 
+[transition]
+selection = "rotate"                  # fixed | rotate | random
+effects = ["portal", "iris", "dissolve"]
+duration_ms = 1500
+curve = "ease-out-cubic"
+softness = 0.3                        # 0 is a hard edge, 1 is very soft
+on_start = true                       # play one when the daemon starts
+
 # Per-output overrides — anything not listed here is inherited from above.
 [outputs."DP-1"]
 scale = 1.2
@@ -152,12 +181,60 @@ scale = 1.2
 | `[animations] slowdown` | stretch every animation's timeline |
 | `[animations.parallax]` | how the wallpaper moves when you move |
 | `[animations.overview-open-close]` | the overview transition: a `zoom` plus a spring or a curve |
+| `[transition] selection` | how the effect is chosen each time: `fixed`, `rotate` or `random` |
+| `[transition] effect`, `effects` | the effect used when `fixed`, and the pool `rotate` and `random` pick from |
+| `[transition] duration_ms`, `curve` | how long it takes and how it is eased |
+| `[transition] cubic_bezier` | control points for `curve = "cubic-bezier"`, as in CSS |
+| `[transition] softness` | how wide the moving edge is (`0` hard, `1` very soft) |
+| `[transition] center` | where radial effects start: `[x, y]` as fractions of the screen, `[0, 0]` being the top-left |
+| `[transition] direction` | which way wipes, stripes and slides go |
+| `[transition] stripes` | how many bands the `stripes` effect breaks the edge into |
+| `[transition] push` | how far `portal` pushes the old frame outward; `0` makes it an `iris` |
+| `[transition] start_radius` | how wide the hole already is at the start (a fraction of the screen height) |
+| `[transition] hold_ms` | how long the first frame is held before the transition moves (part of `duration_ms`) |
+| `[transition] allow_overshoot`, `on_start` | let the curve bounce; play one at startup |
 | `[outputs."NAME"]` | per-output overrides of any of the above |
 
 Animations use niri's own vocabulary: each of them is either `off`, an easing
 (`duration_ms` plus a `curve`), or a `spring` (`damping_ratio`, `stiffness`,
 `epsilon`). The `curve` names are niri's: `linear`, `ease-out-quad`,
 `ease-out-cubic`, `ease-out-expo`, `cubic-bezier`.
+
+The wallpaper transition is a table of its own rather than part of `[animations]`,
+because that table mirrors niri's vocabulary and niri has no wallpaper-change
+animation to mirror. The effects are `portal`, `iris`, `dissolve`, `wipe`, `stripes`, `zoom`, `slide`,
+`fade` and `none`.
+
+One constraint shapes all of them: the old side is a **frozen snapshot** and the new
+side is live, so only one decoder ever runs. That is what lets a video arrive through
+a portal that is already moving, and it is why every effect costs one fragment pass
+however elaborate it looks. `softness` widens the moving edge — except in `slide`,
+where the two frames are exactly adjacent and the seam is a step.
+
+`iris` and `portal` are the same circle: `portal` additionally pushes the old frame
+outward as the hole opens, so you move *through* it rather than watch it get cut away.
+That is the whole difference, and `push` is how far it goes.
+
+The circle itself is tunable: `center` is where it opens — `[x, y]` as fractions of the
+screen, read from the **top-left**, so it matches how a screenshot is read — and
+`start_radius` is how wide it already is when the transition begins. Left at `0` it
+grows from a point; set to something like `0.08` it begins as a small **complete
+circle**. However it is placed, it grows until it has covered the farthest corner from
+`center`.
+
+`hold_ms` holds the first frame still for a moment before anything moves, which is
+**a stall, not a pause**: the radius stops dead and the transition reads as two pieces.
+For a small circle that should still register, a slow-starting curve is the better
+answer — the circle keeps moving, it just moves slowly at first. Reach for `hold_ms`
+only when you really do want a beat. It is part of `duration_ms`, not extra.
+
+niri's curves are all fast at the start and slow at the end, which is the opposite of
+what a reveal wants. For slow-fast-slow, use a bezier — `curve = "cubic-bezier"` with
+`cubic_bezier = [0.42, 0, 0.58, 1]`, which is CSS's `ease-in-out` (solved the same way,
+`x(u) = t`).
+
+`niripaper schema` lists every key above, with its type, bounds and whether editing
+the file while the daemon runs takes effect.
 
 With `follow_niri = true`, the overview transition takes its parameters from niri's
 config, so changing niri's settings changes the wallpaper's motion as well. Anything
