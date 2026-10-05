@@ -49,8 +49,10 @@ pub struct State {
     pub releases: u32,
     /// Ids of the buffers the compositor has released, for the pool to recycle.
     pub released: Vec<ObjectId>,
-    /// `wl_callback::done` events: the compositor asking for the next frame.
-    pub frames_done: u64,
+    /// `wl_callback::done` events per surface: the compositor asking that
+    /// surface for its next frame. Keyed by the surface's object id, because a
+    /// daemon drawing on several outputs has to redraw only the one that asked.
+    pub frames_done: HashMap<ObjectId, u64>,
     /// Device the compositor prefers for buffers (dev_t as an integer).
     pub main_device: Option<u64>,
     pub formats: Vec<FormatModifier>,
@@ -365,7 +367,14 @@ impl LayerSurface {
     /// This is the only thing that drives redrawing: while no callback is
     /// outstanding the process sits in `poll()` and costs nothing.
     pub fn request_frame(&self, qh: &QueueHandle<State>) -> wl_callback::WlCallback {
-        self.surface.frame(qh, ())
+        // The callback carries its own surface's id, so the handler can tell
+        // which output asked without the caller having to track an index.
+        self.surface.frame(qh, self.id())
+    }
+
+    /// This surface's object id — the key its frame callbacks arrive under.
+    pub fn id(&self) -> ObjectId {
+        self.surface.id()
     }
 
     pub fn destroy(&self) {
@@ -462,16 +471,16 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for State {
     }
 }
 
-impl Dispatch<wl_callback::WlCallback, ()> for State {
+impl Dispatch<wl_callback::WlCallback, ObjectId> for State {
     fn event(
         state: &mut Self,
         _proxy: &wl_callback::WlCallback,
         _event: wl_callback::Event,
-        _data: &(),
+        data: &ObjectId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        state.frames_done += 1;
+        *state.frames_done.entry(data.clone()).or_default() += 1;
     }
 }
 

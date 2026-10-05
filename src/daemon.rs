@@ -268,7 +268,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
 
     // --- the loop ----------------------------------------------------------
     let mut frame_pending = false;
-    let mut seen_frames = client.state.frames_done;
+    let mut seen_frames = 0u64;
     let mut drawn = 0u64;
     let mut skipped = 0u64;
     let mut last_frame_at = Instant::now();
@@ -620,8 +620,14 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             client.wait_events(Duration::ZERO)?;
         }
 
-        if client.state.frames_done > seen_frames {
-            seen_frames = client.state.frames_done;
+        let surface_frames = client
+            .state
+            .frames_done
+            .get(&surface.id())
+            .copied()
+            .unwrap_or(0);
+        if surface_frames > seen_frames {
+            seen_frames = surface_frames;
             let now = Instant::now();
             let dt = now.saturating_duration_since(last_frame_at);
             last_frame_at = now;
