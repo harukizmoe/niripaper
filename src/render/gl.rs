@@ -15,6 +15,7 @@ pub const GL_EXTENSIONS: u32 = 0x1F03;
 
 pub const GL_TEXTURE_2D: u32 = 0x0DE1;
 pub const GL_TEXTURE0: u32 = 0x84C0;
+pub const GL_TEXTURE1: u32 = 0x84C1;
 pub const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
 pub const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
 pub const GL_TEXTURE_WRAP_S: u32 = 0x2802;
@@ -43,6 +44,16 @@ extern "C" {
     fn glGetString(name: u32) -> *const u8;
     fn glGetError() -> u32;
     fn glViewport(x: i32, y: i32, w: i32, h: i32);
+    fn glCopyTexSubImage2D(
+        target: u32,
+        level: i32,
+        xoffset: i32,
+        yoffset: i32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    );
     fn glReadPixels(
         x: i32,
         y: i32,
@@ -310,6 +321,8 @@ struct Uniforms {
     pattern: i32,
     wallpaper: i32,
     has_wallpaper: i32,
+    previous: i32,
+    fade: i32,
 }
 
 /// A shader program plus the empty VAO core-profile GL insists on.
@@ -349,6 +362,8 @@ impl Renderer {
             pattern: uniform(program, "u_pattern"),
             wallpaper: uniform(program, "u_wallpaper"),
             has_wallpaper: uniform(program, "u_has_wallpaper"),
+            previous: uniform(program, "u_previous"),
+            fade: uniform(program, "u_fade"),
         };
         Ok(Self {
             program,
@@ -358,7 +373,9 @@ impl Renderer {
     }
 
     /// Draw the pattern over the whole current framebuffer.
-    pub fn draw(&self, view: View, content: Content<'_>) {
+    /// `fade` is the new content's weight (1.0 = no cross-fade); `previous` is
+    /// the snapshot to blend from while it is below 1.0.
+    pub fn draw(&self, view: View, content: Content<'_>, fade: f32, previous: Option<u32>) {
         unsafe {
             glBindVertexArray(self.vao);
             glUseProgram(self.program);
@@ -386,7 +403,17 @@ impl Renderer {
                     glUniform1i(self.uniforms.has_wallpaper, 0);
                 }
             }
+            match previous {
+                Some(texture) if fade < 1.0 => {
+                    glActiveTexture(GL_TEXTURE1);
+                    glBindTexture(GL_TEXTURE_2D, texture);
+                    glUniform1i(self.uniforms.previous, 1);
+                }
+                _ => {}
+            }
+            glUniform1f(self.uniforms.fade, fade);
             glDrawArrays(GL_TRIANGLES, 0, 3);
+            glActiveTexture(GL_TEXTURE0);
             glBindVertexArray(0);
         }
     }
@@ -414,6 +441,11 @@ uniform vec2 u_offset;
 uniform int u_pattern;
 uniform sampler2D u_wallpaper;
 uniform int u_has_wallpaper;
+// Cross-fade between the previous frame and this one. `uv` is the screen
+// coordinate, so any pair of sources (still, video, pattern) blends the same
+// way — no second decoder, no per-source special case.
+uniform sampler2D u_previous;
+uniform float u_fade;
 out vec4 color;
 
 float hash(vec2 p) {
@@ -429,6 +461,9 @@ void main() {
         // The texture is already canvas-sized and cover-cropped, so this is a
         // straight 1:1 lookup.
         color = vec4(texture(u_wallpaper, c).rgb, 1.0);
+        if (u_fade < 1.0) {
+            color = vec4(mix(texture(u_previous, uv).rgb, color.rgb, u_fade), 1.0);
+        }
         return;
     }
 
@@ -450,6 +485,9 @@ void main() {
     float edge = min(min(c.x, 1.0 - c.x), min(c.y, 1.0 - c.y));
     if (edge < 0.002) {
         base = vec3(1.0);
+    }
+    if (u_fade < 1.0) {
+        base = mix(texture(u_previous, uv).rgb, base, u_fade);
     }
     color = vec4(base, 1.0);
 }
@@ -496,6 +534,61 @@ fn info_log(fetch: impl Fn(i32, *mut i32, *mut i8)) -> String {
 }
 
 /// Last GL error, or `None` when the pipeline is clean.
+/// A copy of a frame, taken on the GPU. Used to cross-fade away from whatever
+/// was on screen when the wallpaper changed: the *rendered* result is
+/// snapshotted, so a still and a video are equally blendable.
+pub struct Snapshot {
+    texture: u32,
+    size: (u32, u32),
+}
+
+impl Snapshot {
+    pub fn new(width: u32, height: u32) -> Self {
+        let texture = gen_texture();
+        bind_texture(GL_TEXTURE_2D, texture);
+        tex_image_2d_rgba(width, height);
+        bind_texture(GL_TEXTURE_2D, 0);
+        Self {
+            texture,
+            size: (width, height),
+        }
+    }
+
+    pub fn texture(&self) -> u32 {
+        self.texture
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// Copy the currently bound framebuffer into the snapshot. The caller binds
+    /// it: `mpv_render_context_render` and `Frame::begin` both manage bindings,
+    /// so guessing here would copy the wrong thing.
+    pub fn capture(&self) {
+        bind_texture(GL_TEXTURE_2D, self.texture);
+        unsafe {
+            glCopyTexSubImage2D(
+                GL_TEXTURE_2D,
+                0,
+                0,
+                0,
+                0,
+                0,
+                self.size.0 as i32,
+                self.size.1 as i32,
+            );
+        }
+        bind_texture(GL_TEXTURE_2D, 0);
+    }
+}
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        delete_texture(self.texture);
+    }
+}
+
 pub fn last_error() -> Option<u32> {
     let e = unsafe { glGetError() };
     if e == GL_NO_ERROR {

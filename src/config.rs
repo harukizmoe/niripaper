@@ -51,6 +51,12 @@ pub const DEFAULT_OVERVIEW_ANIMATION: Animation = Animation::Spring(Spring {
     epsilon: 0.0001,
 });
 
+/// A cross-fade has nothing to ease, so linear is the honest default, and
+/// 250 ms reads as instant while still being visible.
+pub fn default_wallpaper_change() -> Animation {
+    Animation::easing(Curve::Linear, std::time::Duration::from_millis(250))
+}
+
 /// A validated configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -92,6 +98,9 @@ pub struct Animations {
     pub parallax: Animation,
     /// The overview transition, with its target zoom.
     pub overview_open_close: OverviewAnimation,
+    /// The cross-fade when the wallpaper changes. Linear by default: a fade has
+    /// nothing to ease, and 250 ms is short enough to feel instant.
+    pub wallpaper_change: Animation,
     /// niri's `slowdown`: divides elapsed time, so > 1 slows everything down.
     pub slowdown: f64,
     /// Whether the shared animations were read from niri's config.
@@ -112,6 +121,7 @@ impl Default for Animations {
                 animation: DEFAULT_OVERVIEW_ANIMATION,
             },
             slowdown: 1.0,
+            wallpaper_change: default_wallpaper_change(),
             follow_niri: true,
             from_niri: Vec::new(),
             niri_config: None,
@@ -356,6 +366,14 @@ fn resolve_animations(
         None => defaults.parallax,
     };
 
+    // Not from niri: it has no such animation, so this is ours alone.
+    let wallpaper_change =
+        match explicit_animation("animations.wallpaper-change", raw.wallpaper_change.as_ref())? {
+            Some(animation) => animation,
+            None if global_off => Animation::Off,
+            None => defaults.wallpaper_change,
+        };
+
     let overview = raw.overview_open_close.as_ref();
     let zoom = match overview.and_then(|o| o.zoom) {
         Some(zoom) => check_overview_zoom(zoom)?,
@@ -381,6 +399,7 @@ fn resolve_animations(
 
     Ok(Animations {
         parallax,
+        wallpaper_change,
         overview_open_close: OverviewAnimation {
             zoom,
             animation: overview_animation,
@@ -489,6 +508,8 @@ struct RawAnimations {
     parallax: Option<RawAnimation>,
     #[serde(rename = "overview-open-close")]
     overview_open_close: Option<RawOverviewAnimation>,
+    #[serde(rename = "wallpaper-change")]
+    wallpaper_change: Option<RawAnimation>,
 }
 
 /// One animation block: `off`, an easing, or a spring.

@@ -108,7 +108,8 @@ fn usage() {
          commands:\n\
          \x20 daemon [--output NAME] [--config PATH] [--namespace NAME]\n\
          \x20        [--scale F] [--column-span N] [--workspace-span N]\n\
-         \x20        [--wallpaper PATH] [--pattern blocks|bands] [--trace]\n\
+         \x20        [--wallpaper PATH] [--pattern blocks|bands] [--socket PATH]\n\
+         \x20        [--trace]\n\
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n\
          \n\
@@ -237,6 +238,7 @@ struct Overrides {
     pattern: Option<Pattern>,
     wallpaper: Option<PathBuf>,
     config: Option<PathBuf>,
+    socket: Option<PathBuf>,
     trace: bool,
 }
 
@@ -249,6 +251,7 @@ fn parse_overrides(args: &[String]) -> Result<Overrides, String> {
             "--output" => over.output = Some(value()?.clone()),
             "--namespace" => over.namespace = Some(value()?.clone()),
             "--config" => over.config = Some(PathBuf::from(value()?)),
+            "--socket" => over.socket = Some(PathBuf::from(value()?)),
             "--wallpaper" => over.wallpaper = Some(PathBuf::from(value()?)),
             "--scale" => over.scale = Some(value()?.parse().map_err(|e| format!("--scale: {e}"))?),
             "--column-span" => {
@@ -320,6 +323,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.scale = over.scale.unwrap_or(params.scale);
     options.column_span = over.column_span.unwrap_or(params.column_span);
     options.video_fps = config.video_fps;
+    options.socket = over.socket;
     options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
     // Animations come from the config only: they are tuned by feel, and a flag

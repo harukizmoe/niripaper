@@ -279,6 +279,10 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // shows more of the wallpaper, which reads as the workspace receding.
     let mut zoom = Animator::new(1.0f64, animations.overview_open_close.animation)
         .with_slowdown(animations.slowdown);
+    // Starts settled at 1.0 ("fully the new content"): a cross-fade only exists
+    // while the wallpaper is changing.
+    let mut fade =
+        Animator::new(1.0f64, animations.wallpaper_change).with_slowdown(animations.slowdown);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -304,6 +308,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         screen,
         options,
         media.as_ref(),
+        1.0,
+        None,
         false,
     )?;
     drawn += 1;
@@ -360,6 +366,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // mpv's wakeup into a frame request.
     let mut video_present = false;
     let mut quit = false;
+    // The cross-fade blends against a snapshot of the last frame actually
+    // drawn, so stills and videos blend identically and no second decoder is
+    // needed. Both stay absent until a wallpaper is actually switched.
+    let mut snapshot: Option<gl::Snapshot> = None;
+    let mut last_slot: Option<usize> = None;
     while running() && !quit {
         fds[0].revents = 0;
         fds[1].revents = 0;
@@ -427,7 +438,23 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                         // current wallpaper alone, not blank the screen.
                         match load_media(&path, canvas, options.video_fps) {
                             Ok(loaded) => {
+                                // Snapshot *before* the swap: this is what is on
+                                // screen right now.
+                                if let Some(slot) = last_slot {
+                                    let snapshot = snapshot.get_or_insert_with(|| {
+                                        gl::Snapshot::new(screen.0 as u32, screen.1 as u32)
+                                    });
+                                    pool.frame(slot).begin();
+                                    snapshot.capture();
+                                }
                                 media = Some(loaded);
+                                if animations.wallpaper_change
+                                    != crate::render::anim::Animation::Off
+                                {
+                                    fade = Animator::new(0.0f64, animations.wallpaper_change)
+                                        .with_slowdown(animations.slowdown);
+                                    fade.retarget(1.0, Instant::now());
+                                }
                                 crate::ipc::reply(&stream, "ok");
                                 log(&format!("wallpaper → {}", path.display()));
                             }
@@ -462,8 +489,9 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             last_frame_at = now;
             let (progress, moving) = animator.sample(now);
             let (zoom_now, zoom_moving) = zoom.sample(now);
-            let moving = moving || zoom_moving || video_present;
-            let submitted = draw(
+            let (fade_now, fade_moving) = fade.sample(now);
+            let moving = moving || zoom_moving || video_present || fade_moving;
+            let submitted_slot = draw(
                 &mut client,
                 &mut pool,
                 &surface,
@@ -473,21 +501,27 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 screen,
                 options,
                 media.as_ref(),
+                // Clamped: a spring may overshoot, but "more than the new
+                // wallpaper" is not a thing a fade can show.
+                fade_now.clamp(0.0, 1.0) as f32,
+                snapshot.as_ref().map(|s| s.texture()),
                 moving,
             )?;
-            drawn += u64::from(submitted);
-            if !submitted {
+            drawn += u64::from(submitted_slot.is_some());
+            if submitted_slot.is_none() {
                 skipped += 1;
             } else {
+                last_slot = submitted_slot;
                 // The decoded frame is on screen now; the next one has to wait
                 // for mpv to say so.
                 video_present = false;
             }
             if options.trace {
                 log(&format!(
-                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} dt={:>5.1}ms moving={moving} submitted={submitted} in_flight={} released={} skipped={skipped}",
+                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} fade={fade_now:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
                     progress.horizontal,
                     progress.vertical,
+                    submitted_slot.is_some(),
                     dt.as_secs_f64() * 1000.0,
                     pool.in_flight(),
                     client.state.releases,
@@ -495,13 +529,15 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             }
             // Nothing submitted means the pool was empty: leave `frame_pending`
             // clear so the tail asks for another frame instead of stalling.
-            frame_pending = submitted && moving;
+            frame_pending = submitted_slot.is_some() && moving;
         }
 
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving() || video_present) && !frame_pending {
+        if (animator.is_moving() || zoom.is_moving() || fade.is_moving() || video_present)
+            && !frame_pending
+        {
             surface.request_frame(&client.handle());
             surface.surface.commit();
             client.flush()?;
@@ -535,14 +571,16 @@ fn draw(
     screen: (f64, f64),
     options: &Options,
     media: Option<&Media>,
+    fade: f32,
+    previous: Option<u32>,
     want_next_frame: bool,
-) -> Result<bool, String> {
+) -> Result<Option<usize>, String> {
     let released = std::mem::take(&mut client.state.released);
     // Every buffer still on screen: the compositor is behind us. Dropping a
     // frame is the right answer — queueing them up would just add latency, and
     // the caller will keep the animation alive with a bare frame request.
     let Some(slot) = pool.acquire(&released) else {
-        return Ok(false);
+        return Ok(None);
     };
 
     // The zoom is just an animated multiplier on `scale`: the canvas, the
@@ -566,6 +604,8 @@ fn draw(
             pattern: options.pattern,
         },
         content,
+        fade,
+        previous,
     );
     frame.finish();
     if let Some(err) = gl::last_error() {
@@ -578,7 +618,7 @@ fn draw(
     let buffer = client.attach(surface, frame);
     pool.mark_submitted(slot, &buffer);
     client.flush()?;
-    Ok(true)
+    Ok(Some(slot))
 }
 
 fn log(message: &str) {
