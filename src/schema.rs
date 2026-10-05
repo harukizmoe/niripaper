@@ -323,17 +323,6 @@ pub fn keys() -> Vec<Key> {
             about: "How many bands the stripes effect breaks the edge into.",
         },
         Key {
-            name: "transition.cell",
-            kind: Kind::Float {
-                min: 0.02,
-                max: Some(0.5),
-            },
-            default: json!(transition.cell),
-            unit: None,
-            hot: true,
-            about: "How big a honeycomb cell is, as a fraction of the screen height.",
-        },
-        Key {
             name: "transition.push",
             kind: Kind::Float {
                 min: 0.0,

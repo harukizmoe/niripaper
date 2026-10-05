@@ -380,10 +380,10 @@ mod tests {
     #[test]
     fn the_transition_settings_reach_the_daemon() {
         let config = Config::parse_without_niri(
-            "[transition]\nselection = \"fixed\"\neffect = \"honeycomb\"\n\
+            "[transition]\nselection = \"fixed\"\neffect = \"zoom\"\n\
              duration_ms = 2400\ncurve = \"linear\"\nsoftness = 0.1\n\
              center = [0.2, 0.8]\nstart_radius = 0.4\npush = 1.2\nstripes = 7\n\
-             cell = 0.3\nhold_ms = 250\non_start = false\nallow_overshoot = true",
+             hold_ms = 250\non_start = false\nallow_overshoot = true",
         )
         .expect("parses");
         let mut options = Options::new("test");
@@ -391,7 +391,7 @@ mod tests {
 
         let transition = &options.transition;
         assert_eq!(transition.selection.name(), "fixed");
-        assert_eq!(transition.effect.name(), "honeycomb");
+        assert_eq!(transition.effect.name(), "zoom");
         assert_eq!(transition.duration.as_millis(), 2400);
         assert_eq!(transition.curve.name(), "linear");
         assert_eq!(transition.softness, 0.1);
@@ -399,7 +399,6 @@ mod tests {
         assert_eq!(transition.start_radius, 0.4);
         assert_eq!(transition.push, 1.2);
         assert_eq!(transition.stripes, 7);
-        assert_eq!(transition.cell, 0.3);
         assert_eq!(transition.hold.as_millis(), 250);
         assert!(!transition.on_start);
         assert!(transition.allow_overshoot);

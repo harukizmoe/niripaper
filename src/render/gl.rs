@@ -341,7 +341,7 @@ struct Uniforms {
     softness: i32,
     center: i32,
     direction: i32,
-    params: i32,
+    stripes: i32,
     push: i32,
     start_radius: i32,
 }
@@ -361,8 +361,8 @@ pub struct Blend {
     pub softness: f32,
     pub center: (f32, f32),
     pub direction: (f32, f32),
-    /// `(stripes, cell)` — read only by the effects that have a use for them.
-    pub params: (f32, f32),
+    /// How many bands `stripes` breaks the edge into.
+    pub stripes: f32,
     /// How far `portal` pushes the old frame outward; 0 makes it an iris.
     pub push: f32,
     /// How big the hole already is at t = 0, as a fraction of the screen height.
@@ -413,7 +413,7 @@ impl Renderer {
             softness: uniform(program, "u_softness"),
             center: uniform(program, "u_center"),
             direction: uniform(program, "u_direction"),
-            params: uniform(program, "u_params"),
+            stripes: uniform(program, "u_stripes"),
             push: uniform(program, "u_push"),
             start_radius: uniform(program, "u_start_radius"),
         };
@@ -469,7 +469,7 @@ impl Renderer {
                         blend.direction.0,
                         blend.direction.1,
                     );
-                    glUniform2f(self.uniforms.params, blend.params.0, blend.params.1);
+                    glUniform1f(self.uniforms.stripes, blend.stripes);
                     glUniform1f(self.uniforms.push, blend.push);
                     glUniform1f(self.uniforms.start_radius, blend.start_radius);
                 }
@@ -516,7 +516,7 @@ uniform float u_progress;
 uniform float u_softness;
 uniform vec2 u_center;
 uniform vec2 u_direction;
-uniform vec2 u_params;
+uniform float u_stripes;
 uniform float u_push;
 uniform float u_start_radius;
 out vec4 color;
@@ -575,7 +575,7 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
         // Stripes: the same edge, but each band leaves at its own moment.
         float along = dot(uv - 0.5, u_direction) + 0.5;
         vec2 across = vec2(-u_direction.y, u_direction.x);
-        float band = floor((dot(uv - 0.5, across) + 0.5) * max(u_params.x, 1.0));
+        float band = floor((dot(uv - 0.5, across) + 0.5) * max(u_stripes, 1.0));
         float stagger = 0.45;
         float local = clamp((t - hash(vec2(band, 3.0)) * stagger) / (1.0 - stagger), 0.0, 1.0);
         float band_sweep = local * (1.0 + 2.0 * edge) - edge;
@@ -605,38 +605,10 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
             old_uv = centre + (uv - centre) / (1.0 + u_push * clamp(t, 0.0, 1.0));
         }
     } else if (u_effect == 7) {
-        // Honeycomb: hexagonal cells, each opening in its own order.
-        //
-        // The cell is found by *cube* rounding — the standard hex-grid
-        // algorithm. Rounding in a sheared space, or taking the nearer of two
-        // offset square lattices, both give the nearest point under a box
-        // metric, whose cells are parallelograms and rectangles. Cube rounding
-        // is the nearest under the hex grid's own metric, so the cells are the
-        // hexagons they look like.
-        float radius = max(u_params.y, 0.01);
-        // Axial coordinates for pointy-top hexagons, then cube: x + y + z = 0.
-        vec2 axial = vec2(p.x / (1.7320508 * radius), p.y / (1.5 * radius));
-        vec3 cube = vec3(axial.x, -axial.x - axial.y, axial.y);
-        vec3 rounded = floor(cube + 0.5);
-        vec3 delta = abs(rounded - cube);
-        // Snap back to the plane: the component that moved least is the one
-        // that has to give.
-        if (delta.x > delta.y && delta.x > delta.z) {
-            rounded.x = -rounded.y - rounded.z;
-        } else if (delta.y > delta.z) {
-            rounded.y = -rounded.x - rounded.z;
-        } else {
-            rounded.z = -rounded.x - rounded.y;
-        }
-        float offset = hash(vec2(rounded.x, rounded.z));
-        float stagger = 0.6;
-        float local = clamp((t - offset * stagger) / (1.0 - stagger), 0.0, 1.0);
-        mask = smoothstep(0.5 - edge, 0.5 + edge, local);
-    } else if (u_effect == 8) {
         // Zoom: the new image arrives magnified and settles. This is where an
         // overshooting curve is visible — t past 1 pushes it the other way.
         new_uv = centre + (uv - centre) / (1.0 + 0.25 * (1.0 - t));
-    } else if (u_effect == 9) {
+    } else if (u_effect == 8) {
         // Slide: the new image comes in from the far side, the old one leaves
         // toward u_direction. Both move with the edge — that is what makes it a
         // push rather than a wipe over stationary images.

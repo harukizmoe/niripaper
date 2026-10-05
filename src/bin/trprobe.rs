@@ -5,7 +5,7 @@
 //! `trprobe /dev/dri/renderD128 /tmp/tr`.
 //!
 //! It has caught three real bugs that unit tests cannot see (a radial effect
-//! whose reach used the whole diagonal, a honeycomb built from a sheared
+//! whose reach used the whole diagonal, a hexagonal tiling built from a sheared
 //! rounding that produced parallelograms, and a texture missing
 //! `GL_TEXTURE_MIN_FILTER`, which made every snapshot sample as black). Run it
 //! after touching the shader.
@@ -71,7 +71,7 @@ fn main() -> Result<(), String> {
                 softness: settings.softness as f32,
                 center: (settings.center.0 as f32, settings.center.1 as f32),
                 direction: settings.direction.vector(),
-                params: (settings.stripes as f32, settings.cell as f32),
+                stripes: settings.stripes as f32,
                 push: settings.push as f32,
                 start_radius: settings.start_radius as f32,
             };

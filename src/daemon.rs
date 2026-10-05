@@ -741,7 +741,6 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     );
     put("transition.direction", json!(transition.direction.name()));
     put("transition.stripes", json!(transition.stripes));
-    put("transition.cell", json!(transition.cell));
     put("transition.push", json!(transition.push));
     put("transition.start_radius", json!(transition.start_radius));
     put(

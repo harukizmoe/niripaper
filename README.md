@@ -188,7 +188,7 @@ scale = 1.2
 | `[transition] softness` | how wide the moving edge is (`0` hard, `1` very soft) |
 | `[transition] center` | where radial effects start: `[x, y]` as fractions of the screen, `[0, 0]` being the top-left |
 | `[transition] direction` | which way wipes, stripes and slides go |
-| `[transition] stripes`, `cell` | bands in `stripes`; hexagon size in `honeycomb` |
+| `[transition] stripes` | how many bands the `stripes` effect breaks the edge into |
 | `[transition] push` | how far `portal` pushes the old frame outward; `0` makes it an `iris` |
 | `[transition] start_radius` | how wide the hole already is at the start (a fraction of the screen height) |
 | `[transition] hold_ms` | how long the first frame is held before the transition moves (part of `duration_ms`) |
@@ -202,8 +202,8 @@ Animations use niri's own vocabulary: each of them is either `off`, an easing
 
 The wallpaper transition is a table of its own rather than part of `[animations]`,
 because that table mirrors niri's vocabulary and niri has no wallpaper-change
-animation to mirror. The effects are `portal`, `iris`, `dissolve`, `wipe`, `stripes`,
-`honeycomb`, `zoom`, `slide`, `fade` and `none`.
+animation to mirror. The effects are `portal`, `iris`, `dissolve`, `wipe`, `stripes`, `zoom`, `slide`,
+`fade` and `none`.
 
 One constraint shapes all of them: the old side is a **frozen snapshot** and the new
 side is live, so only one decoder ever runs. That is what lets a video arrive through

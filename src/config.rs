@@ -644,7 +644,6 @@ struct RawTransition {
     center: Option<[f64; 2]>,
     direction: Option<String>,
     stripes: Option<u32>,
-    cell: Option<f64>,
     push: Option<f64>,
     start_radius: Option<f64>,
     hold_ms: Option<u64>,
@@ -718,13 +717,6 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
             "{key}.stripes must be between 2 and 64, got {stripes}"
         ));
     }
-    let cell = raw.cell.unwrap_or(defaults.cell);
-    if !(0.02..=0.5).contains(&cell) {
-        return Err(format!(
-            "{key}.cell is a fraction of the screen's height; 0.02 to 0.5, got {cell}"
-        ));
-    }
-
     let push = raw.push.unwrap_or(defaults.push);
     if !(0.0..=1.5).contains(&push) {
         return Err(format!(
@@ -765,7 +757,6 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         center: (center[0], center[1]),
         direction,
         stripes,
-        cell,
         push,
         start_radius,
         hold,

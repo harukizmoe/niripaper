@@ -173,7 +173,7 @@ scale = 1.2
 | `[transition] softness` | 移动边缘多宽（`0` 硬边，`1` 很软） |
 | `[transition] center` | 径向效果的起点：`[x, y]` 为屏幕比例，`[0, 0]` 是**左上角** |
 | `[transition] direction` | wipe/stripes/slide 的方向 |
-| `[transition] stripes`、`cell` | `stripes` 的条数；`honeycomb` 的六边形大小 |
+| `[transition] stripes` | `stripes` 把边缘拆成多少条带子 |
 | `[transition] push` | `portal` 把旧画面往外推多远；`0` 就等于 `iris` |
 | `[transition] start_radius` | 过渡开始时圆已经有的大（屏幕高度的比例） |
 | `[transition] hold_ms` | 第一帧停住多久才开始动（算在 `duration_ms` 之内） |
@@ -186,8 +186,8 @@ scale = 1.2
 `ease-out-expo`、`cubic-bezier`。
 
 换图过渡自成一段，不放进 `[animations]` —— 那张表镜像 niri 的词汇，而 niri 没有
-换图动画可镜像。效果共十个：`portal`、`iris`、`dissolve`、`wipe`、`stripes`、
-`honeycomb`、`zoom`、`slide`、`fade`、`none`。
+换图动画可镜像。效果共九个：`portal`、`iris`、`dissolve`、`wipe`、`stripes`、`zoom`、`slide`、
+`fade`、`none`。
 
 所有效果都被同一个约束塑形：**旧的一侧是冻结的快照，新的一侧是活的** ——
 任何时刻只有一个解码器在跑。所以"视频从一个扩张的圆盘里透出来、并且已经在动"

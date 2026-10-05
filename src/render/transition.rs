@@ -42,8 +42,6 @@ pub enum Effect {
     /// Like an iris, but the old frame is pushed outward as the hole opens: you
     /// move *through* it rather than watch it get cut away.
     Portal,
-    /// Hexagonal cells, each opening in its own order.
-    Honeycomb,
     /// The new image arrives slightly magnified and settles.
     Zoom,
     /// The new image slides in, the old one slides out.
@@ -52,17 +50,8 @@ pub enum Effect {
 
 impl Effect {
     /// Every effect, in shader order. This is the list a panel offers.
-    pub const NAMES: [&'static str; 10] = [
-        "none",
-        "fade",
-        "dissolve",
-        "wipe",
-        "stripes",
-        "iris",
-        "portal",
-        "honeycomb",
-        "zoom",
-        "slide",
+    pub const NAMES: [&'static str; 9] = [
+        "none", "fade", "dissolve", "wipe", "stripes", "iris", "portal", "zoom", "slide",
     ];
 
     pub fn name(self) -> &'static str {
@@ -78,7 +67,6 @@ impl Effect {
             "stripes" => Self::Stripes,
             "iris" => Self::Iris,
             "portal" => Self::Portal,
-            "honeycomb" => Self::Honeycomb,
             "zoom" => Self::Zoom,
             "slide" => Self::Slide,
             other => {
@@ -100,9 +88,8 @@ impl Effect {
             Self::Stripes => 4,
             Self::Iris => 5,
             Self::Portal => 6,
-            Self::Honeycomb => 7,
-            Self::Zoom => 8,
-            Self::Slide => 9,
+            Self::Zoom => 7,
+            Self::Slide => 8,
         }
     }
 }
@@ -211,8 +198,6 @@ pub struct Settings {
     pub direction: Direction,
     /// How many bands `stripes` breaks the edge into.
     pub stripes: u32,
-    /// How big a `honeycomb` cell is, as a fraction of the screen's height.
-    pub cell: f64,
     /// How far `portal` pushes the old frame outward as the hole opens, as a
     /// multiple of its distance from the centre. `0` makes it an iris.
     pub push: f64,
@@ -249,10 +234,6 @@ impl Default for Settings {
             center: (0.5, 0.5),
             direction: Direction::Right,
             stripes: 12,
-            // A hexagon radius, as a fraction of the screen height: 0.05 is about
-            // thirteen rows on a 1440-tall screen, which reads as a honeycomb
-            // rather than as a handful of tiles.
-            cell: 0.05,
             // Enough that portal and iris are told apart at a glance. Below about
             // 0.3 the push reads as "a slight zoom" on a photograph.
             push: 0.55,
@@ -392,7 +373,7 @@ impl Transition {
             softness: self.settings.softness as f32,
             center: (self.settings.center.0 as f32, self.settings.center.1 as f32),
             direction: self.settings.direction.vector(),
-            params: (self.settings.stripes as f32, self.settings.cell as f32),
+            stripes: self.settings.stripes as f32,
             push: self.settings.push as f32,
             start_radius: self.settings.start_radius as f32,
         })
@@ -457,7 +438,6 @@ mod tests {
             center: (0.5, 0.5),
             direction: Direction::Right,
             stripes: 12,
-            cell: 0.12,
             push: 0.55,
             start_radius: 0.0,
             hold: Duration::ZERO,
