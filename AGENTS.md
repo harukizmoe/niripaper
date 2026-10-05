@@ -73,3 +73,8 @@ cargo test
   改一份就要同步另一份。措辞用直白陈述，不要俏皮话，不要写未实现的功能。
 - `src/bin/eglpin.rs`、`src/bin/m0b.rs` 是 M0 阶段的诊断探针（EGL 按设备绑定、dmabuf 通路），
   不是给使用者的工具，但**保留**：排查"这块 GPU 上 EGL/GBM 能不能用"时仍然有用。
+- `src/bin/trprobe.rs` 同样保留：把 10 个换图过渡效果各渲一帧到离屏 dmabuf 并写成 PNG，
+  `trprobe /dev/dri/renderD128 /tmp/tr`。**改 shader 之后用它看一眼** —— 单元测试看不见
+  shader，而它已经抓到过三个真 bug：径向效果的 reach 误用整条对角线、honeycomb 用剪切取整
+  得到的是平行四边形、以及纹理漏设 `GL_TEXTURE_MIN_FILTER` 导致快照采样恒为黑（后者意味着
+  换图过渡一直在从黑淡入，只验 fade 数值是看不出来的）。

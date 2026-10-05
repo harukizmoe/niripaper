@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 
 use crate::config::{Animations, Config};
 use crate::render::anim::{Animation, Curve};
+use crate::render::transition::{Direction, Effect, Selection, Settings};
 
 /// What a key holds. A panel switches on this to pick a widget.
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +47,15 @@ pub enum Kind {
     /// One of `options`.
     Enum {
         options: Vec<String>,
+    },
+    /// Any number of `options` (the value is an array).
+    MultiEnum {
+        options: Vec<String>,
+    },
+    /// Two numbers, `[x, y]`.
+    Pair {
+        min: f64,
+        max: f64,
     },
     /// An animation: `off = true`, or `duration_ms` + `curve`, or
     /// `spring { damping_ratio, stiffness, epsilon }`. The three forms are
@@ -80,6 +90,7 @@ pub fn keys() -> Vec<Key> {
     // default cannot leave the schema behind.
     let config = Config::default();
     let animations = Animations::default();
+    let transition = Settings::default();
     let curves = curve_names();
 
     let animation =
@@ -197,12 +208,119 @@ pub fn keys() -> Vec<Key> {
             animation_value(&animations.overview_open_close.animation),
             "The overview transition. Follows niri's own value unless follow_niri is off.",
         ),
-        animation(
-            "animations.wallpaper-change",
-            curves,
-            animation_value(&animations.wallpaper_change),
-            "The cross-fade when the wallpaper changes.",
-        ),
+        Key {
+            name: "transition.selection",
+            kind: Kind::Enum {
+                options: names(&Selection::NAMES),
+            },
+            default: json!(transition.selection.name()),
+            unit: None,
+            hot: true,
+            about: "How the effect is chosen each time the wallpaper changes.",
+        },
+        Key {
+            name: "transition.effect",
+            kind: Kind::Enum {
+                options: names(&Effect::NAMES),
+            },
+            default: json!(transition.effect.name()),
+            unit: None,
+            hot: true,
+            about: "The effect used when selection is \"fixed\"; \"none\" is a hard cut.",
+        },
+        Key {
+            name: "transition.effects",
+            kind: Kind::MultiEnum {
+                options: names(&Effect::NAMES),
+            },
+            default: json!(effect_names(&transition.effects)),
+            unit: None,
+            hot: true,
+            about: "The pool that \"rotate\" and \"random\" pick from.",
+        },
+        Key {
+            name: "transition.duration_ms",
+            kind: Kind::Int { min: 1, max: None },
+            default: json!(transition.duration.as_millis() as u64),
+            unit: Some("ms"),
+            hot: true,
+            about: "How long a transition takes.",
+        },
+        Key {
+            name: "transition.curve",
+            kind: Kind::Enum { options: curves },
+            default: json!(transition.curve.name()),
+            unit: None,
+            hot: true,
+            about: "Easing for the transition; \"cubic-bezier\" also needs cubic_bezier.",
+        },
+        Key {
+            name: "transition.allow_overshoot",
+            kind: Kind::Bool,
+            default: json!(transition.allow_overshoot),
+            unit: None,
+            hot: true,
+            about: "Let the curve go past 1 (and below 0), so an effect can bounce.",
+        },
+        Key {
+            name: "transition.softness",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(transition.softness),
+            unit: None,
+            hot: true,
+            about: "How wide the moving edge is: 0 is hard, 1 is very soft.",
+        },
+        Key {
+            name: "transition.center",
+            kind: Kind::Pair { min: 0.0, max: 1.0 },
+            default: json!([transition.center.0, transition.center.1]),
+            unit: None,
+            hot: true,
+            about: "Where iris, portal and zoom start, as a fraction of the screen.",
+        },
+        Key {
+            name: "transition.direction",
+            kind: Kind::Enum {
+                options: names(&Direction::NAMES),
+            },
+            default: json!(transition.direction.name()),
+            unit: None,
+            hot: true,
+            about: "Which way wipe, stripes and slide go.",
+        },
+        Key {
+            name: "transition.stripes",
+            kind: Kind::Int {
+                min: 2,
+                max: Some(64),
+            },
+            default: json!(transition.stripes),
+            unit: None,
+            hot: true,
+            about: "How many bands the stripes effect breaks the edge into.",
+        },
+        Key {
+            name: "transition.cell",
+            kind: Kind::Float {
+                min: 0.02,
+                max: Some(0.5),
+            },
+            default: json!(transition.cell),
+            unit: None,
+            hot: true,
+            about: "How big a honeycomb cell is, as a fraction of the screen height.",
+        },
+        Key {
+            name: "transition.on_start",
+            kind: Kind::Bool,
+            default: json!(transition.on_start),
+            unit: None,
+            hot: true,
+            about: "Play one when the daemon starts, so logging in is not a hard cut.",
+        },
     ]
 }
 
@@ -214,6 +332,17 @@ pub fn schema() -> Value {
 /// niri's curve names, from the one place that parses them.
 pub fn curve_names() -> Vec<String> {
     Curve::NAMES.iter().map(|name| (*name).to_owned()).collect()
+}
+
+fn names(list: &[&'static str]) -> Vec<String> {
+    list.iter().map(|name| (*name).to_owned()).collect()
+}
+
+fn effect_names(effects: &[Effect]) -> Vec<String> {
+    effects
+        .iter()
+        .map(|effect| effect.name().to_owned())
+        .collect()
 }
 
 /// An animation spelled the way the config file would: for the schema's defaults
@@ -279,7 +408,11 @@ mod tests {
             .into_iter()
             .filter(|key| matches!(key.kind, Kind::Animation { .. }))
             .collect();
-        assert_eq!(animations.len(), 3, "parallax, overview, wallpaper change");
+        assert_eq!(
+            animations.len(),
+            2,
+            "parallax and overview-open-close; the wallpaper transition has its own keys"
+        );
         for key in animations {
             let text = format!("[{}]\n{}\n", key.name, inline(&key.default));
             Config::parse_without_niri(&text).unwrap_or_else(|e| panic!("{text:?}: {e}"));

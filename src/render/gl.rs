@@ -119,6 +119,22 @@ extern "C" {
     fn glDrawArrays(mode: u32, first: i32, count: i32);
 }
 
+/// The parameters every 2D texture here wants.
+///
+/// The min filter has to be a non-mipmapping one: the default is
+/// `NEAREST_MIPMAP_LINEAR`, which makes a texture with only level 0
+/// **incomplete** — and an incomplete texture samples as black, with no GL error
+/// anywhere to say why. `CLAMP_TO_EDGE` because the transition's lookups leave
+/// [0, 1] on purpose (a slide, a zoom) and wrapping would repeat the frame.
+fn set_2d_parameters() {
+    unsafe {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+    }
+}
+
 /// Create one texture name.
 pub fn gen_texture() -> u32 {
     let mut name = 0;
@@ -181,10 +197,7 @@ pub fn tex_image_2d_rgba(width: u32, height: u32) {
             GL_UNSIGNED_BYTE,
             std::ptr::null(),
         );
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+        set_2d_parameters();
     }
 }
 
@@ -322,7 +335,32 @@ struct Uniforms {
     wallpaper: i32,
     has_wallpaper: i32,
     previous: i32,
-    fade: i32,
+    blend: i32,
+    effect: i32,
+    progress: i32,
+    softness: i32,
+    center: i32,
+    direction: i32,
+    params: i32,
+}
+
+/// What the shader needs to blend the previous frame in.
+///
+/// Plain data because this *is* the shader's contract and nothing else. It comes
+/// from [`transition::Transition`](crate::render::transition::Transition).
+#[derive(Debug, Clone, Copy)]
+pub struct Blend {
+    /// The snapshot to blend from.
+    pub previous: u32,
+    /// `Effect::index`.
+    pub effect: i32,
+    /// Eased progress; past 1 when overshoot is allowed.
+    pub progress: f32,
+    pub softness: f32,
+    pub center: (f32, f32),
+    pub direction: (f32, f32),
+    /// `(stripes, cell)` — read only by the effects that have a use for them.
+    pub params: (f32, f32),
 }
 
 /// A shader program plus the empty VAO core-profile GL insists on.
@@ -363,7 +401,13 @@ impl Renderer {
             wallpaper: uniform(program, "u_wallpaper"),
             has_wallpaper: uniform(program, "u_has_wallpaper"),
             previous: uniform(program, "u_previous"),
-            fade: uniform(program, "u_fade"),
+            blend: uniform(program, "u_blend"),
+            effect: uniform(program, "u_effect"),
+            progress: uniform(program, "u_progress"),
+            softness: uniform(program, "u_softness"),
+            center: uniform(program, "u_center"),
+            direction: uniform(program, "u_direction"),
+            params: uniform(program, "u_params"),
         };
         Ok(Self {
             program,
@@ -372,10 +416,9 @@ impl Renderer {
         })
     }
 
-    /// Draw the pattern over the whole current framebuffer.
-    /// `fade` is the new content's weight (1.0 = no cross-fade); `previous` is
-    /// the snapshot to blend from while it is below 1.0.
-    pub fn draw(&self, view: View, content: Content<'_>, fade: f32, previous: Option<u32>) {
+    /// Draw the pattern over the whole current framebuffer. `blend` is the
+    /// wallpaper transition in flight, if there is one.
+    pub fn draw(&self, view: View, content: Content<'_>, blend: Option<&Blend>) {
         unsafe {
             glBindVertexArray(self.vao);
             glUseProgram(self.program);
@@ -403,19 +446,27 @@ impl Renderer {
                     glUniform1i(self.uniforms.has_wallpaper, 0);
                 }
             }
-            // Without a snapshot there is nothing to blend from, and an unbound
-            // sampler would read undefined memory — so the fade is forced to
-            // "already finished" in that case.
-            let fade = match previous {
-                Some(texture) if fade < 1.0 => {
+            match blend {
+                Some(blend) => {
                     glActiveTexture(GL_TEXTURE1);
-                    glBindTexture(GL_TEXTURE_2D, texture);
+                    glBindTexture(GL_TEXTURE_2D, blend.previous);
                     glUniform1i(self.uniforms.previous, 1);
-                    fade
+                    glUniform1i(self.uniforms.blend, 1);
+                    glUniform1i(self.uniforms.effect, blend.effect);
+                    glUniform1f(self.uniforms.progress, blend.progress);
+                    glUniform1f(self.uniforms.softness, blend.softness);
+                    glUniform2f(self.uniforms.center, blend.center.0, blend.center.1);
+                    glUniform2f(
+                        self.uniforms.direction,
+                        blend.direction.0,
+                        blend.direction.1,
+                    );
+                    glUniform2f(self.uniforms.params, blend.params.0, blend.params.1);
                 }
-                _ => 1.0,
-            };
-            glUniform1f(self.uniforms.fade, fade);
+                // Nothing to blend from. Say so explicitly rather than leaning on
+                // a sentinel progress: an unbound sampler reads undefined memory.
+                None => glUniform1i(self.uniforms.blend, 0),
+            }
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glActiveTexture(GL_TEXTURE0);
             glBindVertexArray(0);
@@ -445,15 +496,126 @@ uniform vec2 u_offset;
 uniform int u_pattern;
 uniform sampler2D u_wallpaper;
 uniform int u_has_wallpaper;
-// Cross-fade between the previous frame and this one. `uv` is the screen
-// coordinate, so any pair of sources (still, video, pattern) blends the same
-// way — no second decoder, no per-source special case.
+// The wallpaper transition: the previous *rendered* frame, and how to bring the
+// new content in. `uv` is the screen coordinate, so any pair of sources (still,
+// video, pattern) blends identically — no second decoder, no per-source case.
 uniform sampler2D u_previous;
-uniform float u_fade;
+uniform int u_blend;
+uniform int u_effect;
+uniform float u_progress;
+uniform float u_softness;
+uniform vec2 u_center;
+uniform vec2 u_direction;
+uniform vec2 u_params;
 out vec4 color;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+// A transition between the previous frame and this one.
+//
+// Fills in the mix amount and the two lookups, so every effect ends at the same
+// `mix`: a mask, a pair of displacements, or both. Effects may only move the
+// *new* side or cut the old one away — the old side is a frozen snapshot, so
+// animating it would be animating a photograph.
+//
+// `u_effect` numbering is `Effect::index` in render/transition.rs; the two have
+// to change together.
+void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
+    float t = u_progress;
+    mask = clamp(t, 0.0, 1.0);
+    old_uv = uv;
+    new_uv = uv;
+
+    // Distances are measured in aspect-corrected space, or a circle comes out an
+    // ellipse on a 16:9 screen.
+    float aspect = u_screen.x / u_screen.y;
+    vec2 p = (uv - u_center) * vec2(aspect, 1.0);
+
+    // The moving edge's half-width. Softness is a fraction of the screen: the
+    // 0.3 default is a visible gradient, 1 is most of the way across.
+    float edge = 0.01 + u_softness * 0.25;
+    // The sweep runs from -edge to 1+edge, so t=0 reveals nothing and t=1 leaves
+    // no edge on screen.
+    float sweep = t * (1.0 + 2.0 * edge) - edge;
+
+    if (u_effect == 2) {
+        // Dissolve: grains of the new image appear all over at once.
+        float grain = hash(floor(uv * u_screen / 3.0));
+        mask = smoothstep(t - u_softness, t + u_softness, grain);
+    } else if (u_effect == 3) {
+        // Wipe: a straight edge sweeping along u_direction.
+        float along = dot(uv - 0.5, u_direction) + 0.5;
+        mask = 1.0 - smoothstep(sweep - edge, sweep + edge, along);
+    } else if (u_effect == 4) {
+        // Stripes: the same edge, but each band leaves at its own moment.
+        float along = dot(uv - 0.5, u_direction) + 0.5;
+        vec2 across = vec2(-u_direction.y, u_direction.x);
+        float band = floor((dot(uv - 0.5, across) + 0.5) * max(u_params.x, 1.0));
+        float stagger = 0.45;
+        float local = clamp((t - hash(vec2(band, 3.0)) * stagger) / (1.0 - stagger), 0.0, 1.0);
+        float band_sweep = local * (1.0 + 2.0 * edge) - edge;
+        mask = 1.0 - smoothstep(band_sweep - edge, band_sweep + edge, along);
+    } else if (u_effect == 5 || u_effect == 6) {
+        // Iris, and the portal below it: a hole opening at u_center.
+        // `p` spans half the screen either way, so the farthest corner is half
+        // the diagonal — the full diagonal would have the circle cover
+        // everything a third of the way in.
+        float reach = 0.5 * length(vec2(aspect, 1.0));
+        float radius = sweep * reach;
+        mask = 1.0 - smoothstep(radius - edge, radius + edge, length(p));
+        if (u_effect == 6) {
+            // Portal: the old frame is pushed outward as the hole opens, so you
+            // move *through* it rather than watch it get cut away. The new side
+            // is live, which is the point: a video arrives already moving.
+            old_uv = u_center + (uv - u_center) / (1.0 + 0.35 * clamp(t, 0.0, 1.0));
+        }
+    } else if (u_effect == 7) {
+        // Honeycomb: hexagonal cells, each opening in its own order.
+        //
+        // The cell is found by *cube* rounding — the standard hex-grid
+        // algorithm. Rounding in a sheared space, or taking the nearer of two
+        // offset square lattices, both give the nearest point under a box
+        // metric, whose cells are parallelograms and rectangles. Cube rounding
+        // is the nearest under the hex grid's own metric, so the cells are the
+        // hexagons they look like.
+        float radius = max(u_params.y, 0.01);
+        // Axial coordinates for pointy-top hexagons, then cube: x + y + z = 0.
+        vec2 axial = vec2(p.x / (1.7320508 * radius), p.y / (1.5 * radius));
+        vec3 cube = vec3(axial.x, -axial.x - axial.y, axial.y);
+        vec3 rounded = floor(cube + 0.5);
+        vec3 delta = abs(rounded - cube);
+        // Snap back to the plane: the component that moved least is the one
+        // that has to give.
+        if (delta.x > delta.y && delta.x > delta.z) {
+            rounded.x = -rounded.y - rounded.z;
+        } else if (delta.y > delta.z) {
+            rounded.y = -rounded.x - rounded.z;
+        } else {
+            rounded.z = -rounded.x - rounded.y;
+        }
+        float offset = hash(vec2(rounded.x, rounded.z));
+        float stagger = 0.6;
+        float local = clamp((t - offset * stagger) / (1.0 - stagger), 0.0, 1.0);
+        mask = smoothstep(0.5 - edge, 0.5 + edge, local);
+    } else if (u_effect == 8) {
+        // Zoom: the new image arrives magnified and settles. This is where an
+        // overshooting curve is visible — t past 1 pushes it the other way.
+        new_uv = u_center + (uv - u_center) / (1.0 + 0.25 * (1.0 - t));
+    } else if (u_effect == 9) {
+        // Slide: the new image comes in from the far side, the old one leaves
+        // toward u_direction. Both move with the edge — that is what makes it a
+        // push rather than a wipe over stationary images.
+        old_uv = uv - u_direction * t;
+        new_uv = uv + u_direction * (1.0 - t);
+        // A push has no soft edge to give. The two frames are exactly adjacent —
+        // the old is defined where it has not slid off, the new where it has
+        // arrived — so blending across the seam would mix the old's clamped edge
+        // pixel with the new's. The seam is at `t`, and it is a step.
+        float along = dot(uv - 0.5, u_direction) + 0.5;
+        mask = 1.0 - smoothstep(t - 0.001, t + 0.001, along);
+    }
 }
 
 void main() {
@@ -461,37 +623,53 @@ void main() {
     vec2 origin = (canvas - u_screen) * 0.5 + u_offset;
     vec2 c = (uv * u_screen + origin) / canvas;
 
-    if (u_has_wallpaper == 1) {
-        // The texture is already canvas-sized and cover-cropped, so this is a
-        // straight 1:1 lookup.
-        color = vec4(texture(u_wallpaper, c).rgb, 1.0);
-        if (u_fade < 1.0) {
-            color = vec4(mix(texture(u_previous, uv).rgb, color.rgb, u_fade), 1.0);
+    vec2 new_c = c;
+    vec3 previous_color = vec3(0.0);
+    float mask = 1.0;
+    if (u_blend == 1) {
+        vec2 old_uv;
+        vec2 new_uv;
+        transition(mask, old_uv, new_uv);
+        // A slide (and a portal's push) moves the old frame *off* the screen.
+        // There is no old content out there, and the sampler would hand back the
+        // stretched edge pixel — so where the lookup leaves the frame, the new
+        // side simply shows.
+        if (any(lessThan(old_uv, vec2(0.0))) || any(greaterThan(old_uv, vec2(1.0)))) {
+            mask = 1.0;
         }
-        return;
+        previous_color = texture(u_previous, old_uv).rgb;
+        // The lookups are in screen space; the canvas is `scale` times bigger, so
+        // a screen displacement is that many canvas pixels. Sampling outside the
+        // frame clamps to the edge, which is harmless: the mask hides exactly
+        // those pixels.
+        new_c = c + (new_uv - uv) * u_scale;
     }
 
     vec3 base;
-    if (u_pattern == 1) {
-        vec2 cell = floor(c * vec2(96.0, 54.0));
+    if (u_has_wallpaper == 1) {
+        // The texture is already canvas-sized and cover-cropped, so this is a
+        // straight 1:1 lookup.
+        base = texture(u_wallpaper, new_c).rgb;
+    } else if (u_pattern == 1) {
+        vec2 cell = floor(new_c * vec2(96.0, 54.0));
         float h = hash(cell);
         base = vec3(h, fract(h * 7.13), fract(h * 13.7));
     } else {
-        int band = int(clamp(c.x, 0.0, 0.999) * 4.0);
+        int band = int(clamp(new_c.x, 0.0, 0.999) * 4.0);
         base = band == 0 ? vec3(1.0, 0.0, 0.0)
              : band == 1 ? vec3(0.0, 1.0, 0.0)
              : band == 2 ? vec3(0.0, 0.0, 1.0)
                          : vec3(1.0, 1.0, 0.0);
+        base *= 0.35 + 0.65 * new_c.y;
+        // The canvas edge, visible at the extremes of the travel.
+        float edge = min(min(new_c.x, 1.0 - new_c.x), min(new_c.y, 1.0 - new_c.y));
+        if (edge < 0.002) {
+            base = vec3(1.0);
+        }
     }
-    base *= 0.35 + 0.65 * c.y;
 
-    // The canvas edge, visible at the extremes of the travel.
-    float edge = min(min(c.x, 1.0 - c.x), min(c.y, 1.0 - c.y));
-    if (edge < 0.002) {
-        base = vec3(1.0);
-    }
-    if (u_fade < 1.0) {
-        base = mix(texture(u_previous, uv).rgb, base, u_fade);
+    if (u_blend == 1) {
+        base = mix(previous_color, base, mask);
     }
     color = vec4(base, 1.0);
 }
@@ -547,10 +725,37 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// An empty snapshot. Its contents are undefined until `capture` fills them,
+    /// which is why there is no way to draw from one that has not been captured.
     pub fn new(width: u32, height: u32) -> Self {
+        Self::allocate(width, height, std::ptr::null())
+    }
+
+    /// A snapshot that starts black, for a transition with nothing to fade from:
+    /// the one played at startup. Costs a zeroed buffer once, which is the price
+    /// of the shader never sampling undefined memory.
+    pub fn new_black(width: u32, height: u32) -> Self {
+        let zeros = vec![0u8; width as usize * height as usize * 4];
+        Self::allocate(width, height, zeros.as_ptr().cast())
+    }
+
+    fn allocate(width: u32, height: u32, pixels: *const std::ffi::c_void) -> Self {
         let texture = gen_texture();
         bind_texture(GL_TEXTURE_2D, texture);
-        tex_image_2d_rgba(width, height);
+        set_2d_parameters();
+        unsafe {
+            glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_RGBA8 as i32,
+                width as i32,
+                height as i32,
+                0,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                pixels,
+            );
+        }
         bind_texture(GL_TEXTURE_2D, 0);
         Self {
             texture,

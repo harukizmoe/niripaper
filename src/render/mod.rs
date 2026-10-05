@@ -7,4 +7,5 @@ pub mod gbm;
 pub mod gl;
 pub mod image;
 pub mod layer;
+pub mod transition;
 pub mod video;

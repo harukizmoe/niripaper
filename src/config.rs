@@ -31,6 +31,7 @@ use serde::Deserialize;
 
 use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_SCALE, DEFAULT_WORKSPACE_SPAN, MAX_SCALE};
 use crate::render::anim::{Animation, Curve, Spring};
+use crate::render::transition::{Direction, Effect, Selection, Settings};
 
 /// The daemon's layer-shell namespace, and the name users match in
 /// `~/.config/niri/rules.kdl` (§2).
@@ -51,13 +52,6 @@ pub const DEFAULT_OVERVIEW_ANIMATION: Animation = Animation::Spring(Spring {
     epsilon: 0.0001,
 });
 
-/// A cross-fade has nothing to ease, so linear is the honest default. 1500 ms is
-/// long enough to read as a deliberate transition rather than a flicker, which
-/// is the whole point of having one (`HANDOFF.md` §2).
-pub fn default_wallpaper_change() -> Animation {
-    Animation::easing(Curve::Linear, std::time::Duration::from_millis(1500))
-}
-
 /// A validated configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -71,6 +65,8 @@ pub struct Config {
     pub namespace: String,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
+    /// The transition when the wallpaper changes.
+    pub transition: Settings,
     /// Static wallpaper for every output that does not override it.
     pub wallpaper: Option<PathBuf>,
     /// Per-output overrides.
@@ -86,6 +82,7 @@ impl Default for Config {
             video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             animations: Animations::default(),
+            transition: Settings::default(),
             wallpaper: None,
             outputs: BTreeMap::new(),
         }
@@ -99,9 +96,6 @@ pub struct Animations {
     pub parallax: Animation,
     /// The overview transition, with its target zoom.
     pub overview_open_close: OverviewAnimation,
-    /// The cross-fade when the wallpaper changes. Linear by default: a fade has
-    /// nothing to ease, and 1500 ms reads as a deliberate transition.
-    pub wallpaper_change: Animation,
     /// niri's `slowdown`: divides elapsed time, so > 1 slows everything down.
     pub slowdown: f64,
     /// Whether the shared animations were read from niri's config.
@@ -126,7 +120,6 @@ impl Default for Animations {
                 animation: DEFAULT_OVERVIEW_ANIMATION,
             },
             slowdown: 1.0,
-            wallpaper_change: default_wallpaper_change(),
             follow_niri: true,
             off: false,
             from_niri: Vec::new(),
@@ -308,6 +301,10 @@ impl Config {
             }
             config.namespace = namespace;
         }
+        // The global `off` is an animation switch, and the wallpaper transition
+        // is an animation: turning everything off has to turn this off too.
+        config.transition =
+            resolve_transition(&raw.transition, raw.animations.off.unwrap_or(false))?;
         for (name, output) in raw.outputs {
             if let Some(scale) = output.scale {
                 check_scale(&format!("outputs.{name}.scale"), scale)?;
@@ -477,14 +474,6 @@ fn resolve_animations(
         None => defaults.parallax,
     };
 
-    // Not from niri: it has no such animation, so this is ours alone.
-    let wallpaper_change =
-        match explicit_animation("animations.wallpaper-change", raw.wallpaper_change.as_ref())? {
-            Some(animation) => animation,
-            None if global_off => Animation::Off,
-            None => defaults.wallpaper_change,
-        };
-
     let overview = raw.overview_open_close.as_ref();
     let zoom = match overview.and_then(|o| o.zoom) {
         Some(zoom) => check_overview_zoom(zoom)?,
@@ -510,7 +499,6 @@ fn resolve_animations(
 
     Ok(Animations {
         parallax,
-        wallpaper_change,
         overview_open_close: OverviewAnimation {
             zoom,
             animation: overview_animation,
@@ -620,8 +608,6 @@ struct RawAnimations {
     parallax: Option<RawAnimation>,
     #[serde(rename = "overview-open-close")]
     overview_open_close: Option<RawOverviewAnimation>,
-    #[serde(rename = "wallpaper-change")]
-    wallpaper_change: Option<RawAnimation>,
 }
 
 /// One animation block: `off`, an easing, or a spring.
@@ -644,6 +630,119 @@ struct RawSpring {
     epsilon: f64,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTransition {
+    selection: Option<String>,
+    effect: Option<String>,
+    effects: Option<Vec<String>>,
+    duration_ms: Option<u64>,
+    curve: Option<String>,
+    cubic_bezier: Option<[f64; 4]>,
+    allow_overshoot: Option<bool>,
+    softness: Option<f64>,
+    center: Option<[f64; 2]>,
+    direction: Option<String>,
+    stripes: Option<u32>,
+    cell: Option<f64>,
+    on_start: Option<bool>,
+}
+
+/// Validate `[transition]`. Every message names the key, because this is the
+/// table a panel writes and a typo there has to be findable.
+fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings, String> {
+    let defaults = Settings::default();
+    let key = "transition";
+
+    let selection = match &raw.selection {
+        Some(name) => Selection::parse(name).map_err(|e| format!("{key}.selection: {e}"))?,
+        None => defaults.selection,
+    };
+    let effect = match &raw.effect {
+        Some(name) => Effect::parse(name).map_err(|e| format!("{key}.effect: {e}"))?,
+        None => defaults.effect,
+    };
+    let effects = match &raw.effects {
+        Some(names) => names
+            .iter()
+            .map(|name| Effect::parse(name).map_err(|e| format!("{key}.effects: {e}")))
+            .collect::<Result<Vec<_>, _>>()?,
+        None => defaults.effects.clone(),
+    };
+    if selection != Selection::Fixed && effects.is_empty() {
+        return Err(format!(
+            "{key}.effects is empty, but selection = {:?} has to pick from it",
+            selection.name()
+        ));
+    }
+
+    let duration = match raw.duration_ms {
+        Some(0) => {
+            return Err(format!(
+                "{key}.duration_ms must be greater than 0 (use effect = \"none\" for a hard cut)"
+            ))
+        }
+        Some(ms) => std::time::Duration::from_millis(ms),
+        None => defaults.duration,
+    };
+    let curve = match &raw.curve {
+        Some(name) => {
+            Curve::parse(name, raw.cubic_bezier).map_err(|e| format!("{key}.curve: {e}"))?
+        }
+        None => defaults.curve,
+    };
+
+    let softness = raw.softness.unwrap_or(defaults.softness);
+    if !(0.0..=1.0).contains(&softness) {
+        return Err(format!(
+            "{key}.softness must be between 0 (a hard edge) and 1, got {softness}"
+        ));
+    }
+    let center = raw.center.unwrap_or([defaults.center.0, defaults.center.1]);
+    if center.iter().any(|axis| !(0.0..=1.0).contains(axis)) {
+        return Err(format!(
+            "{key}.center is a fraction of the screen, so both axes must be between 0 and 1, got {:?}",
+            center
+        ));
+    }
+    let direction = match &raw.direction {
+        Some(name) => Direction::parse(name).map_err(|e| format!("{key}.direction: {e}"))?,
+        None => defaults.direction,
+    };
+    let stripes = raw.stripes.unwrap_or(defaults.stripes);
+    if !(2..=64).contains(&stripes) {
+        return Err(format!(
+            "{key}.stripes must be between 2 and 64, got {stripes}"
+        ));
+    }
+    let cell = raw.cell.unwrap_or(defaults.cell);
+    if !(0.02..=0.5).contains(&cell) {
+        return Err(format!(
+            "{key}.cell is a fraction of the screen's height; 0.02 to 0.5, got {cell}"
+        ));
+    }
+
+    Ok(Settings {
+        // A hard cut is the honest reading of "no animations": nothing to pick.
+        selection: if global_off {
+            Selection::Fixed
+        } else {
+            selection
+        },
+        effect: if global_off { Effect::None } else { effect },
+        effects,
+        duration,
+        curve,
+        allow_overshoot: raw.allow_overshoot.unwrap_or(defaults.allow_overshoot),
+        softness,
+        center: (center[0], center[1]),
+        direction,
+        stripes,
+        cell,
+        on_start: raw.on_start.unwrap_or(defaults.on_start),
+    })
+}
+
 /// The overview transition: an animation block plus its target zoom.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -663,6 +762,8 @@ struct RawConfig {
     namespace: Option<String>,
     #[serde(default)]
     animations: RawAnimations,
+    #[serde(default)]
+    transition: RawTransition,
     wallpaper: Option<PathBuf>,
     #[serde(default)]
     outputs: BTreeMap<String, OutputOverride>,

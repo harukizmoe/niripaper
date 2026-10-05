@@ -152,6 +152,14 @@ curve = "ease-out-cubic"
 [animations.overview-open-close]
 zoom = 0.96           # 1.0 turns the effect off
 
+[transition]
+selection = "rotate"                  # fixed | rotate | random
+effects = ["portal", "iris", "dissolve"]
+duration_ms = 1500
+curve = "ease-out-cubic"
+softness = 0.3                        # 0 is a hard edge, 1 is very soft
+on_start = true                       # play one when the daemon starts
+
 # Per-output overrides — anything not listed here is inherited from above.
 [outputs."DP-1"]
 scale = 1.2
@@ -171,12 +179,33 @@ scale = 1.2
 | `[animations] slowdown` | stretch every animation's timeline |
 | `[animations.parallax]` | how the wallpaper moves when you move |
 | `[animations.overview-open-close]` | the overview transition: a `zoom` plus a spring or a curve |
+| `[transition] selection` | how the effect is chosen each time: `fixed`, `rotate` or `random` |
+| `[transition] effect`, `effects` | the effect used when `fixed`, and the pool `rotate` and `random` pick from |
+| `[transition] duration_ms`, `curve` | how long it takes and how it is eased |
+| `[transition] softness` | how wide the moving edge is (`0` hard, `1` very soft) |
+| `[transition] center`, `direction` | where radial effects start; which way wipes, stripes and slides go |
+| `[transition] stripes`, `cell` | bands in `stripes`; hexagon size in `honeycomb` |
+| `[transition] allow_overshoot`, `on_start` | let the curve bounce; play one at startup |
 | `[outputs."NAME"]` | per-output overrides of any of the above |
 
 Animations use niri's own vocabulary: each of them is either `off`, an easing
 (`duration_ms` plus a `curve`), or a `spring` (`damping_ratio`, `stiffness`,
 `epsilon`). The `curve` names are niri's: `linear`, `ease-out-quad`,
 `ease-out-cubic`, `ease-out-expo`, `cubic-bezier`.
+
+The wallpaper transition is a table of its own rather than part of `[animations]`,
+because that table mirrors niri's vocabulary and niri has no wallpaper-change
+animation to mirror. The effects are `portal`, `iris`, `dissolve`, `wipe`, `stripes`,
+`honeycomb`, `zoom`, `slide`, `fade` and `none`.
+
+One constraint shapes all of them: the old side is a **frozen snapshot** and the new
+side is live, so only one decoder ever runs. That is what lets a video arrive through
+a portal that is already moving, and it is why every effect costs one fragment pass
+however elaborate it looks. `softness` widens the moving edge — except in `slide`,
+where the two frames are exactly adjacent and the seam is a step.
+
+`niripaper schema` lists every key above, with its type, bounds and whether editing
+the file while the daemon runs takes effect.
 
 With `follow_niri = true`, the overview transition takes its parameters from niri's
 config, so changing niri's settings changes the wallpaper's motion as well. Anything

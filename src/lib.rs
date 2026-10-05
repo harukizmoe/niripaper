@@ -7,7 +7,6 @@
 //! choose which GPU renders an output.
 
 pub mod config;
-pub mod crossfade;
 pub mod daemon;
 pub mod gpu;
 pub mod ipc;

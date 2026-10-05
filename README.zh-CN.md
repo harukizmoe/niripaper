@@ -138,6 +138,14 @@ curve = "ease-out-cubic"
 [animations.overview-open-close]
 zoom = 0.96           # 1.0 即关闭该效果
 
+[transition]
+selection = "rotate"                  # fixed | rotate | random
+effects = ["portal", "iris", "dissolve"]
+duration_ms = 1500
+curve = "ease-out-cubic"
+softness = 0.3                        # 0 是硬边，1 很软
+on_start = true                       # 启动时也播一次
+
 # 按输出覆盖 —— 这里没写的项都继承上面的全局值。
 [outputs."DP-1"]
 scale = 1.2
@@ -157,12 +165,31 @@ scale = 1.2
 | `[animations] slowdown` | 把所有动画的时间轴拉长 |
 | `[animations.parallax]` | 移动时壁纸怎么动 |
 | `[animations.overview-open-close]` | 总览过渡：一个 `zoom` 加一个弹簧或缓动 |
+| `[transition] selection` | 每次怎么挑效果：`fixed`、`rotate` 或 `random` |
+| `[transition] effect`、`effects` | `fixed` 时用的效果，以及 `rotate`/`random` 挑选的范围 |
+| `[transition] duration_ms`、`curve` | 过渡多长、怎么缓动 |
+| `[transition] softness` | 移动边缘多宽（`0` 硬边，`1` 很软） |
+| `[transition] center`、`direction` | 径向效果的起点；wipe/stripes/slide 的方向 |
+| `[transition] stripes`、`cell` | `stripes` 的条数；`honeycomb` 的六边形大小 |
+| `[transition] allow_overshoot`、`on_start` | 允许曲线回弹；启动时也播一次 |
 | `[outputs."NAME"]` | 按输出覆盖上面任意一项 |
 
 动画用的是 niri 自己那套词汇：每一个动画要么是 `off`，要么是缓动
 （`duration_ms` 加 `curve`），要么是弹簧（`damping_ratio`、`stiffness`、`epsilon`）。
 `curve` 的取值也是 niri 那五个：`linear`、`ease-out-quad`、`ease-out-cubic`、
 `ease-out-expo`、`cubic-bezier`。
+
+换图过渡自成一段，不放进 `[animations]` —— 那张表镜像 niri 的词汇，而 niri 没有
+换图动画可镜像。效果共十个：`portal`、`iris`、`dissolve`、`wipe`、`stripes`、
+`honeycomb`、`zoom`、`slide`、`fade`、`none`。
+
+所有效果都被同一个约束塑形：**旧的一侧是冻结的快照，新的一侧是活的** ——
+任何时刻只有一个解码器在跑。所以"视频从一个扩张的圆盘里透出来、并且已经在动"
+是能做到的；也是因此，每个效果无论看起来多华丽，代价都只是一个 fragment pass。
+`softness` 加宽移动的边缘 —— 唯独 `slide` 例外，它的两帧正好相邻，接缝是硬边。
+
+`niripaper schema` 会列出上面每一个配置项，连同类型、取值范围、以及运行中改文件
+是否即时生效。
 
 开着 `follow_niri = true` 时，总览过渡的参数取自 niri 的配置，
 所以改 niri 的设置也会改变壁纸的运动。本文件里显式写的值优先于 niri 的值。

@@ -22,7 +22,6 @@
 
 use std::time::{Duration, Instant};
 
-use crate::crossfade::CrossFade;
 use crate::media::{self, Media};
 use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
@@ -31,6 +30,7 @@ use crate::render::egl::{Egl, EglVendor};
 use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
 use crate::render::layer::{self, Pool};
+use crate::render::transition::Transition;
 use crate::scene::Scene;
 use crate::{gpu, motion};
 
@@ -71,6 +71,8 @@ pub struct Options {
     pub socket: Option<std::path::PathBuf>,
     /// Animation parameters, in niri's vocabulary (see `config.rs`).
     pub animations: crate::config::Animations,
+    /// The transition when the wallpaper changes.
+    pub transition: crate::render::transition::Settings,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -91,6 +93,7 @@ impl Options {
             config_path: None,
             socket: None,
             animations: crate::config::Animations::default(),
+            transition: crate::render::transition::Settings::default(),
             trace: false,
         }
     }
@@ -241,10 +244,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // shows more of the wallpaper, which reads as the workspace receding.
     let mut zoom = Animator::new(1.0f64, options.animations.overview_open_close.animation)
         .with_slowdown(options.animations.slowdown);
-    let mut crossfade = CrossFade::new(
-        options.animations.wallpaper_change,
-        options.animations.slowdown,
-    );
+    let mut transition = Transition::new(options.transition.clone(), options.animations.slowdown);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -273,11 +273,17 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             Some(media) => media.content(),
             None => gl::Content::Pattern(options.pattern),
         },
-        fade: 1.0,
-        previous: None,
+        blend: None,
     }
     .draw(&mut client, &mut pool, &surface, &renderer, false)?;
     drawn += 1;
+
+    // "Play one at startup" (§2). There is nothing on screen to fade from, so
+    // the effect runs against an empty frame: the wallpaper arrives *through*
+    // it rather than simply appearing. Logging in stops being a hard cut.
+    if options.transition.on_start {
+        transition.restart((screen.0 as u32, screen.1 as u32), Instant::now(), None);
+    }
 
     // The video's wakeup fd is polled too — `-1` when there is no video, which
     // `poll()` ignores. That is what keeps the idle cost at zero for stills.
@@ -452,6 +458,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     options.workspace_span = reloaded.workspace_span;
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
+                    options.transition = reloaded.transition.clone();
                     options.wallpaper = reloaded.wallpaper.clone();
                     options.namespace = reloaded.namespace.clone();
                     niri.motion
@@ -479,12 +486,12 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                                 canvas,
                                 options.video_fps,
                                 &mut media,
-                                &mut crossfade,
+                                &mut transition,
                                 &pool,
                                 last_slot,
                                 screen,
                             ) {
-                                Ok(()) => log(&format!("wallpaper → {}", path.display())),
+                                Ok(()) => {}
                                 Err(err) => log(&format!("reloaded wallpaper: {err}")),
                             }
                         } else {
@@ -508,15 +515,12 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                             canvas,
                             options.video_fps,
                             &mut media,
-                            &mut crossfade,
+                            &mut transition,
                             &pool,
                             last_slot,
                             screen,
                         ) {
-                            Ok(()) => {
-                                crate::ipc::reply(&stream, "ok");
-                                log(&format!("wallpaper → {}", path.display()));
-                            }
+                            Ok(()) => crate::ipc::reply(&stream, "ok"),
                             Err(err) => {
                                 crate::ipc::reply(&stream, &format!("error {err}"));
                                 log(&format!("set {}: {err}", path.display()));
@@ -575,16 +579,15 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             last_frame_at = now;
             let (progress, moving) = animator.sample(now);
             let (zoom_now, zoom_moving) = zoom.sample(now);
-            let (fade, fade_moving) = crossfade.sample(now);
-            let moving = moving || zoom_moving || video_present || fade_moving;
+            let blend = transition.sample(now);
+            let moving = moving || zoom_moving || video_present || blend.is_some();
             let submitted_slot = Scene {
                 view: Scene::view(progress, zoom_now, screen, options.scale, options.pattern),
                 content: match &media {
                     Some(media) => media.content(),
                     None => gl::Content::Pattern(options.pattern),
                 },
-                fade,
-                previous: crossfade.texture(),
+                blend,
             }
             .draw(&mut client, &mut pool, &surface, &renderer, moving)?;
             drawn += u64::from(submitted_slot.is_some());
@@ -598,9 +601,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             }
             if options.trace {
                 log(&format!(
-                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} fade={fade:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
+                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} effect={} t={:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
                     progress.horizontal,
                     progress.vertical,
+                    transition.effect().name(),
+                    blend.map(|blend| blend.progress).unwrap_or(1.0),
                     dt.as_secs_f64() * 1000.0,
                     submitted_slot.is_some(),
                     pool.in_flight(),
@@ -615,7 +620,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving() || crossfade.is_moving() || video_present)
+        if (animator.is_moving() || zoom.is_moving() || transition.is_moving() || video_present)
             && !frame_pending
         {
             surface.request_frame(&client.handle());
@@ -695,10 +700,35 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
         "animations.overview-open-close",
         crate::schema::animation_value(&animations.overview_open_close.animation),
     );
+    let transition = &options.transition;
+    put("transition.selection", json!(transition.selection.name()));
+    put("transition.effect", json!(transition.effect.name()));
     put(
-        "animations.wallpaper-change",
-        crate::schema::animation_value(&animations.wallpaper_change),
+        "transition.effects",
+        json!(transition
+            .effects
+            .iter()
+            .map(|effect| effect.name())
+            .collect::<Vec<_>>()),
     );
+    put(
+        "transition.duration_ms",
+        json!(transition.duration.as_millis() as u64),
+    );
+    put("transition.curve", json!(transition.curve.name()));
+    put(
+        "transition.allow_overshoot",
+        json!(transition.allow_overshoot),
+    );
+    put("transition.softness", json!(transition.softness));
+    put(
+        "transition.center",
+        json!([transition.center.0, transition.center.1]),
+    );
+    put("transition.direction", json!(transition.direction.name()));
+    put("transition.stripes", json!(transition.stripes));
+    put("transition.cell", json!(transition.cell));
+    put("transition.on_start", json!(transition.on_start));
 
     // Which files this configuration is made of: the main one plus every
     // `config.d/*.toml` merged over it. A panel showing "where does this value
@@ -749,7 +779,7 @@ fn switch_wallpaper(
     canvas: (u32, u32),
     video_fps: u32,
     media: &mut Option<Media>,
-    crossfade: &mut CrossFade,
+    transition: &mut Transition,
     pool: &Pool<'_>,
     last_slot: Option<usize>,
     screen: (f64, f64),
@@ -759,18 +789,23 @@ fn switch_wallpaper(
     // Snapshot *before* the swap: that is what is on screen right now.
     // `Frame::begin` only binds the framebuffer and sets the viewport, so it
     // does not disturb the pixels being copied.
-    if !crossfade.is_off() {
-        if let Some(slot) = last_slot {
-            crossfade.restart(
-                (screen.0 as u32, screen.1 as u32),
-                Instant::now(),
-                |snapshot| {
-                    pool.frame(slot).begin();
-                    snapshot.capture();
-                },
-            );
-        }
+    if let Some(slot) = last_slot {
+        transition.restart(
+            (screen.0 as u32, screen.1 as u32),
+            Instant::now(),
+            Some(&|snapshot: &gl::Snapshot| {
+                pool.frame(slot).begin();
+                snapshot.capture();
+            }),
+        );
     }
+    // Say which effect ran: "the transition did something odd" is otherwise
+    // impossible to pin on one of ten.
+    log(&format!(
+        "wallpaper → {} ({} transition)",
+        path.display(),
+        transition.effect().name()
+    ));
     Ok(())
 }
 

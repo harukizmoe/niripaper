@@ -14,10 +14,9 @@ use crate::render::layer::{Client, LayerSurface, Pool};
 pub struct Scene<'a> {
     pub view: View,
     pub content: Content<'a>,
-    /// The new content's weight; `1.0` means no cross-fade.
-    pub fade: f32,
-    /// What to blend from while `fade < 1.0` ([`crate::crossfade`]).
-    pub previous: Option<u32>,
+    /// The wallpaper transition in flight, if any
+    /// ([`crate::render::transition`]). `None` means "just draw the content".
+    pub blend: Option<gl::Blend>,
 }
 
 impl<'a> Scene<'a> {
@@ -64,7 +63,7 @@ impl<'a> Scene<'a> {
 
         let frame = pool.frame(slot);
         frame.begin();
-        renderer.draw(self.view, self.content, self.fade, self.previous);
+        renderer.draw(self.view, self.content, self.blend.as_ref());
         frame.finish();
         if let Some(err) = gl::last_error() {
             return Err(format!("GL error after drawing: 0x{err:x}"));
