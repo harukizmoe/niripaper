@@ -1,5 +1,7 @@
 # niripaper
 
+[![CI](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml/badge.svg)](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml)
+
 [English](README.md) · **简体中文**
 
 **会跟着你的布局一起动的壁纸。**

@@ -1,5 +1,7 @@
 # niripaper
 
+[![CI](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml/badge.svg)](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml)
+
 **English** · [简体中文](README.zh-CN.md)
 
 **A wallpaper that moves with your layout.**
