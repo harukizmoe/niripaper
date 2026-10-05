@@ -27,6 +27,10 @@ cargo test
 
 装到 `PATH`：`cargo install --path . --locked --bin niripaper` —— **必须带 `--bin niripaper`**，
 否则 `src/bin/` 下的两个诊断探针也会被一起装进 `~/.cargo/bin`。
+**改完代码要重装**：`PATH` 上的 `niripaper` 与 `target/release/niripaper` 是两份拷贝 ✗，
+自启动（`spawn-at-startup`）跑的是前者 ✗。实测踩过：新增配置键后只重建没重装，
+自启动拿着旧二进制报 `unknown field` 直接退出，桌面连壁纸都没了 ✗（手动跑 `./target/release/…`
+却一切正常，正好把问题掩盖掉 ✗）。
 
 改动渲染路径或事件解析后，**必须实机跑一次**：启动 `./target/release/niripaper daemon --trace`，
 观察逐帧的 `h` / `v` / `zoom` 与目标值，而不是只看编译通过。改动配置项时，用**非默认值**验证

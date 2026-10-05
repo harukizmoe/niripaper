@@ -498,5 +498,11 @@ fn draw(
 }
 
 fn log(message: &str) {
-    println!("niripaper: {message}");
+    // Flush every line. When stdout is a file — which is exactly the autostart
+    // case — Rust block-buffers it, so a crash or a SIGTERM would take the whole
+    // log with it. A startup that fails silently is worse than a slow log.
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "niripaper: {message}");
+    let _ = out.flush();
 }
