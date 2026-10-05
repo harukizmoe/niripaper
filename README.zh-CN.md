@@ -66,8 +66,8 @@ Release 里带**两个** `x86_64` 二进制。它们按**链接的库**命名，
 因为真正有差别的只有这一件事：链接 `libmpv` 的守护进程被它的 soname 钉住。
 `mpv --version` 报 0.35 或更新的 —— Arch、Fedora、Debian 12 及更新 —— 取 `-mpv0.41`；
 报 0.34 的（Ubuntu 22.04）取 `-mpv0.34`。两者都要 glibc 2.34 或更新（两份构建的这个
-数字相同），真正有差别的只有 soname。每个包里的 `INSTALL.txt` 写出这两个数字，且是
-**从二进制里量出来的**而不是写死的。从源码构建则在任何地方都可用。
+数字相同）。每个包里的 `INSTALL.txt` 写出这两个数字，且是 **从二进制里量出来的**而不是
+写死的。从源码构建则在任何地方都可用。
 
 ## 用法
 
@@ -82,8 +82,8 @@ niripaper watch                           # 只打印视差目标值，不绘制
 
 ### 给运行中的守护进程换壁纸
 
-守护进程监听一个小控制 socket，**每个输出一个**
-（`$XDG_RUNTIME_DIR/niripaper-DP-1.sock`）：
+守护进程监听一个小控制 socket，**所有输出共用一个**
+（`$XDG_RUNTIME_DIR/niripaper.sock`）：
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
@@ -120,15 +120,15 @@ spawn-at-startup "niripaper" "daemon"
 
 | 参数 | 含义 |
 | --- | --- |
-| `--output NAME` | 在哪个输出上绘制（默认：niri 报告的第一个） |
+| `--output NAME` | 只在某一个输出上绘制（默认：niri 报告的所有输出） |
 | `--config PATH` | 读取的配置文件（默认 `~/.config/niripaper/config.toml`） |
 | `--namespace NAME` | layer-shell 命名空间（默认 `niripaper`） |
 | `--wallpaper PATH` | 要绘制的图像 |
 | `--scale F` | 画布放大倍数，`1.0`–`1.35` |
 | `--column-span N`、`--workspace-span N` | 视差铺开多少级 |
 | `--pattern blocks\|bands` | 内置测试图案，未指定壁纸时使用 |
-| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper-<输出名>.sock`） |
-| `--output NAME` | 找哪个输出的守护进程；只有多个在跑时才需要 |
+| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper.sock`） |
+| `--output NAME` | 这条请求针对哪个输出；`*`（默认）表示所有输出 |
 | `--trace` | 逐帧打印（位置、缩放、耗时）—— 排查用 |
 
 ## 配置

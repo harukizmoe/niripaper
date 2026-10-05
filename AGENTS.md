@@ -81,12 +81,14 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
 - **别让模块互相知道对方的细节**：`media` 不暴露它有几个变体给 daemon（用 `content()`/`pump()`/
   `wakeup_fd()` 这些动词），`crossfade` 不碰缓冲池（快照由调用方填）。
 - `HANDOFF.md` 是维护者本地的设计与进度文档，**不进仓库**（已在 `.gitignore` 里）。不要把它提交，
-  也不要把它当成给外部读者的文档。**它现在也放在 `~/niripaper-docs/HANDOFF.md`**，那里是权威副本。
-- **不要在仓库里 checkout / rebase 到 `ab4be5a` 之后再指望 `HANDOFF.md` 还在**：它是 dev/main 的
-  共同根，也是**唯一**还跟踪 `HANDOFF.md` 的提交，后续提交都没有它 —— 于是 `git rebase -i ab4be5a`
-  会先 checkout 到根、再往前走，git 顺手删掉工作副本（2026-10-05 改 `main` 历史时就这么丢过一次，
-  丢了一大段）。复现：在一个跟踪它的提交上 `git checkout main`，文件立刻消失。要改就改
-  `~/niripaper-docs/` 那份，或者在仓库里编辑前先确认没跑过 rebase。
+  也不要把它当成给外部读者的文档。**权威副本现在放在 `~/workspace/rust/niripaperdocs/HANDOFF.md`**
+  （仓库旁边那个目录，不在 `$HOME` 根下），仓库里那份只是工作副本。
+- **不要在仓库里做跨越 `a287e6b`（「HANDOFF.md 不进仓库」）的历史操作**：`HANDOFF.md` 在它之前
+  **一直被跟踪**（`ab4be5a` 及此后十几个提交都有它），是那个提交把它从索引里删掉的。于是往回
+  checkout 会把**旧版本从 git 里还原**出来、盖掉你的编辑；再往前走又被删掉。`git rebase -i ab4be5a`
+  两头都占（2026-10-05 改 `main` 历史时就这么丢过一大段）。要改就改
+  `~/workspace/rust/niripaperdocs/` 那份，仓库里那份改完同步过去即可；在仓库里编辑前先确认没跑过
+  rebase。
 - 代码注释里的 `§x.y` 指向 `HANDOFF.md` 的章节，是内部可追溯约定，**保留**。
 - 面向使用者的说明写在 `README.md`（英文）与 `README.zh-CN.md`（中文）里，两份**逐节对应**；
   改一份就要同步另一份。措辞用直白陈述，不要俏皮话，不要写未实现的功能。

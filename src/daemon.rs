@@ -20,6 +20,8 @@
 //!   callback arrives exactly when niri is ready to present, so a 180 Hz output
 //!   gets 180 Hz and a busy compositor does not get a backlog.
 
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::media::{self, Media};
@@ -76,6 +78,10 @@ pub struct Options {
     pub transition: crate::render::transition::Settings,
     /// How a source whose aspect ratio does not match the canvas is placed.
     pub fit: Fit,
+    /// The command line's per-output overrides, and the configuration they are
+    /// resolved against — see [`Options::resolve_output`].
+    pub cli: CliOverrides,
+    pub config: Option<crate::config::Config>,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -98,19 +104,303 @@ impl Options {
             animations: crate::config::Animations::default(),
             transition: crate::render::transition::Settings::default(),
             fit: Fit::Fill,
+            cli: CliOverrides::default(),
+            config: None,
             trace: false,
         }
     }
 }
 
-/// What is being drawn: a decoded still, or a playing video. Both end up
-/// canvas-sized and are sampled identically — the only difference is that the
-/// video's texture is redrawn by libmpv as it plays.
-pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> {
+/// The command line's overrides for the keys that can differ per output.
+///
+/// Kept apart from the resolved values because "which output" is only known once
+/// the daemon has enumerated them: [`Options::resolve_output`] resolves each
+/// output's table and then lets these win.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CliOverrides {
+    pub scale: Option<f64>,
+    pub column_span: Option<usize>,
+    pub workspace_span: Option<usize>,
+    pub wallpaper: Option<std::path::PathBuf>,
+    pub fit: Option<Fit>,
+}
+
+impl Options {
+    /// Resolve the keys that can differ per output for `name`: command line,
+    /// then that output's `[outputs."NAME"]` table, then the global keys.
+    ///
+    /// This is the *only* place per-output resolution happens, so a single-output
+    /// run and one worker of a multi-output run cannot drift apart — which they
+    /// did: resolving against `"*"` silently dropped every `[outputs."NAME"]`
+    /// value as soon as the daemon drew on more than one output.
+    pub fn resolve_output(&mut self, name: &str) {
+        self.output = name.to_owned();
+        let Some(config) = &self.config else {
+            return;
+        };
+        let params = config.output(name);
+        self.scale = self.cli.scale.unwrap_or(params.scale);
+        self.column_span = self.cli.column_span.unwrap_or(params.column_span);
+        self.workspace_span = self.cli.workspace_span.unwrap_or(params.workspace_span);
+        self.wallpaper = self.cli.wallpaper.clone().or(params.wallpaper);
+        self.fit = self.cli.fit.unwrap_or(params.fit);
+    }
+}
+
+/// One command for one output's worker.
+enum Command {
+    /// Swap this output's wallpaper (`set`).
+    Set(PathBuf),
+    /// What is on screen right now (`query`).
+    Query(std::sync::mpsc::Sender<String>),
+    /// The full snapshot for `state`.
+    State(std::sync::mpsc::Sender<serde_json::Value>),
+}
+
+/// How long a request waits for a worker before giving up on it. A worker that
+/// is busy decoding is not stuck, but a client must not be able to hang either.
+const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The workers a request applies to: the one it names, or all of them.
+///
+/// A name nobody serves is an error rather than an empty answer — "it silently
+/// did nothing" is the failure mode this whole project keeps getting bitten by.
+fn pick<'a>(
+    channels: &'a [(String, std::sync::mpsc::Sender<Command>)],
+    output: Option<&str>,
+) -> Result<Vec<&'a (String, std::sync::mpsc::Sender<Command>)>, String> {
+    let picked: Vec<&(String, std::sync::mpsc::Sender<Command>)> = channels
+        .iter()
+        .filter(|(name, _)| output.is_none_or(|wanted| wanted == name))
+        .collect();
+    if picked.is_empty() {
+        let known: Vec<&str> = channels.iter().map(|(name, _)| name.as_str()).collect();
+        return Err(format!(
+            "no output {:?}; this daemon draws on {}",
+            output.unwrap_or_default(),
+            known.join(", ")
+        ));
+    }
+    Ok(picked)
+}
+
+/// The output a request names, for [`pick`].
+fn named_output(request: &crate::ipc::Request) -> Option<&str> {
+    match request {
+        crate::ipc::Request::Set { output, .. }
+        | crate::ipc::Request::Query { output }
+        | crate::ipc::Request::State { output } => output.as_deref(),
+        crate::ipc::Request::Schema | crate::ipc::Request::Kill => None,
+    }
+}
+
+/// One process, every output.
+///
+/// A thread per output, each with its own Wayland connection, EGL context and
+/// media — so the single-output loop below does not have to learn about several
+/// surfaces at once (`HANDOFF.md` §2 has the decision and the reasons). What is
+/// shared is the control socket and nothing else: a client names the output it
+/// means, this routes the request, and `state` answers for every output in one
+/// call. That is the shape a panel wants.
+pub fn run(options: &Options, running: Arc<dyn Fn() -> bool + Send + Sync>) -> Result<(), String> {
+    let socket_path = match &options.socket {
+        Some(path) => path.clone(),
+        None => crate::ipc::default_path()?,
+    };
+    crate::ipc::refuse_if_served(&socket_path)?;
+
+    // Which outputs to draw on: the one named (`--output`, which is also how a
+    // test instance stays off the user's screens), or every output niri knows.
+    let names = if options.output != crate::ipc::EVERY_OUTPUT {
+        vec![options.output.clone()]
+    } else {
+        let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
+        niri.wait_for_full_state()?;
+        let mut names: Vec<String> = niri
+            .motion
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.output.clone())
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.sort();
+        names.dedup();
+        if names.is_empty() {
+            return Err("niri reported no outputs; pass --output".to_owned());
+        }
+        // niri keeps at least one workspace on every output it has enabled, so the
+        // workspace list is the enabled set — but an output the compositor is
+        // presenting while nothing covers it is a wallpaper that is silently
+        // missing. Cheap to check, so check: a second connection that is dropped
+        // right away, and not a layer surface, because `create_layer_surface`
+        // waits for a configure that a disabled output never sends.
+        if let Ok(client) = layer::Client::connect() {
+            let presented: Vec<String> = client
+                .state
+                .outputs
+                .iter()
+                .filter_map(|output| client.state.output_info(output))
+                .filter_map(|info| info.name.clone())
+                .filter(|name| !name.is_empty())
+                .collect();
+            for name in presented {
+                if !names.contains(&name) {
+                    log(&format!(
+                        "{name}: presented by the compositor but no workspace is on it; not drawing there"
+                    ));
+                }
+            }
+        }
+        names
+    };
+
+    // `kill` has to stop the workers too, and they only know the caller's
+    // closure — so they get "the caller says keep going *and* nobody asked us to
+    // stop".
+    let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_running: Arc<dyn Fn() -> bool + Send + Sync> = {
+        let quit = Arc::clone(&quit);
+        let running = Arc::clone(&running);
+        Arc::new(move || running() && !quit.load(std::sync::atomic::Ordering::Relaxed))
+    };
+
+    let mut channels: Vec<(String, std::sync::mpsc::Sender<Command>)> = Vec::new();
+    let mut handles = Vec::new();
+    for name in &names {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut worker_options = options.clone();
+        worker_options.resolve_output(name);
+        let worker_running = Arc::clone(&worker_running);
+        let worker_name = name.clone();
+        handles.push(std::thread::spawn(move || {
+            if let Err(err) = run_output(&worker_options, &worker_running, &rx) {
+                log(&format!("{worker_name}: {err}"));
+            }
+        }));
+        channels.push((name.clone(), tx));
+    }
+
+    // Bound after the workers exist, so "the socket exists" still means "there
+    // is a daemon that works" — the property the one-process-per-output daemon
+    // had, and the reason the bind is not the first thing here.
+    let ipc = crate::ipc::Server::bind(&socket_path)?;
+    log(&format!(
+        "control socket {} (outputs: {})",
+        socket_path.display(),
+        names.join(", ")
+    ));
+
+    while worker_running() {
+        let mut fd = libc::pollfd {
+            fd: ipc.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // A timeout so `running()` is checked even when nobody is talking to us.
+        let ready = unsafe { libc::poll(&mut fd, 1, 250) };
+        if ready < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(format!("poll: {err}"));
+        }
+        if ready == 0 {
+            continue;
+        }
+        let (request, stream) = match ipc.accept() {
+            Ok(accepted) => accepted,
+            Err(err) => {
+                log(&format!("control socket: {err}"));
+                continue;
+            }
+        };
+        let targets = match pick(&channels, named_output(&request)) {
+            Ok(targets) => targets,
+            Err(err) => {
+                crate::ipc::reply(&stream, &format!("error {err}"));
+                continue;
+            }
+        };
+        let reply = match request {
+            crate::ipc::Request::Schema => Some(json_line(&crate::schema::schema())),
+            crate::ipc::Request::Kill => {
+                quit.store(true, std::sync::atomic::Ordering::Relaxed);
+                Some("ok".to_owned())
+            }
+            crate::ipc::Request::Set { path, .. } => {
+                let mut failed = Vec::new();
+                for (name, tx) in targets {
+                    if tx.send(Command::Set(path.clone())).is_err() {
+                        failed.push(name.clone());
+                    }
+                }
+                Some(if failed.is_empty() {
+                    "ok".to_owned()
+                } else {
+                    format!("error no worker for {}", failed.join(", "))
+                })
+            }
+            crate::ipc::Request::Query { .. } => {
+                let mut lines = Vec::new();
+                for (name, tx) in targets {
+                    let (tx2, rx2) = std::sync::mpsc::channel();
+                    if tx.send(Command::Query(tx2)).is_ok() {
+                        match rx2.recv_timeout(REPLY_TIMEOUT) {
+                            Ok(line) => lines.push(format!("{name}: {line}")),
+                            Err(_) => lines.push(format!("{name}: no reply")),
+                        }
+                    }
+                }
+                Some(lines.join("; "))
+            }
+            crate::ipc::Request::State { output } => {
+                let mut map = serde_json::Map::new();
+                for (name, tx) in targets {
+                    let (tx2, rx2) = std::sync::mpsc::channel();
+                    if tx.send(Command::State(tx2)).is_ok() {
+                        if let Ok(value) = rx2.recv_timeout(REPLY_TIMEOUT) {
+                            map.insert(name.clone(), value);
+                        }
+                    }
+                }
+                // Naming one output hands back that output's own object, so a
+                // client that asked for one does not have to unwrap a map.
+                let value = if output.is_some() {
+                    map.into_values().next().unwrap_or(serde_json::Value::Null)
+                } else {
+                    serde_json::json!({ "outputs": map })
+                };
+                Some(json_line(&value))
+            }
+        };
+        if let Some(reply) = reply {
+            crate::ipc::reply(&stream, &reply);
+        }
+    }
+
+    for handle in handles {
+        let _ = handle.join();
+    }
+    Ok(())
+}
+
+/// Draw the wallpaper layer for one output until asked to stop.
+///
+/// One thread runs this per output, so everything in here is that output's own:
+/// its Wayland connection, its EGL context, its media, its animators. The only
+/// thing it shares with its siblings is the `commands` channel the supervisor
+/// feeds, which is how `set`/`query`/`state` reach it.
+fn run_output(
+    options: &Options,
+    running: &Arc<dyn Fn() -> bool + Send + Sync>,
+    commands: &std::sync::mpsc::Receiver<Command>,
+) -> Result<(), String> {
     // The *effective* configuration, owned so a reload can change it: `set` over
     // the control socket and a config-file reload both write here. Command-line
     // flags are a startup-only override, exactly as they are in niri.
     let mut options = options.clone();
+
     // --- wayland -----------------------------------------------------------
     let mut client = layer::Client::connect()?;
     let output = client
@@ -187,13 +477,16 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         POOL_DEPTH,
     )?;
     log(&format!(
-        "{}x{} {} via {} [{}] ({})",
+        "{}x{} {} via {} [{}] ({})\n\
+         vendor pinned: {}; vulkan ICDs: {}",
         surface.width,
         surface.height,
         gbm::fourcc_name(FORMAT),
         egl.vendor,
         egl.platform,
-        layer::describe_modifiers(pool.chosen())
+        layer::describe_modifiers(pool.chosen()),
+        egl.vendor_pinned,
+        egl.vulkan_pinned
     ));
     for (modifiers, err) in pool.failures() {
         log(&format!(
@@ -203,14 +496,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     }
 
     // The canvas is the output enlarged by `scale` (§4.1); a wallpaper is
-    // fitted to exactly that, so the shader samples it 1:1.
-    // `round`, not `ceil`: 1440 × 1.1 is 1584 exactly in decimal but
-    // 1584.0000000000002 in binary, and `ceil` would hand the shader a canvas
-    // one pixel too tall — which shifts the whole vertical travel by a pixel.
-    let canvas = (
-        (surface.width as f64 * options.scale).round() as u32,
-        (surface.height as f64 * options.scale).round() as u32,
-    );
+    // fitted to exactly that, so the shader samples it 1:1. `mut`, because a
+    // reload can change `scale` — a canvas that no longer matches the media is
+    // a wallpaper drawn at the wrong magnification.
+    let screen = (surface.width as f64, surface.height as f64);
+    let mut canvas = canvas_size(screen, options.scale);
     let mut media = match &options.wallpaper {
         Some(path) => {
             let loaded = Media::load(path, canvas, options.video_fps, options.fit)?;
@@ -238,7 +528,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
-    let screen = (surface.width as f64, surface.height as f64);
     let mut animator = Animator::new(
         niri.motion.progress(&options.output),
         options.animations.parallax,
@@ -257,7 +546,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
 
     // --- the loop ----------------------------------------------------------
     let mut frame_pending = false;
-    let mut seen_frames = client.state.frames_done;
+    let mut seen_frames = 0u64;
     let mut drawn = 0u64;
     let mut skipped = 0u64;
     let mut last_frame_at = Instant::now();
@@ -295,14 +584,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         .as_ref()
         .map(|media| media.wakeup_fd())
         .unwrap_or(media::NO_WAKEUP);
-    // The control socket (§3). Bound here, after everything that can fail at
-    // startup has already failed: a socket that exists means a daemon that works.
-    let socket_path = match &options.socket {
-        Some(path) => path.clone(),
-        None => crate::ipc::default_path(&options.output)?,
-    };
-    let ipc = crate::ipc::Server::bind(&socket_path)?;
-    log(&format!("control socket {}", socket_path.display()));
     // Watch the configuration (§2). Directories, not files: tools write
     // atomically and may create `config.d` long after we started.
     let mut watcher = crate::watch::Watcher::new()?;
@@ -343,11 +624,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             revents: 0,
         },
         libc::pollfd {
-            fd: ipc.fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        },
-        libc::pollfd {
             fd: watcher.fd(),
             events: libc::POLLIN,
             revents: 0,
@@ -368,8 +644,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // A decoded video frame that has not been presented yet. This is what turns
     // mpv's wakeup into a frame request.
     let mut video_present = false;
-    let mut quit = false;
-    while running() && !quit {
+    // Set once the reload path has reported a `namespace` change: the value
+    // cannot take effect without a restart, so warning on every reload would be
+    // noise that says nothing new.
+    let mut warned_namespace = false;
+    while running() {
         fds[0].revents = 0;
         fds[1].revents = 0;
         fds[2].revents = 0;
@@ -382,7 +661,10 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             .map(|media| media.wakeup_fd())
             .unwrap_or(media::NO_WAKEUP);
         fds[3].revents = 0;
-        let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+        // A timeout, not `-1`: `running()` has to be re-checked even when nothing
+        // is happening, or `kill` could never stop this thread — it would sit in
+        // `poll` forever and the supervisor's `join` would never return.
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 250) };
         if ready < 0 {
             let err = std::io::Error::last_os_error();
             if err.kind() == std::io::ErrorKind::Interrupted {
@@ -435,7 +717,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 ));
             }
         }
-        if fds[4].revents & libc::POLLIN != 0 && watcher.drain() {
+        if fds[3].revents & libc::POLLIN != 0 && watcher.drain() {
             let Some(path) = options.config_path.clone() else {
                 continue;
             };
@@ -450,19 +732,47 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 // screen going blank. (niri's `ConfigLoaded { failed: true }`.)
                 Err(err) => log(&format!("config reload failed, keeping current: {err}")),
                 Ok(reloaded) => {
-                    // `fit` changes how the media is placed, so it needs the
-                    // same reload the wallpaper path gets.
-                    let changed_wallpaper =
-                        reloaded.wallpaper != options.wallpaper || reloaded.fit != options.fit;
-                    if reloaded.namespace != options.namespace {
+                    // What the daemon runs with is resolved *per output*: a
+                    // `[outputs."<name>"]` table overrides the global keys, and a
+                    // reload has to resolve the same way startup does. Reading the
+                    // globals here dropped a per-output wallpaper — and its scale and
+                    // spans — the moment anything touched the configuration, which is
+                    // exactly what a panel writes to (`config.d/noctalia.toml`).
+                    let params = reloaded.output(&options.output);
+                    // `fit` changes how the media is placed and `scale` changes
+                    // the canvas it is built at, so both need the same reload the
+                    // wallpaper path gets. Leaving `scale` out made the schema
+                    // advertise it as hot while only half of it applied: the
+                    // animators moved to the new scale, the texture did not.
+                    let scale_changed = params.scale != options.scale;
+                    let reload_media = params.wallpaper != options.wallpaper
+                        || params.fit != options.fit
+                        || scale_changed;
+                    // The layer surface was created with a namespace and cannot
+                    // change it without a restart, so `state` has to keep reporting
+                    // the one actually in force. Saying so once is enough: the
+                    // assignment below deliberately does *not* happen, and without
+                    // this flag every reload would warn again.
+                    if reloaded.namespace != options.namespace && !warned_namespace {
                         log("namespace changed: needs a restart to take effect");
+                        warned_namespace = true;
                     }
                     if reloaded.video_fps != options.video_fps {
                         log("video_fps changed: applies to the next video load");
                     }
-                    options.scale = reloaded.scale;
-                    options.column_span = reloaded.column_span;
-                    options.workspace_span = reloaded.workspace_span;
+                    if scale_changed {
+                        // The media texture is built at the canvas size, so a new
+                        // scale only takes effect once that is rebuilt — which is
+                        // what the `reload_media` block below does.
+                        canvas = canvas_size(screen, params.scale);
+                        log(&format!(
+                            "canvas → {}×{} (scale {:.3})",
+                            canvas.0, canvas.1, params.scale
+                        ));
+                    }
+                    options.scale = params.scale;
+                    options.column_span = params.column_span;
+                    options.workspace_span = params.workspace_span;
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
                     options.transition = reloaded.transition.clone();
@@ -473,9 +783,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     // exactly what a panel writes to.
                     transition =
                         Transition::new(options.transition.clone(), options.animations.slowdown);
-                    options.wallpaper = reloaded.wallpaper.clone();
-                    options.namespace = reloaded.namespace.clone();
-                    options.fit = reloaded.fit;
+                    options.wallpaper = params.wallpaper;
+                    options.fit = params.fit;
                     niri.motion
                         .set_spans(options.column_span, options.workspace_span);
                     // Rebuild the animators at their current position so a
@@ -494,7 +803,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     )
                     .with_slowdown(options.animations.slowdown);
                     zoom.retarget(zoom_target, now);
-                    if changed_wallpaper {
+                    if reload_media {
                         if let Some(path) = options.wallpaper.clone() {
                             match switch_wallpaper(
                                 &path,
@@ -520,68 +829,50 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             }
         }
 
-        if fds[3].revents & libc::POLLIN != 0 {
-            match ipc.accept() {
-                Ok((request, stream)) => match request {
-                    crate::ipc::Request::Set(path) => {
-                        // Load first, swap after: a bad path must leave the
-                        // current wallpaper alone, not blank the screen.
-                        match switch_wallpaper(
-                            &path,
-                            canvas,
-                            options.video_fps,
-                            options.fit,
-                            &mut media,
-                            &mut transition,
-                            &pool,
-                            last_slot,
-                            screen,
-                        ) {
-                            Ok(()) => crate::ipc::reply(&stream, "ok"),
-                            Err(err) => {
-                                crate::ipc::reply(&stream, &format!("error {err}"));
-                                log(&format!("set {}: {err}", path.display()));
-                            }
-                        }
+        // Commands from the supervisor. This worker's output is already decided,
+        // so a request never has to name it.
+        for command in commands.try_iter() {
+            match command {
+                Command::Set(path) => {
+                    // Load first, swap after: a bad path must leave the current
+                    // wallpaper alone, not blank the screen.
+                    match switch_wallpaper(
+                        &path,
+                        canvas,
+                        options.video_fps,
+                        options.fit,
+                        &mut media,
+                        &mut transition,
+                        &pool,
+                        last_slot,
+                        screen,
+                    ) {
+                        Ok(()) => {}
+                        Err(err) => log(&format!("set {}: {err}", path.display())),
                     }
-                    crate::ipc::Request::Query => {
-                        let (progress, _) = animator.sample(Instant::now());
-                        let kind = match &media {
-                            Some(media) => media.describe(),
-                            None => format!("pattern {:?}", options.pattern),
-                        };
-                        crate::ipc::reply(
-                            &stream,
-                            &format!(
-                                "ok {kind} h={:.4} v={:.4}",
-                                progress.horizontal, progress.vertical
-                            ),
-                        );
-                    }
-                    crate::ipc::Request::Schema => {
-                        crate::ipc::reply(&stream, &json_line(&crate::schema::schema()));
-                    }
-                    crate::ipc::Request::State => {
-                        let now = Instant::now();
-                        let (progress, _) = animator.sample(now);
-                        crate::ipc::reply(
-                            &stream,
-                            &json_line(&state_json(&Snapshot {
-                                options: &options,
-                                media: media.as_ref(),
-                                canvas,
-                                position: (progress.horizontal, progress.vertical),
-                                zoom: zoom.position(now),
-                            })),
-                        );
-                    }
-                    crate::ipc::Request::Kill => {
-                        crate::ipc::reply(&stream, "ok");
-                        log("kill requested");
-                        quit = true;
-                    }
-                },
-                Err(err) => log(&format!("control socket: {err}")),
+                }
+                Command::Query(reply) => {
+                    let (progress, _) = animator.sample(Instant::now());
+                    let kind = match &media {
+                        Some(media) => media.describe(),
+                        None => format!("pattern {:?}", options.pattern),
+                    };
+                    let _ = reply.send(format!(
+                        "ok {kind} h={:.4} v={:.4}",
+                        progress.horizontal, progress.vertical
+                    ));
+                }
+                Command::State(reply) => {
+                    let now = Instant::now();
+                    let (progress, _) = animator.sample(now);
+                    let _ = reply.send(state_json(&Snapshot {
+                        options: &options,
+                        media: media.as_ref(),
+                        canvas,
+                        position: (progress.horizontal, progress.vertical),
+                        zoom: zoom.position(now),
+                    }));
+                }
             }
         }
 
@@ -589,8 +880,14 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             client.wait_events(Duration::ZERO)?;
         }
 
-        if client.state.frames_done > seen_frames {
-            seen_frames = client.state.frames_done;
+        let surface_frames = client
+            .state
+            .frames_done
+            .get(&surface.id())
+            .copied()
+            .unwrap_or(0);
+        if surface_frames > seen_frames {
+            seen_frames = surface_frames;
             let now = Instant::now();
             let dt = now.saturating_duration_since(last_frame_at);
             last_frame_at = now;
@@ -801,6 +1098,19 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     })
 }
 
+/// The canvas: the output enlarged by `scale` (§4.1). A wallpaper is fitted to
+/// exactly this, so the shader samples it 1:1.
+///
+/// `round`, not `ceil`: 1440 × 1.1 is 1584 exactly in decimal but
+/// 1584.0000000000002 in binary, and `ceil` would hand the shader a canvas one
+/// pixel too tall — which shifts the whole vertical travel by a pixel.
+fn canvas_size(screen: (f64, f64), scale: f64) -> (u32, u32) {
+    (
+        (screen.0 * scale).round() as u32,
+        (screen.1 * scale).round() as u32,
+    )
+}
+
 /// Swap the wallpaper, cross-fading from whatever is on screen.
 ///
 /// Shared by `set` over the control socket and by a config reload — both mean
@@ -879,6 +1189,16 @@ fn log(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_rounds_instead_of_ceiling() {
+        // 1440 × 1.1 is 1584 exactly in decimal but 1584.0000000000002 in
+        // binary. `ceil` would make the canvas a pixel too tall, which shifts
+        // the whole vertical travel by a pixel — and the canvas is exactly what
+        // the wallpaper is fitted to, so the error would be in the picture.
+        assert_eq!(canvas_size((2560.0, 1440.0), 1.1), (2816, 1584));
+        assert_eq!(canvas_size((2560.0, 1440.0), 1.0), (2560, 1440));
+    }
 
     /// A panel zips `schema` and `state` together by dotted key name. That only
     /// works if the two agree, and they are written in two different files — so

@@ -200,6 +200,71 @@ impl EglVendor {
         let fallback = std::path::PathBuf::from(self.fallback_json());
         fallback.exists().then_some(fallback)
     }
+
+    /// Pin the Vulkan ICD list to this vendor's family, the way
+    /// [`Self::vendor_json`] pins EGL.
+    ///
+    /// Two APIs, one rule (§7.2): the compositor composites on a single GPU, so
+    /// a process that ends up with *both* vendors' drivers gains nothing and
+    /// costs a crash. `hwdec=auto-safe` resolves to `vulkan-copy` on this
+    /// machine, so mpv/FFmpeg create a Vulkan instance — and creating one makes
+    /// the loader load *every* installed ICD, NVIDIA's included, on worker
+    /// threads that run while `switch_wallpaper` is tearing the previous media
+    /// down. The coredump has that race: two threads inside
+    /// `av_hwdevice_ctx_create` → `vkEnumerateInstanceExtensionProperties`,
+    /// through `libGLX_nvidia.so.0`, one of them jumping to a null pointer.
+    ///
+    /// Only intervenes when both families are installed: a machine with one ICD
+    /// has nothing to disambiguate, and the loader's default list is left
+    /// alone. `VK_DRIVER_FILES` is read when the loader initialises, which is
+    /// after this and before anything in the process can ask for Vulkan.
+    pub fn pin_vulkan(self) -> String {
+        let mut nvidia = Vec::new();
+        let mut other = Vec::new();
+        for dir in ["/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"] {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            let mut paths: Vec<std::path::PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .collect();
+            paths.sort();
+            for path in paths {
+                let Ok(contents) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                // Same trick as the EGL list: the manifest names the driver
+                // library, and only NVIDIA's name says which family it is. Mesa
+                // is everything else, which is also how `for_pci_vendor` reads
+                // a PCI id.
+                if contents.contains("nvidia") {
+                    nvidia.push(path);
+                } else {
+                    other.push(path);
+                }
+            }
+        }
+        if nvidia.is_empty() || other.is_empty() {
+            return "default ICD list".to_owned();
+        }
+        let keep = match self {
+            Self::Nvidia => nvidia,
+            Self::Mesa => other,
+        };
+        let list = keep
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(":");
+        let Ok(value) = std::ffi::CString::new(list.clone()) else {
+            return "default ICD list".to_owned();
+        };
+        let key = std::ffi::CString::new("VK_DRIVER_FILES").unwrap();
+        unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
+        list
+    }
 }
 
 /// Everything EGL needs to import a dmabuf as a texture.
@@ -244,6 +309,8 @@ pub struct Egl {
     pub platform: String,
     /// The GLVND vendor list we pinned, or "default GLVND order".
     pub vendor_pinned: String,
+    /// The `VK_DRIVER_FILES` list we pinned, or "default ICD list".
+    pub vulkan_pinned: String,
     surface: EglSurface,
     surfless: bool,
     create_image: Option<CreateImageKhr>,
@@ -279,6 +346,10 @@ impl Egl {
         let vendor_note = vendor_pinned
             .clone()
             .unwrap_or_else(|| "default GLVND order".to_owned());
+        // The same rule for the other API. This is the last point guaranteed to
+        // run before anything in the process can ask for a Vulkan instance: the
+        // daemon loads media after its `Egl`, and so does every probe here.
+        let vulkan_note = vendor.pin_vulkan();
 
         let client_extensions = query_client_extensions();
         let get_platform_display: GetPlatformDisplayExt =
@@ -343,6 +414,7 @@ impl Egl {
             vendor: cstr(unsafe { eglQueryString(display, EGL_VENDOR) }),
             platform: platform_label.to_owned(),
             vendor_pinned: vendor_note,
+            vulkan_pinned: vulkan_note,
             surface: EGL_NO_SURFACE,
             surfless: false,
             create_image: load("eglCreateImageKHR"),

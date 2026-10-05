@@ -374,9 +374,18 @@ pub fn keys() -> Vec<Key> {
     ]
 }
 
+/// The keys `[outputs."NAME"]` can override. Everything else is global: a
+/// per-output `video_fps` would mean a separate decode rate per output, and the
+/// animation and transition blocks are deliberately the same everywhere.
+///
+/// This is a separate list rather than a flag on each [`Key`] because it is the
+/// *set* that matters to a panel: it builds one settings page per monitor out of
+/// exactly these, and only the engine knows which they are.
+pub const PER_OUTPUT: [&str; 5] = ["wallpaper", "scale", "column_span", "workspace_span", "fit"];
+
 /// The whole schema, as one JSON value.
 pub fn schema() -> Value {
-    json!({ "keys": keys() })
+    json!({ "keys": keys(), "per_output": PER_OUTPUT })
 }
 
 /// niri's curve names, from the one place that parses them.
