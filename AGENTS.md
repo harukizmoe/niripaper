@@ -83,6 +83,8 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
 - `src/bin/eglpin.rs`、`src/bin/m0b.rs` 是 M0 阶段的诊断探针（EGL 按设备绑定、dmabuf 通路），
   不是给使用者的工具，但**保留**：排查"这块 GPU 上 EGL/GBM 能不能用"时仍然有用。
 - `src/bin/vidpin.rs` 也是：它把 mpv 解出来的一帧读回来看，排查"解码出来的画面对不对"用。
+  `--fit cover|fit|stretch|center|tile` 可以逐个试填充模式，`--out` 存成 PNG —— 量黑边
+  （逐行/逐列扫边缘）是验证 `fit` 最直接的办法，比截图快也不占屏幕。
 - `src/bin/trprobe.rs` 同样保留：把每个换图过渡效果各渲一帧到离屏 dmabuf 并写成 PNG，
   `trprobe /dev/dri/renderD128 /tmp/tr`。**改 shader 之后用它看一眼** —— 单元测试看不见
   shader，而它已经抓到过三个真 bug：径向效果的 reach 误用整条对角线、honeycomb 用剪切取整

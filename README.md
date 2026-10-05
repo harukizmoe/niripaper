@@ -39,10 +39,14 @@ with the workspaces.
 Version 0.1.0, early.
 
 Working today: static images (PNG, JPEG, WebP), **video wallpapers** (hardware-decoded),
-parallax, the overview transition, configuration, per-output settings, and changing the
-wallpaper of a running daemon.
+parallax, the overview transition, the wallpaper transition (nine effects), `fit` for
+sources that do not match the canvas, configuration with a `config.d` directory and hot
+reload, per-output settings, `schema`/`state` for a panel to build its UI from, and
+changing the wallpaper of a running daemon.
 
-Not here yet: a cross-fade when the wallpaper changes.
+Not here yet: the Noctalia panel (a separate project — the daemon side of the interface
+is `schema`, `state` and `config.d`, all of which are here), an AUR package, and prebuilt
+binaries.
 
 ## Requirements
 
@@ -87,6 +91,10 @@ niripaper kill                        # shut it down
 
 `set` loads the new wallpaper *before* swapping it in, so a bad path reports an error
 and leaves the current one on screen instead of blanking it.
+
+`set` is a **temporary override**: it changes what is on screen, not the configuration,
+and any reload of `config.d` or `config.toml` puts the configured wallpaper back. To keep
+a wallpaper, put it in the configuration.
 
 `schema` and `state` are what a panel (the Noctalia plugin, or anything else) talks to.
 `schema` lists every configuration key with its type, bounds, default, unit and whether
