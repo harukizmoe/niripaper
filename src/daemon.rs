@@ -860,6 +860,12 @@ fn switch_wallpaper(
     Ok(())
 }
 
+/// `log`, for modules that are not the daemon (the watcher reports what it picks
+/// up, and that report is how "why did my edit do nothing" gets answered).
+pub(crate) fn log_public(message: &str) {
+    log(message);
+}
+
 fn log(message: &str) {
     // Flush every line. When stdout is a file — which is exactly the autostart
     // case — Rust block-buffers it, so a crash or a SIGTERM would take the whole
