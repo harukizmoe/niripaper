@@ -46,8 +46,9 @@ cargo test
 - **PR 按里程碑建**：一个里程碑完成时才从 `dev` 向 `main` 建 PR，用 **squash** 合入
   （`main` 上只留一条提交）。里程碑之间的小修小改——文档措辞、拼写、注释、`.gitignore`、
   小 bug 修正——**直接提交本地 `dev` 分支即可，不建 PR**。
-  里程碑：M0 渲染地基（EGL/GBM/dmabuf 交换链）、M1 niri IPC + 视差、M2 静态图 / 总览过渡 / 视频、
-  M3 Noctalia 插件、M4 开源收尾（README / CI / AUR / Releases）。详见本地 `HANDOFF.md` §6。
+  里程碑：M0 渲染地基（EGL/GBM/dmabuf 交换链）、M1 niri IPC + 视差、M2 静态图 / 总览过渡 / 换图过渡、
+  **M3 视频壁纸**（libmpv 硬解 + `video_fps` + 控制 socket）、M4 Noctalia 插件、
+  M5 开源收尾（README / CI / AUR / Releases）。详见本地 `HANDOFF.md` §6。
 - **每次 squash 合入之后都要 back-merge**：`git checkout dev && git merge origin/main`。
   squash 之后 `dev` 的提交不再是 `main` 的祖先，不做这一步下一个 PR 会带一堆旧提交并报 `CONFLICTING`。
   冲突通常只在 README / LICENSE / Cargo.toml 这类两边都改过的文件上，取 `dev` 的版本（它更新）：
