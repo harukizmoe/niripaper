@@ -361,7 +361,7 @@ pub fn keys() -> Vec<Key> {
             default: json!(transition.hold.as_millis() as u64),
             unit: Some("ms"),
             hot: true,
-            about: "How long the first frame is held before the transition moves; part of duration_ms.",
+            about: "How long the first frame is held still before the transition moves. A stall, not a pause: a slow curve reads better.",
         },
         Key {
             name: "transition.on_start",

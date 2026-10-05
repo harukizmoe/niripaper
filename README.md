@@ -222,10 +222,11 @@ grows from a point; set to something like `0.08` it begins as a small **complete
 circle**. However it is placed, it grows until it has covered the farthest corner from
 `center`.
 
-A small circle that starts expanding immediately is gone before the eye has decided what
-it is looking at, so `hold_ms` sits on that first frame for a moment before anything
-moves — that is the difference between "something grew" and "a circle opened". It is
-part of `duration_ms`, not extra.
+`hold_ms` holds the first frame still for a moment before anything moves, which is
+**a stall, not a pause**: the radius stops dead and the transition reads as two pieces.
+For a small circle that should still register, a slow-starting curve is the better
+answer — the circle keeps moving, it just moves slowly at first. Reach for `hold_ms`
+only when you really do want a beat. It is part of `duration_ms`, not extra.
 
 niri's curves are all fast at the start and slow at the end, which is the opposite of
 what a reveal wants. For slow-fast-slow, use a bezier — `curve = "cubic-bezier"` with
