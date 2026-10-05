@@ -22,13 +22,16 @@
 
 use std::time::{Duration, Instant};
 
-use crate::motion::{offset_px, DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
+use crate::crossfade::CrossFade;
+use crate::media::{self, Media};
+use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
 use crate::render::anim::Animator;
 use crate::render::egl::{Egl, EglVendor};
 use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
-use crate::render::layer::{self, LayerSurface, Pool};
+use crate::render::layer::{self, Pool};
+use crate::scene::Scene;
 use crate::{gpu, motion};
 
 /// The layer-shell namespace, and therefore the name users match in
@@ -92,56 +95,6 @@ impl Options {
 /// What is being drawn: a decoded still, or a playing video. Both end up
 /// canvas-sized and are sampled identically — the only difference is that the
 /// video's texture is redrawn by libmpv as it plays.
-enum Media {
-    Image(crate::render::image::Wallpaper),
-    Video(crate::render::video::Video),
-}
-
-/// Load a wallpaper: a still image, or a video routed by extension. Shared by
-/// startup and by `set` over the control socket.
-fn load_media(path: &std::path::Path, canvas: (u32, u32), video_fps: u32) -> Result<Media, String> {
-    if is_video(path) {
-        let video = crate::render::video::Video::new(path, canvas.0, canvas.1, video_fps)?;
-        return Ok(Media::Video(video));
-    }
-    Ok(Media::Image(crate::render::image::Wallpaper::load(
-        path, canvas,
-    )?))
-}
-
-/// One line describing what is on screen, for `query`.
-fn describe(media: &Option<Media>, progress: motion::Progress, options: &Options) -> String {
-    let kind = match media {
-        Some(Media::Image(_)) => "image".to_owned(),
-        Some(Media::Video(video)) => {
-            let hwdec = video.hwdec();
-            if hwdec.is_empty() {
-                "video".to_owned()
-            } else {
-                format!("video hwdec={hwdec}")
-            }
-        }
-        None => format!("pattern {:?}", options.pattern),
-    };
-    format!(
-        "ok {kind} h={:.4} v={:.4}",
-        progress.horizontal, progress.vertical
-    )
-}
-
-/// Video containers mpv handles and `image` does not. Routed by extension
-/// because guessing wrong is worse than a clear failure: a still handed to mpv
-/// plays as a one-frame video, while a video handed to `image` fails to decode.
-fn is_video(path: &std::path::Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi")
-    )
-}
-
 pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> {
     // --- wayland -----------------------------------------------------------
     let mut client = layer::Client::connect()?;
@@ -244,11 +197,15 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         (surface.height as f64 * options.scale).round() as u32,
     );
     let mut media = match &options.wallpaper {
-        Some(path) if is_video(path) => {
-            let video =
-                crate::render::video::Video::new(path, canvas.0, canvas.1, options.video_fps)?;
+        Some(path) => {
+            let loaded = Media::load(path, canvas, options.video_fps)?;
             log(&format!(
-                "video {} → canvas {}×{}, fps cap {}",
+                "{} {} → canvas {}×{}, fps cap {}",
+                if media::is_video(path) {
+                    "video"
+                } else {
+                    "wallpaper"
+                },
                 path.display(),
                 canvas.0,
                 canvas.1,
@@ -258,12 +215,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     options.video_fps.to_string()
                 }
             ));
-            Some(Media::Video(video))
-        }
-        Some(path) => {
-            let loaded = crate::render::image::Wallpaper::load(path, canvas)?;
-            log(&format!("wallpaper {}", loaded.describe()));
-            Some(Media::Image(loaded))
+            Some(loaded)
         }
         None => None,
     };
@@ -279,10 +231,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // shows more of the wallpaper, which reads as the workspace receding.
     let mut zoom = Animator::new(1.0f64, animations.overview_open_close.animation)
         .with_slowdown(animations.slowdown);
-    // Starts settled at 1.0 ("fully the new content"): a cross-fade only exists
-    // while the wallpaper is changing.
-    let mut fade =
-        Animator::new(1.0f64, animations.wallpaper_change).with_slowdown(animations.slowdown);
+    let mut crossfade = CrossFade::new(animations.wallpaper_change, animations.slowdown);
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -298,28 +247,31 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
 
     // Map the layer straight away. At rest no callback is requested, so the
     // process idles in `poll()` until the layout actually changes.
-    draw(
-        &mut client,
-        &mut pool,
-        &surface,
-        &renderer,
-        animator.target(),
-        1.0,
-        screen,
-        options,
-        media.as_ref(),
-        1.0,
-        None,
-        false,
-    )?;
+    // The slot matters: the cross-fade snapshots the buffer that is on screen.
+    let mut last_slot: Option<usize> = Scene {
+        view: Scene::view(
+            animator.target(),
+            1.0,
+            screen,
+            options.scale,
+            options.pattern,
+        ),
+        content: match &media {
+            Some(media) => media.content(),
+            None => gl::Content::Pattern(options.pattern),
+        },
+        fade: 1.0,
+        previous: None,
+    }
+    .draw(&mut client, &mut pool, &surface, &renderer, false)?;
     drawn += 1;
 
     // The video's wakeup fd is polled too — `-1` when there is no video, which
     // `poll()` ignores. That is what keeps the idle cost at zero for stills.
-    let video_fd = match &media {
-        Some(Media::Video(video)) => video.fd(),
-        _ => -1,
-    };
+    let video_fd = media
+        .as_ref()
+        .map(|media| media.wakeup_fd())
+        .unwrap_or(media::NO_WAKEUP);
     // The control socket (§3). Bound here, after everything that can fail at
     // startup has already failed: a socket that exists means a daemon that works.
     let socket_path = match &options.socket {
@@ -366,11 +318,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // mpv's wakeup into a frame request.
     let mut video_present = false;
     let mut quit = false;
-    // The cross-fade blends against a snapshot of the last frame actually
-    // drawn, so stills and videos blend identically and no second decoder is
-    // needed. Both stay absent until a wallpaper is actually switched.
-    let mut snapshot: Option<gl::Snapshot> = None;
-    let mut last_slot: Option<usize> = None;
     while running() && !quit {
         fds[0].revents = 0;
         fds[1].revents = 0;
@@ -386,13 +333,12 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         }
 
         if fds[2].revents & libc::POLLIN != 0 {
-            if let Some(Media::Video(video)) = media.as_mut() {
-                video.drain();
+            if let Some(media) = media.as_mut() {
                 // Decode into our texture; the next frame callback presents it.
-                match video.render() {
+                match media.pump() {
                     Ok(true) => video_present = true,
                     Ok(false) => {}
-                    Err(err) => log(&format!("video: {err}")),
+                    Err(err) => log(&format!("media: {err}")),
                 }
             }
         }
@@ -436,24 +382,24 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     crate::ipc::Request::Set(path) => {
                         // Load first, swap after: a bad path must leave the
                         // current wallpaper alone, not blank the screen.
-                        match load_media(&path, canvas, options.video_fps) {
+                        match Media::load(&path, canvas, options.video_fps) {
                             Ok(loaded) => {
-                                // Snapshot *before* the swap: this is what is on
-                                // screen right now.
-                                if let Some(slot) = last_slot {
-                                    let snapshot = snapshot.get_or_insert_with(|| {
-                                        gl::Snapshot::new(screen.0 as u32, screen.1 as u32)
-                                    });
-                                    pool.frame(slot).begin();
-                                    snapshot.capture();
-                                }
                                 media = Some(loaded);
-                                if animations.wallpaper_change
-                                    != crate::render::anim::Animation::Off
-                                {
-                                    fade = Animator::new(0.0f64, animations.wallpaper_change)
-                                        .with_slowdown(animations.slowdown);
-                                    fade.retarget(1.0, Instant::now());
+                                // Snapshot *before* the swap: that is what is on
+                                // screen right now. `begin` only binds the
+                                // framebuffer and sets the viewport, so it does
+                                // not disturb the pixels being copied.
+                                if !crossfade.is_off() {
+                                    if let Some(slot) = last_slot {
+                                        crossfade.restart(
+                                            (screen.0 as u32, screen.1 as u32),
+                                            Instant::now(),
+                                            |snapshot| {
+                                                pool.frame(slot).begin();
+                                                snapshot.capture();
+                                            },
+                                        );
+                                    }
                                 }
                                 crate::ipc::reply(&stream, "ok");
                                 log(&format!("wallpaper → {}", path.display()));
@@ -466,7 +412,17 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     }
                     crate::ipc::Request::Query => {
                         let (progress, _) = animator.sample(Instant::now());
-                        crate::ipc::reply(&stream, &describe(&media, progress, options));
+                        let kind = match &media {
+                            Some(media) => media.describe(),
+                            None => format!("pattern {:?}", options.pattern),
+                        };
+                        crate::ipc::reply(
+                            &stream,
+                            &format!(
+                                "ok {kind} h={:.4} v={:.4}",
+                                progress.horizontal, progress.vertical
+                            ),
+                        );
                     }
                     crate::ipc::Request::Kill => {
                         crate::ipc::reply(&stream, "ok");
@@ -489,24 +445,18 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             last_frame_at = now;
             let (progress, moving) = animator.sample(now);
             let (zoom_now, zoom_moving) = zoom.sample(now);
-            let (fade_now, fade_moving) = fade.sample(now);
+            let (fade, fade_moving) = crossfade.sample(now);
             let moving = moving || zoom_moving || video_present || fade_moving;
-            let submitted_slot = draw(
-                &mut client,
-                &mut pool,
-                &surface,
-                &renderer,
-                progress,
-                zoom_now,
-                screen,
-                options,
-                media.as_ref(),
-                // Clamped: a spring may overshoot, but "more than the new
-                // wallpaper" is not a thing a fade can show.
-                fade_now.clamp(0.0, 1.0) as f32,
-                snapshot.as_ref().map(|s| s.texture()),
-                moving,
-            )?;
+            let submitted_slot = Scene {
+                view: Scene::view(progress, zoom_now, screen, options.scale, options.pattern),
+                content: match &media {
+                    Some(media) => media.content(),
+                    None => gl::Content::Pattern(options.pattern),
+                },
+                fade,
+                previous: crossfade.texture(),
+            }
+            .draw(&mut client, &mut pool, &surface, &renderer, moving)?;
             drawn += u64::from(submitted_slot.is_some());
             if submitted_slot.is_none() {
                 skipped += 1;
@@ -518,7 +468,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             }
             if options.trace {
                 log(&format!(
-                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} fade={fade_now:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
+                    "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} fade={fade:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
                     progress.horizontal,
                     progress.vertical,
                     submitted_slot.is_some(),
@@ -535,7 +485,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving() || fade.is_moving() || video_present)
+        if (animator.is_moving() || zoom.is_moving() || crossfade.is_moving() || video_present)
             && !frame_pending
         {
             surface.request_frame(&client.handle());
@@ -561,66 +511,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
 
 /// Draw one frame of the parallax pattern.
 #[allow(clippy::too_many_arguments)]
-fn draw(
-    client: &mut layer::Client,
-    pool: &mut Pool<'_>,
-    surface: &LayerSurface,
-    renderer: &gl::Renderer,
-    progress: motion::Progress,
-    zoom: f64,
-    screen: (f64, f64),
-    options: &Options,
-    media: Option<&Media>,
-    fade: f32,
-    previous: Option<u32>,
-    want_next_frame: bool,
-) -> Result<Option<usize>, String> {
-    let released = std::mem::take(&mut client.state.released);
-    // Every buffer still on screen: the compositor is behind us. Dropping a
-    // frame is the right answer — queueing them up would just add latency, and
-    // the caller will keep the animation alive with a bare frame request.
-    let Some(slot) = pool.acquire(&released) else {
-        return Ok(None);
-    };
-
-    // The zoom is just an animated multiplier on `scale`: the canvas, the
-    // overflow and therefore the parallax travel all follow from it, and the
-    // wallpaper texture (already canvas-sized) is sampled as a sub-region —
-    // nothing to re-upload.
-    let scale = (options.scale * zoom).max(1.0);
-    let offset = offset_px(progress, screen, scale);
-    let frame = pool.frame(slot);
-    frame.begin();
-    let content = match media {
-        Some(Media::Image(wallpaper)) => gl::Content::Wallpaper(&wallpaper.texture),
-        Some(Media::Video(video)) => gl::Content::Video(video.texture()),
-        None => gl::Content::Pattern(options.pattern),
-    };
-    renderer.draw(
-        gl::View {
-            screen: (screen.0 as f32, screen.1 as f32),
-            scale: scale as f32,
-            offset: (offset.0 as f32, offset.1 as f32),
-            pattern: options.pattern,
-        },
-        content,
-        fade,
-        previous,
-    );
-    frame.finish();
-    if let Some(err) = gl::last_error() {
-        return Err(format!("GL error after drawing: 0x{err:x}"));
-    }
-
-    // The frame request travels with this commit; on its own it would be
-    // dropped.
-    let _callback = want_next_frame.then(|| surface.request_frame(&client.handle()));
-    let buffer = client.attach(surface, frame);
-    pool.mark_submitted(slot, &buffer);
-    client.flush()?;
-    Ok(Some(slot))
-}
-
 fn log(message: &str) {
     // Flush every line. When stdout is a file — which is exactly the autostart
     // case — Rust block-buffers it, so a crash or a SIGTERM would take the whole

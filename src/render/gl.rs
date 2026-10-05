@@ -403,14 +403,18 @@ impl Renderer {
                     glUniform1i(self.uniforms.has_wallpaper, 0);
                 }
             }
-            match previous {
+            // Without a snapshot there is nothing to blend from, and an unbound
+            // sampler would read undefined memory — so the fade is forced to
+            // "already finished" in that case.
+            let fade = match previous {
                 Some(texture) if fade < 1.0 => {
                     glActiveTexture(GL_TEXTURE1);
                     glBindTexture(GL_TEXTURE_2D, texture);
                     glUniform1i(self.uniforms.previous, 1);
+                    fade
                 }
-                _ => {}
-            }
+                _ => 1.0,
+            };
             glUniform1f(self.uniforms.fade, fade);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glActiveTexture(GL_TEXTURE0);

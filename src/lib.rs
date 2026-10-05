@@ -7,10 +7,13 @@
 //! choose which GPU renders an output.
 
 pub mod config;
+pub mod crossfade;
 pub mod daemon;
 pub mod gpu;
 pub mod ipc;
+pub mod media;
 pub mod motion;
 pub mod niri;
 pub mod niri_config;
 pub mod render;
+pub mod scene;
