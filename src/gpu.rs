@@ -62,6 +62,23 @@ impl Gpu {
     }
 }
 
+/// Split one `/sys/class/drm` entry name into `(card, connector)`.
+///
+/// Entries are `<card><N>-<connector>`, and the connector's own name may contain
+/// dashes (`HDMI-A-1`, `DP-2`), so only the *first* dash separates — splitting on
+/// the last one, or on every one, gets `card0` / `HDMI` instead.
+///
+/// Pure, and separate from the directory walk, so the parsing can be tested
+/// against made-up names instead of whatever the machine running the tests
+/// happens to have plugged in.
+fn split_entry(dir: &str) -> Option<(&str, &str)> {
+    let (card, connector) = dir.split_once('-')?;
+    let is_card = card
+        .strip_prefix("card")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    (is_card && !connector.starts_with("Writeback")).then_some((card, connector))
+}
+
 /// Every DRM connector the kernel knows about, connected or not.
 pub fn connectors() -> io::Result<Vec<Connector>> {
     let mut out = Vec::new();
@@ -71,17 +88,9 @@ pub fn connectors() -> io::Result<Vec<Connector>> {
         let Some(dir) = file_name.to_str() else {
             continue;
         };
-        // Connector entries are `<card><N>-<connector>`; cards and render nodes
-        // have no dash.
-        let Some((card, connector)) = dir.split_once('-') else {
+        let Some((card, connector)) = split_entry(dir) else {
             continue;
         };
-        let is_card = card
-            .strip_prefix("card")
-            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-        if !is_card || connector.starts_with("Writeback") {
-            continue;
-        }
         let status = fs::read_to_string(entry.path().join("status")).unwrap_or_default();
         out.push(Connector {
             name: connector.to_owned(),
@@ -228,15 +237,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_connector_entries() {
-        // `card0-HDMI-A-1` must split into card0 / HDMI-A-1, not card0 / HDMI.
-        let all = connectors().expect("sysfs present");
-        assert!(all.iter().all(|c| c.card.starts_with("card")), "{all:?}");
-        assert!(
-            all.iter()
-                .any(|c| c.name.contains("DP-1") || c.name.contains("eDP-1")),
-            "{all:?}"
-        );
+    fn connector_entries_split_into_card_and_name() {
+        // Only the first dash separates: the connector's own name has dashes too.
+        assert_eq!(split_entry("card0-HDMI-A-1"), Some(("card0", "HDMI-A-1")));
+        assert_eq!(split_entry("card1-eDP-1"), Some(("card1", "eDP-1")));
+        assert_eq!(split_entry("card0-DP-1"), Some(("card0", "DP-1")));
+        assert_eq!(split_entry("card12-DP-3"), Some(("card12", "DP-3")));
+
+        // Not connectors: a bare card, a render node, a card with no number, and
+        // the kernel's writeback entries (which are not displays).
+        assert_eq!(split_entry("card0"), None);
+        assert_eq!(split_entry("renderD128"), None);
+        assert_eq!(split_entry("cardX-DP-1"), None);
+        assert_eq!(split_entry("card0-Writeback-1"), None);
     }
 
     #[test]
