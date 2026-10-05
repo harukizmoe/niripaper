@@ -645,6 +645,7 @@ struct RawTransition {
     direction: Option<String>,
     stripes: Option<u32>,
     cell: Option<f64>,
+    push: Option<f64>,
     on_start: Option<bool>,
 }
 
@@ -722,6 +723,13 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         ));
     }
 
+    let push = raw.push.unwrap_or(defaults.push);
+    if !(0.0..=1.5).contains(&push) {
+        return Err(format!(
+            "{key}.push is a multiple of the distance from the centre; 0 (an iris) to 1.5, got {push}"
+        ));
+    }
+
     Ok(Settings {
         // A hard cut is the honest reading of "no animations": nothing to pick.
         selection: if global_off {
@@ -739,6 +747,7 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         direction,
         stripes,
         cell,
+        push,
         on_start: raw.on_start.unwrap_or(defaults.on_start),
     })
 }
@@ -874,6 +883,19 @@ mod tests {
             Animation::easing(Curve::EaseOutExpo, std::time::Duration::from_millis(600)),
             "the later file wins for the key it sets"
         );
+    }
+
+    #[test]
+    fn rejects_a_push_outside_its_range() {
+        for push in [1.6, -0.1] {
+            let err = Config::parse_without_niri(&format!("[transition]\npush = {push}"))
+                .expect_err("out of range");
+            assert!(err.contains("transition.push"), "{err}");
+        }
+        // The ends are allowed: 0 is an iris, and 1.5 is as far as it goes.
+        for push in [0.0, 1.5] {
+            Config::parse_without_niri(&format!("[transition]\npush = {push}")).expect("in range");
+        }
     }
 
     #[test]

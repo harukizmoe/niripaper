@@ -187,6 +187,7 @@ scale = 1.2
 | `[transition] softness` | how wide the moving edge is (`0` hard, `1` very soft) |
 | `[transition] center`, `direction` | where radial effects start; which way wipes, stripes and slides go |
 | `[transition] stripes`, `cell` | bands in `stripes`; hexagon size in `honeycomb` |
+| `[transition] push` | how far `portal` pushes the old frame outward; `0` makes it an `iris` |
 | `[transition] allow_overshoot`, `on_start` | let the curve bounce; play one at startup |
 | `[outputs."NAME"]` | per-output overrides of any of the above |
 
@@ -205,6 +206,10 @@ side is live, so only one decoder ever runs. That is what lets a video arrive th
 a portal that is already moving, and it is why every effect costs one fragment pass
 however elaborate it looks. `softness` widens the moving edge — except in `slide`,
 where the two frames are exactly adjacent and the seam is a step.
+
+`iris` and `portal` are the same circle: `portal` additionally pushes the old frame
+outward as the hole opens, so you move *through* it rather than watch it get cut away.
+That is the whole difference, and `push` is how far it goes.
 
 `niripaper schema` lists every key above, with its type, bounds and whether editing
 the file while the daemon runs takes effect.

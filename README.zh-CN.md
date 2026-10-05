@@ -172,6 +172,7 @@ scale = 1.2
 | `[transition] softness` | 移动边缘多宽（`0` 硬边，`1` 很软） |
 | `[transition] center`、`direction` | 径向效果的起点；wipe/stripes/slide 的方向 |
 | `[transition] stripes`、`cell` | `stripes` 的条数；`honeycomb` 的六边形大小 |
+| `[transition] push` | `portal` 把旧画面往外推多远；`0` 就等于 `iris` |
 | `[transition] allow_overshoot`、`on_start` | 允许曲线回弹；启动时也播一次 |
 | `[outputs."NAME"]` | 按输出覆盖上面任意一项 |
 
@@ -188,6 +189,9 @@ scale = 1.2
 任何时刻只有一个解码器在跑。所以"视频从一个扩张的圆盘里透出来、并且已经在动"
 是能做到的；也是因此，每个效果无论看起来多华丽，代价都只是一个 fragment pass。
 `softness` 加宽移动的边缘 —— 唯独 `slide` 例外，它的两帧正好相邻，接缝是硬边。
+
+`iris` 与 `portal` 是同一个圆：`portal` 额外把旧画面向外推，所以观感是你**穿过去**，
+而不是看着它被挖掉。差别只有这一处，`push` 就是推多远。
 
 `niripaper schema` 会列出上面每一个配置项，连同类型、取值范围、以及运行中改文件
 是否即时生效。

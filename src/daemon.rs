@@ -735,6 +735,7 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     put("transition.direction", json!(transition.direction.name()));
     put("transition.stripes", json!(transition.stripes));
     put("transition.cell", json!(transition.cell));
+    put("transition.push", json!(transition.push));
     put("transition.on_start", json!(transition.on_start));
 
     // Which files this configuration is made of: the main one plus every
@@ -824,4 +825,35 @@ fn log(message: &str) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "niripaper: {message}");
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A panel zips `schema` and `state` together by dotted key name. That only
+    /// works if the two agree, and they are written in two different files — so
+    /// a key added to one and forgotten in the other is a silent hole in the
+    /// panel's UI. This is the test that catches it.
+    #[test]
+    fn state_reports_every_key_the_schema_lists() {
+        let options = Options::new("test");
+        let state = state_json(&Snapshot {
+            options: &options,
+            media: None,
+            canvas: (1920, 1080),
+            position: (0.0, 0.0),
+            zoom: 1.0,
+        });
+        let values = state["config"]["values"]
+            .as_object()
+            .expect("values is an object");
+        for key in crate::schema::keys() {
+            assert!(
+                values.contains_key(key.name),
+                "schema lists {:?} but state does not report it",
+                key.name
+            );
+        }
+    }
 }

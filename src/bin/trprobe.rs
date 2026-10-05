@@ -74,6 +74,7 @@ fn main() -> Result<(), String> {
                 center: (settings.center.0 as f32, settings.center.1 as f32),
                 direction: settings.direction.vector(),
                 params: (settings.stripes as f32, settings.cell as f32),
+                push: settings.push as f32,
             };
             frame.begin();
             renderer.draw(view, Content::Pattern(Pattern::Blocks), Some(&blend));

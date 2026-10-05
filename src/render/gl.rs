@@ -342,6 +342,7 @@ struct Uniforms {
     center: i32,
     direction: i32,
     params: i32,
+    push: i32,
 }
 
 /// What the shader needs to blend the previous frame in.
@@ -361,6 +362,8 @@ pub struct Blend {
     pub direction: (f32, f32),
     /// `(stripes, cell)` — read only by the effects that have a use for them.
     pub params: (f32, f32),
+    /// How far `portal` pushes the old frame outward; 0 makes it an iris.
+    pub push: f32,
 }
 
 /// A shader program plus the empty VAO core-profile GL insists on.
@@ -408,6 +411,7 @@ impl Renderer {
             center: uniform(program, "u_center"),
             direction: uniform(program, "u_direction"),
             params: uniform(program, "u_params"),
+            push: uniform(program, "u_push"),
         };
         Ok(Self {
             program,
@@ -462,6 +466,7 @@ impl Renderer {
                         blend.direction.1,
                     );
                     glUniform2f(self.uniforms.params, blend.params.0, blend.params.1);
+                    glUniform1f(self.uniforms.push, blend.push);
                 }
                 // Nothing to blend from. Say so explicitly rather than leaning on
                 // a sentinel progress: an unbound sampler reads undefined memory.
@@ -507,6 +512,7 @@ uniform float u_softness;
 uniform vec2 u_center;
 uniform vec2 u_direction;
 uniform vec2 u_params;
+uniform float u_push;
 out vec4 color;
 
 float hash(vec2 p) {
@@ -575,7 +581,8 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
             // Portal: the old frame is pushed outward as the hole opens, so you
             // move *through* it rather than watch it get cut away. The new side
             // is live, which is the point: a video arrives already moving.
-            old_uv = u_center + (uv - u_center) / (1.0 + 0.35 * clamp(t, 0.0, 1.0));
+            // `u_push = 0` makes this an iris.
+            old_uv = u_center + (uv - u_center) / (1.0 + u_push * clamp(t, 0.0, 1.0));
         }
     } else if (u_effect == 7) {
         // Honeycomb: hexagonal cells, each opening in its own order.

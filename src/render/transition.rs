@@ -213,6 +213,9 @@ pub struct Settings {
     pub stripes: u32,
     /// How big a `honeycomb` cell is, as a fraction of the screen's height.
     pub cell: f64,
+    /// How far `portal` pushes the old frame outward as the hole opens, as a
+    /// multiple of its distance from the centre. `0` makes it an iris.
+    pub push: f64,
     /// Play one when the daemon starts, so logging in is not a hard cut.
     pub on_start: bool,
 }
@@ -237,6 +240,9 @@ impl Default for Settings {
             // thirteen rows on a 1440-tall screen, which reads as a honeycomb
             // rather than as a handful of tiles.
             cell: 0.05,
+            // Enough that portal and iris are told apart at a glance. Below about
+            // 0.3 the push reads as "a slight zoom" on a photograph.
+            push: 0.55,
             on_start: true,
         }
     }
@@ -360,6 +366,7 @@ impl Transition {
             center: (self.settings.center.0 as f32, self.settings.center.1 as f32),
             direction: self.settings.direction.vector(),
             params: (self.settings.stripes as f32, self.settings.cell as f32),
+            push: self.settings.push as f32,
         })
     }
 
@@ -423,6 +430,7 @@ mod tests {
             direction: Direction::Right,
             stripes: 12,
             cell: 0.12,
+            push: 0.55,
             on_start: true,
         }
     }

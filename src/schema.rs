@@ -314,6 +314,17 @@ pub fn keys() -> Vec<Key> {
             about: "How big a honeycomb cell is, as a fraction of the screen height.",
         },
         Key {
+            name: "transition.push",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.5),
+            },
+            default: json!(transition.push),
+            unit: None,
+            hot: true,
+            about: "How far portal pushes the old frame outward; 0 makes it an iris.",
+        },
+        Key {
             name: "transition.on_start",
             kind: Kind::Bool,
             default: json!(transition.on_start),
