@@ -60,6 +60,12 @@ cargo test
 
 ## 代码与文档约定
 
+- **按功能拆分模块，不要把代码堆进一个文件**：`daemon.rs` 只放 `Options`、事件循环与日志；
+  媒体类型与路由在 `media.rs`，换图过渡在 `crossfade.rs`，一帧的绘制在 `scene.rs`。
+- **绘制输入收成结构体**（`scene::Scene`）：加一个参数时不要让它波及每个调用点 ——
+  实测过，加 fade 时 `daemon.rs` 与 `src/bin/m0b.rs` 都得跟着改。
+- **别让模块互相知道对方的细节**：`media` 不暴露它有几个变体给 daemon（用 `content()`/`pump()`/
+  `wakeup_fd()` 这些动词），`crossfade` 不碰缓冲池（快照由调用方填）。
 - `HANDOFF.md` 是维护者本地的设计与进度文档，**不进仓库**（已在 `.gitignore` 里）。不要把它提交，
   也不要把它当成给外部读者的文档。
 - 代码注释里的 `§x.y` 指向 `HANDOFF.md` 的章节，是内部可追溯约定，**保留**。
