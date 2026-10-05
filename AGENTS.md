@@ -60,6 +60,12 @@ cargo test
 
 ## 代码与文档约定
 
+- **按功能拆分模块，不要把代码堆进一个文件**：`daemon.rs` 只放 `Options`、事件循环与日志；
+  媒体类型与路由在 `media.rs`，换图过渡在 `crossfade.rs`，一帧的绘制在 `scene.rs`。
+- **绘制输入收成结构体**（`scene::Scene`）：加一个参数时不要让它波及每个调用点 ——
+  实测过，加 fade 时 `daemon.rs` 与 `src/bin/m0b.rs` 都得跟着改。
+- **别让模块互相知道对方的细节**：`media` 不暴露它有几个变体给 daemon（用 `content()`/`pump()`/
+  `wakeup_fd()` 这些动词），`crossfade` 不碰缓冲池（快照由调用方填）。
 - `HANDOFF.md` 是维护者本地的设计与进度文档，**不进仓库**（已在 `.gitignore` 里）。不要把它提交，
   也不要把它当成给外部读者的文档。
 - 代码注释里的 `§x.y` 指向 `HANDOFF.md` 的章节，是内部可追溯约定，**保留**。
@@ -67,3 +73,8 @@ cargo test
   改一份就要同步另一份。措辞用直白陈述，不要俏皮话，不要写未实现的功能。
 - `src/bin/eglpin.rs`、`src/bin/m0b.rs` 是 M0 阶段的诊断探针（EGL 按设备绑定、dmabuf 通路），
   不是给使用者的工具，但**保留**：排查"这块 GPU 上 EGL/GBM 能不能用"时仍然有用。
+- `src/bin/trprobe.rs` 同样保留：把 10 个换图过渡效果各渲一帧到离屏 dmabuf 并写成 PNG，
+  `trprobe /dev/dri/renderD128 /tmp/tr`。**改 shader 之后用它看一眼** —— 单元测试看不见
+  shader，而它已经抓到过三个真 bug：径向效果的 reach 误用整条对角线、honeycomb 用剪切取整
+  得到的是平行四边形、以及纹理漏设 `GL_TEXTURE_MIN_FILTER` 导致快照采样恒为黑（后者意味着
+  换图过渡一直在从黑淡入，只验 fade 数值是看不出来的）。

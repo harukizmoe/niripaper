@@ -96,13 +96,16 @@ impl Curve {
         })
     }
 
+    /// The config-file spelling — the inverse of `parse`, indexed off the same
+    /// table so the two cannot drift (a bezier is always spelled `cubic-bezier`;
+    /// its control points live beside it).
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Linear => "linear",
-            Self::EaseOutQuad => "ease-out-quad",
-            Self::EaseOutCubic => "ease-out-cubic",
-            Self::EaseOutExpo => "ease-out-expo",
-            Self::CubicBezier(_) => "cubic-bezier",
+            Self::Linear => Self::NAMES[0],
+            Self::EaseOutQuad => Self::NAMES[1],
+            Self::EaseOutCubic => Self::NAMES[2],
+            Self::EaseOutExpo => Self::NAMES[3],
+            Self::CubicBezier(_) => Self::NAMES[4],
         }
     }
 
