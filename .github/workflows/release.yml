@@ -1,7 +1,7 @@
 name: Release
 
 # Tagging is the release: `git tag v0.2.0 && git push origin v0.2.0` builds the
-# binary and attaches it to a GitHub Release.
+# binaries and attaches them to a GitHub Release.
 on:
   push:
     tags: ["v*"]
@@ -13,19 +13,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    # Deliberately *not* `ubuntu-24.04`. A binary is only as portable as the glibc
-    # it was linked against — built here, it runs on anything at least as new as
-    # this runner and nothing older. 22.04 is the oldest image GitHub still
-    # offers, which buys the widest range; the CI workflow stays on 24.04 because
-    # a check has no such obligation.
+  # Two builds, because a binary that links libmpv is tied to the ABI of whatever
+  # built it: Ubuntu 22.04 ships mpv 0.34 (`libmpv.so.1`), Arch ships 0.41
+  # (`libmpv.so.2`). One artifact cannot serve both — the first attempt shipped an
+  # "x86_64-linux" tarball that would not even start on the machine of the person
+  # who asked for it. Hence: one per distribution, each named for it.
+  ubuntu:
+    # Deliberately *not* `ubuntu-latest`, and older than the CI's runner. A binary
+    # is only as portable as the glibc it was linked against — built here it runs
+    # on anything at least as new, and 22.04 is the oldest image GitHub still
+    # offers. (Measured: the result wants GLIBC_2.34.)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
 
-      # Linked by hand (no crate wraps them): libmpv for the video render API,
-      # libEGL/libGL for the renderer, libgbm for the dmabuf allocator,
-      # libwayland-client for the layer surface.
       - name: System dependencies
         run: |
           sudo apt-get update
@@ -39,31 +40,51 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
-      # The tarball carries what a user needs to know what they have: the binary,
-      # both READMEs, and the licence.
       - name: Package
         run: |
           mkdir -p dist
-          # Named for the distribution, not for "linux": the sonames it links are
-          # that distribution's ABI. Built here it wants libmpv.so.1 (mpv 0.34);
-          # Arch ships libmpv.so.2 (mpv 0.41), so the tarball is useless there.
-          # Anyone not on Ubuntu 22.04 or newer builds from source.
           tar czf "dist/niripaper-${{ github.ref_name }}-ubuntu-22.04-x86_64.tar.gz" \
             -C target/release niripaper \
             -C "$GITHUB_WORKSPACE" README.md README.zh-CN.md LICENSE
           tar tzf dist/*.tar.gz
-          # Say out loud what it ended up linked against: this is the line that
-          # tells you which distributions the artifact can actually run on.
+          # The line that says which distributions this can actually run on.
           ldd target/release/niripaper | grep -E "libmpv|libEGL|libgbm|libwayland-client" || true
 
-      # `gh` is preinstalled on the runner, so this needs no third-party action.
-      # `--generate-notes` collects the merged pull requests, which is what the
-      # milestone-shaped history in `main` is for.
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+        run: .github/attach-release.sh dist/*.tar.gz
+
+  # The audience for a niri wallpaper daemon is on Arch, so this is the artifact
+  # most people will actually use. A container rather than a runner, because
+  # GitHub has no Arch image — and it doubles as the reason the build is
+  # reproducible: the container's libmpv, not the runner's, is what it links.
+  arch:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: System dependencies
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes \
-            dist/niripaper-*.tar.gz
+          pacman -Syu --noconfirm --needed \
+            base-devel pkgconf mpv libglvnd mesa wayland rust github-cli
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar czf "dist/niripaper-${{ github.ref_name }}-arch-x86_64.tar.gz" \
+            -C target/release niripaper \
+            -C "$GITHUB_WORKSPACE" README.md README.zh-CN.md LICENSE
+          tar tzf dist/*.tar.gz
+          ldd target/release/niripaper | grep -E "libmpv|libEGL|libgbm|libwayland-client" || true
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/attach-release.sh dist/*.tar.gz

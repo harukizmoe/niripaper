@@ -72,11 +72,12 @@ get installed alongside the daemon.
 There is a `PKGBUILD` in `packaging/aur/` for the AUR (not published yet — the AUR is not
 accepting new accounts, see `packaging/aur/README.md`).
 
-Releases carry a binary built on **Ubuntu 22.04** for `x86_64`. It is not a generic Linux
-binary and the name says so: a daemon that links `libmpv`, `libEGL`, `libgbm` and
-`libwayland-client` is tied to the ABI of the distribution that built it — the Ubuntu build
-wants `libmpv.so.1` (mpv 0.34) while Arch ships `libmpv.so.2` (mpv 0.41). It runs on Ubuntu
-22.04 and newer; anywhere else, build from source.
+Releases carry **two** `x86_64` binaries, because a daemon that links `libmpv`, `libEGL`,
+`libgbm` and `libwayland-client` is tied to the ABI of the distribution that built it: the
+Ubuntu build wants `libmpv.so.1` (mpv 0.34) while Arch ships `libmpv.so.2` (mpv 0.41), so
+one tarball cannot serve both. Take the one that matches your distribution — `-arch-` for
+Arch and its derivatives, `-ubuntu-22.04-` for Ubuntu 22.04 and newer — or build from
+source, which works everywhere.
 
 ## Usage
 
