@@ -830,6 +830,7 @@ mod tests {
             column_span = 8
             workspace_span = 5
             namespace = "custom"
+            wallpaper = "/etc/os-release"
 
             [animations.parallax]
             duration_ms = 250
@@ -848,6 +849,10 @@ mod tests {
         assert_eq!(config.column_span, 8);
         assert_eq!(config.workspace_span, 5);
         assert_eq!(
+            config.wallpaper.as_deref(),
+            Some(Path::new("/etc/os-release"))
+        );
+        assert_eq!(
             config.animations.parallax,
             Animation::easing(Curve::EaseOutExpo, std::time::Duration::from_millis(250))
         );
@@ -859,7 +864,9 @@ mod tests {
         assert_eq!(config.output("eDP-1").column_span, 4);
         // The per-output section does not override what it does not mention.
         assert_eq!(config.output("eDP-1").workspace_span, 5);
-        // The per-output wallpaper wins over the global one.
+        // The per-output wallpaper wins over the global one. This is what a
+        // panel's `config.d/noctalia.toml` relies on: one daemon per output,
+        // one wallpaper per output, all from one file.
         assert_eq!(
             config.output("eDP-1").wallpaper.as_deref(),
             Some(Path::new("/etc/hostname"))
@@ -868,7 +875,10 @@ mod tests {
         assert_eq!(config.output("HDMI-A-1").scale, 1.2);
         assert_eq!(config.output("HDMI-A-1").column_span, 8);
         assert_eq!(config.output("HDMI-A-1").workspace_span, 5);
-        assert_eq!(config.output("HDMI-A-1").wallpaper, None);
+        assert_eq!(
+            config.output("HDMI-A-1").wallpaper.as_deref(),
+            Some(Path::new("/etc/os-release"))
+        );
     }
 
     #[test]

@@ -450,19 +450,26 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 // screen going blank. (niri's `ConfigLoaded { failed: true }`.)
                 Err(err) => log(&format!("config reload failed, keeping current: {err}")),
                 Ok(reloaded) => {
+                    // What the daemon runs with is resolved *per output*: a
+                    // `[outputs."<name>"]` table overrides the global keys, and a
+                    // reload has to resolve the same way startup does. Reading the
+                    // globals here dropped a per-output wallpaper — and its scale and
+                    // spans — the moment anything touched the configuration, which is
+                    // exactly what a panel writes to (`config.d/noctalia.toml`).
+                    let params = reloaded.output(&options.output);
                     // `fit` changes how the media is placed, so it needs the
                     // same reload the wallpaper path gets.
                     let changed_wallpaper =
-                        reloaded.wallpaper != options.wallpaper || reloaded.fit != options.fit;
+                        params.wallpaper != options.wallpaper || params.fit != options.fit;
                     if reloaded.namespace != options.namespace {
                         log("namespace changed: needs a restart to take effect");
                     }
                     if reloaded.video_fps != options.video_fps {
                         log("video_fps changed: applies to the next video load");
                     }
-                    options.scale = reloaded.scale;
-                    options.column_span = reloaded.column_span;
-                    options.workspace_span = reloaded.workspace_span;
+                    options.scale = params.scale;
+                    options.column_span = params.column_span;
+                    options.workspace_span = params.workspace_span;
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
                     options.transition = reloaded.transition.clone();
@@ -473,9 +480,9 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     // exactly what a panel writes to.
                     transition =
                         Transition::new(options.transition.clone(), options.animations.slowdown);
-                    options.wallpaper = reloaded.wallpaper.clone();
+                    options.wallpaper = params.wallpaper;
                     options.namespace = reloaded.namespace.clone();
-                    options.fit = reloaded.fit;
+                    options.fit = params.fit;
                     niri.motion
                         .set_spans(options.column_span, options.workspace_span);
                     // Rebuild the animators at their current position so a
