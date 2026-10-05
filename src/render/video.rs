@@ -12,10 +12,10 @@
 //! convention, so a crate would hide exactly the parts that matter.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::os::fd::RawFd;
 use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use super::gl;
 
@@ -131,9 +131,28 @@ extern "C" fn get_proc_address(_ctx: *mut c_void, name: *const c_char) -> *mut c
     }
 }
 
+/// What mpv's update callback is handed: the flag the render path checks, and an
+/// eventfd that wakes the daemon's `poll()`. Without the fd the loop would have
+/// to poll mpv, which would cost the zero-idle design (§6, M0b criterion ④).
+struct Signal {
+    pending: AtomicBool,
+    fd: RawFd,
+}
+
 extern "C" fn on_update(data: *mut c_void) {
-    if let Some(flag) = unsafe { (data as *mut AtomicBool).as_ref() } {
-        flag.store(true, Ordering::Release);
+    let Some(signal) = (unsafe { (data as *mut Signal).as_ref() }) else {
+        return;
+    };
+    signal.pending.store(true, Ordering::Release);
+    // Async-signal-safe enough: one write to an eventfd. EAGAIN means a wakeup
+    // is already pending, which is exactly what we want to know.
+    let one: u64 = 1;
+    unsafe {
+        libc::write(
+            signal.fd,
+            (&one as *const u64).cast(),
+            std::mem::size_of::<u64>(),
+        );
     }
 }
 
@@ -145,8 +164,9 @@ pub struct Video {
     fbo: u32,
     width: u32,
     height: u32,
-    /// Set by mpv from another thread when a frame is ready.
-    pending: Arc<AtomicBool>,
+    /// Set by mpv from another thread when a frame is ready. Boxed so the
+    /// callback's pointer stays valid for as long as the context lives.
+    signal: Box<Signal>,
     /// Frames drawn so far, for the probe's log.
     pub frames: u64,
 }
@@ -237,8 +257,19 @@ impl Video {
             return Err(format!("mpv_render_context_create: {}", error(code)));
         }
 
-        let pending = Arc::new(AtomicBool::new(true));
-        let data = Arc::as_ptr(&pending) as *mut c_void;
+        let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+        if fd < 0 {
+            unsafe {
+                mpv_render_context_free(render);
+                mpv_terminate_destroy(ctx);
+            }
+            return Err(format!("eventfd: {}", std::io::Error::last_os_error()));
+        }
+        let signal = Box::new(Signal {
+            pending: AtomicBool::new(true),
+            fd,
+        });
+        let data = (&*signal as *const Signal) as *mut c_void;
         unsafe { mpv_render_context_set_update_callback(render, Some(on_update), data) };
 
         let mut video = Self {
@@ -248,7 +279,7 @@ impl Video {
             fbo,
             width,
             height,
-            pending,
+            signal,
             frames: 0,
         };
         video.load(path)?;
@@ -278,7 +309,7 @@ impl Video {
     /// Decode and draw the newest frame into our texture. Returns whether a new
     /// frame was drawn (and therefore whether the wallpaper moved).
     pub fn render(&mut self) -> Result<bool, String> {
-        if !self.pending.swap(false, Ordering::AcqRel) {
+        if !self.signal.pending.swap(false, Ordering::AcqRel) {
             return Ok(false);
         }
         let flags = unsafe { mpv_render_context_update(self.render) };
@@ -315,6 +346,25 @@ impl Video {
     /// The texture mpv draws into. Sample this with the parallax offset.
     pub fn texture(&self) -> u32 {
         self.texture
+    }
+
+    /// The eventfd mpv's update callback writes to. Watch this instead of
+    /// polling: readable means "call [`Video::render`]".
+    pub fn fd(&self) -> RawFd {
+        self.signal.fd
+    }
+
+    /// Clear a pending wakeup. Reads are non-blocking, and one read drains the
+    /// counter.
+    pub fn drain(&self) {
+        let mut counter: u64 = 0;
+        unsafe {
+            libc::read(
+                self.signal.fd,
+                (&mut counter as *mut u64).cast(),
+                std::mem::size_of::<u64>(),
+            );
+        }
     }
 
     /// The framebuffer mpv draws into. `mpv_render_context_render` manages GL
@@ -358,12 +408,15 @@ impl Video {
 impl Drop for Video {
     fn drop(&mut self) {
         unsafe {
+            // Close the wakeup fd last: `signal` must outlive the callback.
+            let fd = self.signal.fd;
             // The callback must not fire after `pending` is gone.
             mpv_render_context_set_update_callback(self.render, None, ptr::null_mut());
             mpv_render_context_free(self.render);
             mpv_terminate_destroy(self.ctx);
             gl::delete_framebuffer(self.fbo);
             gl::delete_texture(self.texture);
+            libc::close(fd);
         }
     }
 }

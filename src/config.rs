@@ -57,6 +57,10 @@ pub struct Config {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    /// Frame-rate cap for video wallpapers (`0` keeps the source's). niri hands
+    /// layer surfaces frame callbacks at 60 Hz, and every drawn frame also
+    /// invalidates the backdrop, so a 60 fps source sits exactly on the edge.
+    pub video_fps: u32,
     pub namespace: String,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
@@ -72,6 +76,7 @@ impl Default for Config {
             scale: DEFAULT_SCALE,
             column_span: DEFAULT_COLUMN_SPAN,
             workspace_span: DEFAULT_WORKSPACE_SPAN,
+            video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             animations: Animations::default(),
             wallpaper: None,
@@ -173,6 +178,9 @@ impl Config {
         let mut config = Self::default();
         if let Some(scale) = raw.scale {
             config.scale = check_scale("scale", scale)?;
+        }
+        if let Some(fps) = raw.video_fps {
+            config.video_fps = fps;
         }
         if let Some(span) = raw.column_span {
             config.column_span = check_span("column_span", span)?;
@@ -518,6 +526,7 @@ struct RawConfig {
     scale: Option<f64>,
     column_span: Option<usize>,
     workspace_span: Option<usize>,
+    video_fps: Option<u32>,
     namespace: Option<String>,
     #[serde(default)]
     animations: RawAnimations,

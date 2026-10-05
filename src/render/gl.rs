@@ -271,6 +271,9 @@ impl Drop for Texture {
 #[derive(Debug, Clone, Copy)]
 pub enum Content<'a> {
     Wallpaper(&'a Texture),
+    /// A texture something else draws into (libmpv's video output). Canvas-sized
+    /// like `Wallpaper`, so the shader samples both the same way.
+    Video(u32),
     Pattern(Pattern),
 }
 
@@ -366,6 +369,12 @@ impl Renderer {
                 Content::Wallpaper(texture) => {
                     glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, texture.id);
+                    glUniform1i(self.uniforms.wallpaper, 0);
+                    glUniform1i(self.uniforms.has_wallpaper, 1);
+                }
+                Content::Video(texture) => {
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, texture);
                     glUniform1i(self.uniforms.wallpaper, 0);
                     glUniform1i(self.uniforms.has_wallpaper, 1);
                 }

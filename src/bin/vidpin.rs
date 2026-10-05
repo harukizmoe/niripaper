@@ -134,9 +134,12 @@ fn main() -> Result<(), String> {
                 let rgb = gl::read_pixels_rgb(width, height);
                 let image = image::RgbImage::from_raw(width, height, rgb)
                     .ok_or("readback size mismatch")?;
-                image::imageops::flip_vertical(&image)
-                    .save(out)
-                    .map_err(|e| e.to_string())?;
+                // No flip. `glReadPixels` hands back row 0 first, and mpv's
+                // render target has the image's top row there — the same
+                // orientation `Texture::from_rgb` gives the still-image path, so
+                // the shader samples both identically. (Flipping here was why
+                // the first frame came out upside down.)
+                image.save(out).map_err(|e| e.to_string())?;
                 println!("wrote {} ({}×{})", out.display(), width, height);
             }
             saved = true;

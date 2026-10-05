@@ -54,8 +54,11 @@ pub struct Options {
     pub column_span: usize,
     pub workspace_span: usize,
     pub pattern: Pattern,
-    /// A static wallpaper to draw instead of the procedural pattern.
+    /// A wallpaper to draw instead of the procedural pattern: a still image, or
+    /// a video (routed by extension).
     pub wallpaper: Option<std::path::PathBuf>,
+    /// Frame-rate cap for video wallpapers (`0` keeps the source's).
+    pub video_fps: u32,
     /// Animation parameters, in niri's vocabulary (see `config.rs`).
     pub animations: crate::config::Animations,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
@@ -74,10 +77,32 @@ impl Options {
             workspace_span: DEFAULT_WORKSPACE_SPAN,
             pattern: Pattern::Blocks,
             wallpaper: None,
+            video_fps: 0,
             animations: crate::config::Animations::default(),
             trace: false,
         }
     }
+}
+
+/// What is being drawn: a decoded still, or a playing video. Both end up
+/// canvas-sized and are sampled identically — the only difference is that the
+/// video's texture is redrawn by libmpv as it plays.
+enum Media {
+    Image(crate::render::image::Wallpaper),
+    Video(crate::render::video::Video),
+}
+
+/// Video containers mpv handles and `image` does not. Routed by extension
+/// because guessing wrong is worse than a clear failure: a still handed to mpv
+/// plays as a one-frame video, while a video handed to `image` fails to decode.
+fn is_video(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi")
+    )
 }
 
 pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> {
@@ -181,11 +206,27 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         (surface.width as f64 * options.scale).round() as u32,
         (surface.height as f64 * options.scale).round() as u32,
     );
-    let wallpaper = match &options.wallpaper {
+    let mut media = match &options.wallpaper {
+        Some(path) if is_video(path) => {
+            let video =
+                crate::render::video::Video::new(path, canvas.0, canvas.1, options.video_fps)?;
+            log(&format!(
+                "video {} → canvas {}×{}, fps cap {}",
+                path.display(),
+                canvas.0,
+                canvas.1,
+                if options.video_fps == 0 {
+                    "source".to_owned()
+                } else {
+                    options.video_fps.to_string()
+                }
+            ));
+            Some(Media::Video(video))
+        }
         Some(path) => {
             let loaded = crate::render::image::Wallpaper::load(path, canvas)?;
             log(&format!("wallpaper {}", loaded.describe()));
-            Some(loaded)
+            Some(Media::Image(loaded))
         }
         None => None,
     };
@@ -225,11 +266,17 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         1.0,
         screen,
         options,
-        wallpaper.as_ref(),
+        media.as_ref(),
         false,
     )?;
     drawn += 1;
 
+    // The video's wakeup fd is polled too — `-1` when there is no video, which
+    // `poll()` ignores. That is what keeps the idle cost at zero for stills.
+    let video_fd = match &media {
+        Some(Media::Video(video)) => video.fd(),
+        _ => -1,
+    };
     let mut fds = [
         libc::pollfd {
             fd: client.fd(),
@@ -241,16 +288,31 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             events: libc::POLLIN,
             revents: 0,
         },
+        libc::pollfd {
+            fd: video_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        },
     ];
 
     log(&format!(
-        "polling wayland fd {} and niri fd {}",
-        fds[0].fd, fds[1].fd
+        "polling wayland fd {} and niri fd {}{}",
+        fds[0].fd,
+        fds[1].fd,
+        if video_fd >= 0 {
+            format!(" and video fd {video_fd}")
+        } else {
+            String::new()
+        }
     ));
     let mut exit_note = None;
+    // A decoded video frame that has not been presented yet. This is what turns
+    // mpv's wakeup into a frame request.
+    let mut video_present = false;
     while running() {
         fds[0].revents = 0;
         fds[1].revents = 0;
+        fds[2].revents = 0;
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if ready < 0 {
             let err = std::io::Error::last_os_error();
@@ -258,6 +320,18 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 continue; // a signal: check `running()`
             }
             return Err(format!("poll: {err}"));
+        }
+
+        if fds[2].revents & libc::POLLIN != 0 {
+            if let Some(Media::Video(video)) = media.as_mut() {
+                video.drain();
+                // Decode into our texture; the next frame callback presents it.
+                match video.render() {
+                    Ok(true) => video_present = true,
+                    Ok(false) => {}
+                    Err(err) => log(&format!("video: {err}")),
+                }
+            }
         }
 
         if fds[1].revents & libc::POLLIN != 0 {
@@ -304,7 +378,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             last_frame_at = now;
             let (progress, moving) = animator.sample(now);
             let (zoom_now, zoom_moving) = zoom.sample(now);
-            let moving = moving || zoom_moving;
+            let moving = moving || zoom_moving || video_present;
             let submitted = draw(
                 &mut client,
                 &mut pool,
@@ -314,12 +388,16 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 zoom_now,
                 screen,
                 options,
-                wallpaper.as_ref(),
+                media.as_ref(),
                 moving,
             )?;
             drawn += u64::from(submitted);
             if !submitted {
                 skipped += 1;
+            } else {
+                // The decoded frame is on screen now; the next one has to wait
+                // for mpv to say so.
+                video_present = false;
             }
             if options.trace {
                 log(&format!(
@@ -339,7 +417,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving()) && !frame_pending {
+        if (animator.is_moving() || zoom.is_moving() || video_present) && !frame_pending {
             surface.request_frame(&client.handle());
             surface.surface.commit();
             client.flush()?;
@@ -372,7 +450,7 @@ fn draw(
     zoom: f64,
     screen: (f64, f64),
     options: &Options,
-    wallpaper: Option<&crate::render::image::Wallpaper>,
+    media: Option<&Media>,
     want_next_frame: bool,
 ) -> Result<bool, String> {
     let released = std::mem::take(&mut client.state.released);
@@ -391,8 +469,9 @@ fn draw(
     let offset = offset_px(progress, screen, scale);
     let frame = pool.frame(slot);
     frame.begin();
-    let content = match wallpaper {
-        Some(wallpaper) => gl::Content::Wallpaper(&wallpaper.texture),
+    let content = match media {
+        Some(Media::Image(wallpaper)) => gl::Content::Wallpaper(&wallpaper.texture),
+        Some(Media::Video(video)) => gl::Content::Video(video.texture()),
         None => gl::Content::Pattern(options.pattern),
     };
     renderer.draw(

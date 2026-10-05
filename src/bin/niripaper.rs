@@ -282,6 +282,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let mut options = Options::new(output);
     options.scale = over.scale.unwrap_or(params.scale);
     options.column_span = over.column_span.unwrap_or(params.column_span);
+    options.video_fps = config.video_fps;
     options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
     // Animations come from the config only: they are tuned by feel, and a flag
