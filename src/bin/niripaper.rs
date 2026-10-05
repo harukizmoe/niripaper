@@ -58,6 +58,13 @@ fn main() -> ExitCode {
         "schema" => control("schema", &rest),
         "state" => control("state", &rest),
         "kill" => control("kill", &rest),
+        // The build says which build it is: an AGENTS.md entry exists precisely
+        // because a stale `~/.cargo/bin/niripaper` once looked exactly like a
+        // fresh one.
+        "-V" | "--version" => {
+            println!("niripaper {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "-h" | "--help" | "help" => {
             usage();
             Ok(())
@@ -131,7 +138,9 @@ fn usage() {
          \x20 query    [--output NAME] [--socket PATH]   what is on screen right now\n\
          \x20 schema   [--output NAME] [--socket PATH]   every config key a UI can offer (JSON)\n\
          \x20 state    [--output NAME] [--socket PATH]   what the daemon is doing right now (JSON)\n\
-         \x20 kill     [--output NAME] [--socket PATH]   ask the daemon to shut down\n"
+         \x20 kill     [--output NAME] [--socket PATH]   ask the daemon to shut down\n\
+         \n\
+         \x20 --version  print the version\n"
     );
 }
 

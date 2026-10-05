@@ -29,7 +29,7 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 
 ## 状态
 
-版本 0.1.0，早期。
+版本 0.2.0，早期。
 
 现在能用：静态图像（PNG / JPEG / WebP）、**视频壁纸**（硬件解码）、视差、总览过渡、
 换图过渡（九个效果）、`fit`（源与画布宽高比不一致时的五种放法）、带 `config.d` 目录
@@ -46,14 +46,21 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 
 ## 安装
 
-从源码编译：
+从源码编译。需要先装 `libmpv`、`libEGL`、`libGL`、`libgbm`、`libwayland-client` ——
+守护进程是**手写 FFI** 直接链接它们的，所以编译时要有对应的开发文件
+（Arch 上是 `mpv`、`libglvnd`、`mesa`、`wayland`）：
 
 ```bash
 git clone https://github.com/harukizmoe/niripaper.git
 cd niripaper
-cargo build --release
-install -Dm755 target/release/niripaper ~/.local/bin/niripaper
+cargo install --path . --locked --bin niripaper
 ```
+
+**`--bin niripaper` 不能省**：不写它，`src/bin/` 下的诊断探针也会一起装进
+`~/.cargo/bin`。
+
+`packaging/aur/` 里有一份给 AUR 用的 `PKGBUILD`（**还没发布到 AUR** —— 得先有
+一个打了 tag 的 release）。
 
 ## 用法
 
