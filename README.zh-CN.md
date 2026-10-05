@@ -64,9 +64,10 @@ cargo install --path . --locked --bin niripaper
 
 Release 里带**两个** `x86_64` 二进制。它们按**链接的库**命名，不按构建它的发行版命名 ——
 因为真正有差别的只有这一件事：链接 `libmpv` 的守护进程被它的 soname 钉住。
-`mpv --version` 报 0.35 或更新的（Arch 与多数滚动发行版）取 `-mpv0.41`；报 0.34 的
-（Ubuntu 22.04）取 `-mpv0.34`。每个包里的 `INSTALL.txt` 写明确切要求，
-`ldd ./niripaper` 能看出你的系统是否满足。从源码构建则在任何地方都可用。
+`mpv --version` 报 0.35 或更新的 —— Arch、Fedora、Debian 12 及更新 —— 取 `-mpv0.41`；
+报 0.34 的（Ubuntu 22.04）取 `-mpv0.34`。两者都要 glibc 2.34 或更新（两份构建的这个
+数字相同），真正有差别的只有 soname。每个包里的 `INSTALL.txt` 写出这两个数字，且是
+**从二进制里量出来的**而不是写死的。从源码构建则在任何地方都可用。
 
 ## 用法
 
