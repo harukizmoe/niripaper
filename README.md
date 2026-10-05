@@ -76,9 +76,9 @@ Releases carry **two** `x86_64` binaries. They are named for the library they li
 the distribution that built them, because that is the only thing that actually differs: a
 daemon linking `libmpv` is tied to its soname. Take `-mpv0.41` if `mpv --version` reports
 0.35 or newer — Arch, Fedora, Debian 12 and later — and `-mpv0.34` if it reports 0.34
-(Ubuntu 22.04). Both need glibc 2.34 or newer, which is the same for both builds; the
-soname is the only thing that differs. Each tarball's `INSTALL.txt` states both numbers,
-measured from the binary rather than written down. Building from source works everywhere.
+(Ubuntu 22.04). Both need glibc 2.34 or newer, the same for both builds. Each tarball's
+`INSTALL.txt` states both numbers, measured from the binary rather than written down.
+Building from source works everywhere.
 
 ## Usage
 
