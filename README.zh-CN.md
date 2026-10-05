@@ -169,6 +169,7 @@ scale = 1.2
 | `[transition] selection` | 每次怎么挑效果：`fixed`、`rotate` 或 `random` |
 | `[transition] effect`、`effects` | `fixed` 时用的效果，以及 `rotate`/`random` 挑选的范围 |
 | `[transition] duration_ms`、`curve` | 过渡多长、怎么缓动 |
+| `[transition] cubic_bezier` | `curve = "cubic-bezier"` 的控制点，与 CSS 同义 |
 | `[transition] softness` | 移动边缘多宽（`0` 硬边，`1` 很软） |
 | `[transition] center` | 径向效果的起点：`[x, y]` 为屏幕比例，`[0, 0]` 是**左上角** |
 | `[transition] direction` | wipe/stripes/slide 的方向 |
@@ -204,6 +205,11 @@ scale = 1.2
 小圆如果立刻就开始膨胀，眼睛还没来得及判断那是什么它就没了 —— 所以 `hold_ms`
 让第一帧先停一会儿再动：这就是"有个东西变大了"和"一个圆张开了"的区别。
 它算在 `duration_ms` 之内，不是额外加的。
+
+niri 那五个缓动都是"开头快、结尾慢"，正好和一个"张开"想要的相反。想要
+**先慢 → 中间快 → 最后慢**，用贝塞尔：`curve = "cubic-bezier"` 配
+`cubic_bezier = [0.42, 0, 0.58, 1]`，也就是 CSS 的 `ease-in-out`
+（解法和浏览器一样：解 `x(u) = t`）。
 
 `niripaper schema` 会列出上面每一个配置项，连同类型、取值范围、以及运行中改文件
 是否即时生效。

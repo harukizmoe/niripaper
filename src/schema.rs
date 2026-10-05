@@ -52,10 +52,12 @@ pub enum Kind {
     MultiEnum {
         options: Vec<String>,
     },
-    /// Two numbers, `[x, y]`.
-    Pair {
-        min: f64,
-        max: f64,
+    /// `count` numbers: `[x, y]` for a position, or four control points for a
+    /// curve. `min`/`max` are `null` when any finite value is allowed.
+    Numbers {
+        count: usize,
+        min: Option<f64>,
+        max: Option<f64>,
     },
     /// An animation: `off = true`, or `duration_ms` + `curve`, or
     /// `spring { damping_ratio, stiffness, epsilon }`. The three forms are
@@ -255,6 +257,20 @@ pub fn keys() -> Vec<Key> {
             about: "Easing for the transition; \"cubic-bezier\" also needs cubic_bezier.",
         },
         Key {
+            name: "transition.cubic_bezier",
+            kind: Kind::Numbers {
+                count: 4,
+                min: None,
+                max: None,
+            },
+            // Only meaningful with `curve = "cubic-bezier"`, so there is no
+            // default to give: unset is the honest spelling.
+            default: Value::Null,
+            unit: None,
+            hot: true,
+            about: "Control points for curve = \"cubic-bezier\": [x1, y1, x2, y2], as in CSS.",
+        },
+        Key {
             name: "transition.allow_overshoot",
             kind: Kind::Bool,
             default: json!(transition.allow_overshoot),
@@ -275,7 +291,11 @@ pub fn keys() -> Vec<Key> {
         },
         Key {
             name: "transition.center",
-            kind: Kind::Pair { min: 0.0, max: 1.0 },
+            kind: Kind::Numbers {
+                count: 2,
+                min: Some(0.0),
+                max: Some(1.0),
+            },
             default: json!([transition.center.0, transition.center.1]),
             unit: None,
             hot: true,

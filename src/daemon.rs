@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use crate::media::{self, Media};
 use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
-use crate::render::anim::Animator;
+use crate::render::anim::{Animator, Curve};
 use crate::render::egl::{Egl, EglVendor};
 use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
@@ -723,6 +723,13 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
         json!(transition.duration.as_millis() as u64),
     );
     put("transition.curve", json!(transition.curve.name()));
+    put(
+        "transition.cubic_bezier",
+        match transition.curve {
+            Curve::CubicBezier(points) => json!(points),
+            _ => Value::Null,
+        },
+    );
     put(
         "transition.allow_overshoot",
         json!(transition.allow_overshoot),

@@ -184,6 +184,7 @@ scale = 1.2
 | `[transition] selection` | how the effect is chosen each time: `fixed`, `rotate` or `random` |
 | `[transition] effect`, `effects` | the effect used when `fixed`, and the pool `rotate` and `random` pick from |
 | `[transition] duration_ms`, `curve` | how long it takes and how it is eased |
+| `[transition] cubic_bezier` | control points for `curve = "cubic-bezier"`, as in CSS |
 | `[transition] softness` | how wide the moving edge is (`0` hard, `1` very soft) |
 | `[transition] center` | where radial effects start: `[x, y]` as fractions of the screen, `[0, 0]` being the top-left |
 | `[transition] direction` | which way wipes, stripes and slides go |
@@ -225,6 +226,11 @@ A small circle that starts expanding immediately is gone before the eye has deci
 it is looking at, so `hold_ms` sits on that first frame for a moment before anything
 moves — that is the difference between "something grew" and "a circle opened". It is
 part of `duration_ms`, not extra.
+
+niri's curves are all fast at the start and slow at the end, which is the opposite of
+what a reveal wants. For slow-fast-slow, use a bezier — `curve = "cubic-bezier"` with
+`cubic_bezier = [0.42, 0, 0.58, 1]`, which is CSS's `ease-in-out` (solved the same way,
+`x(u) = t`).
 
 `niripaper schema` lists every key above, with its type, bounds and whether editing
 the file while the daemon runs takes effect.
