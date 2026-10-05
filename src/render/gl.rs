@@ -23,6 +23,9 @@ pub const GL_LINEAR: u32 = 0x2601;
 pub const GL_CLAMP_TO_EDGE: u32 = 0x812F;
 pub const GL_RGB: u32 = 0x1907;
 pub const GL_RGB8: u32 = 0x8051;
+pub const GL_RGBA8: u32 = 0x8058;
+pub const GL_RGBA: u32 = 0x1908;
+pub const GL_PACK_ALIGNMENT: u32 = 0x0D05;
 pub const GL_UNSIGNED_BYTE: u32 = 0x1401;
 pub const GL_UNPACK_ALIGNMENT: u32 = 0x0CF5;
 pub const GL_COLOR_ATTACHMENT0: u32 = 0x8CE0;
@@ -40,6 +43,15 @@ extern "C" {
     fn glGetString(name: u32) -> *const u8;
     fn glGetError() -> u32;
     fn glViewport(x: i32, y: i32, w: i32, h: i32);
+    fn glReadPixels(
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        format: u32,
+        kind: u32,
+        pixels: *mut c_void,
+    );
     fn glFinish();
 
     fn glGenTextures(n: i32, textures: *mut u32);
@@ -143,6 +155,49 @@ pub fn viewport(width: u32, height: u32) {
 }
 
 /// Block until the GPU has finished what we queued.
+/// Allocate an empty RGBA8 texture at `width`×`height`. Used for render targets
+/// that something else draws into (libmpv's video output).
+pub fn tex_image_2d_rgba(width: u32, height: u32) {
+    unsafe {
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA8 as i32,
+            width as i32,
+            height as i32,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            std::ptr::null(),
+        );
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+    }
+}
+
+/// Read the bound framebuffer back as tightly packed RGB. Probing only: it is a
+/// synchronous round trip.
+pub fn read_pixels_rgb(width: u32, height: u32) -> Vec<u8> {
+    let mut rgba = vec![0u8; width as usize * height as usize * 4];
+    unsafe {
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(
+            0,
+            0,
+            width as i32,
+            height as i32,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            rgba.as_mut_ptr().cast(),
+        );
+    }
+    rgba.chunks_exact(4)
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect()
+}
+
 pub fn finish() {
     unsafe { glFinish() };
 }
