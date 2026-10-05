@@ -51,10 +51,11 @@ pub const DEFAULT_OVERVIEW_ANIMATION: Animation = Animation::Spring(Spring {
     epsilon: 0.0001,
 });
 
-/// A cross-fade has nothing to ease, so linear is the honest default, and
-/// 250 ms reads as instant while still being visible.
+/// A cross-fade has nothing to ease, so linear is the honest default. 1500 ms is
+/// long enough to read as a deliberate transition rather than a flicker, which
+/// is the whole point of having one (`HANDOFF.md` §2).
 pub fn default_wallpaper_change() -> Animation {
-    Animation::easing(Curve::Linear, std::time::Duration::from_millis(250))
+    Animation::easing(Curve::Linear, std::time::Duration::from_millis(1500))
 }
 
 /// A validated configuration.
@@ -99,7 +100,7 @@ pub struct Animations {
     /// The overview transition, with its target zoom.
     pub overview_open_close: OverviewAnimation,
     /// The cross-fade when the wallpaper changes. Linear by default: a fade has
-    /// nothing to ease, and 250 ms is short enough to feel instant.
+    /// nothing to ease, and 1500 ms reads as a deliberate transition.
     pub wallpaper_change: Animation,
     /// niri's `slowdown`: divides elapsed time, so > 1 slows everything down.
     pub slowdown: f64,
