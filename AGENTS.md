@@ -25,6 +25,13 @@ cargo clippy --all-targets      # 必须 0 警告
 cargo test
 ```
 
+装到 `PATH`：`cargo install --path . --locked --bin niripaper` —— **必须带 `--bin niripaper`**，
+否则 `src/bin/` 下的两个诊断探针也会被一起装进 `~/.cargo/bin`。
+**改完代码要重装**：`PATH` 上的 `niripaper` 与 `target/release/niripaper` 是两份拷贝 ✗，
+自启动（`spawn-at-startup`）跑的是前者 ✗。实测踩过：新增配置键后只重建没重装，
+自启动拿着旧二进制报 `unknown field` 直接退出，桌面连壁纸都没了 ✗（手动跑 `./target/release/…`
+却一切正常，正好把问题掩盖掉 ✗）。
+
 改动渲染路径或事件解析后，**必须实机跑一次**：启动 `./target/release/niripaper daemon --trace`，
 观察逐帧的 `h` / `v` / `zoom` 与目标值，而不是只看编译通过。改动配置项时，用**非默认值**验证
 它真的生效（历史上出现过"配置键写了但从未接上线"）。
@@ -39,14 +46,17 @@ cargo test
 - **PR 按里程碑建**：一个里程碑完成时才从 `dev` 向 `main` 建 PR，用 **squash** 合入
   （`main` 上只留一条提交）。里程碑之间的小修小改——文档措辞、拼写、注释、`.gitignore`、
   小 bug 修正——**直接提交本地 `dev` 分支即可，不建 PR**。
-  里程碑：M0 渲染地基（EGL/GBM/dmabuf 交换链）、M1 niri IPC + 视差、M2 静态图 / 总览过渡 / 视频、
-  M3 Noctalia 插件、M4 开源收尾（README / CI / AUR / Releases）。详见本地 `HANDOFF.md` §6。
+  里程碑：M0 渲染地基（EGL/GBM/dmabuf 交换链）、M1 niri IPC + 视差、M2 静态图 / 总览过渡 / 换图过渡、
+  **M3 视频壁纸**（libmpv 硬解 + `video_fps` + 控制 socket）、M4 Noctalia 插件、
+  M5 开源收尾（README / CI / AUR / Releases）。详见本地 `HANDOFF.md` §6。
 - **每次 squash 合入之后都要 back-merge**：`git checkout dev && git merge origin/main`。
   squash 之后 `dev` 的提交不再是 `main` 的祖先，不做这一步下一个 PR 会带一堆旧提交并报 `CONFLICTING`。
   冲突通常只在 README / LICENSE / Cargo.toml 这类两边都改过的文件上，取 `dev` 的版本（它更新）：
   `git checkout --ours -- <files>`。判断是否需要：`git merge-base --is-ancestor origin/main origin/dev || echo 需要`。
-- **提交信息用中文**，`type: 摘要` 形式（`feat:` / `fix:` / `docs:` / `chore:` / `refactor:`），
-  正文写清"为什么"以及实测数据。
+- **提交信息**：`dev` 上的开发提交用**中文**，`type: 摘要` 形式（`feat:` / `fix:` / `docs:` /
+  `chore:` / `refactor:`），正文写清"为什么"以及实测数据。**`main` 上的提交用英文**——
+  它是面向外部读者的历史，而且那条提交的标题就是 PR 标题，所以 PR 标题要用英文写。
+  （唯一的例外是 `ab4be5a`，它是 `dev` 与 `main` 的共同根，改成英文会让两边变成无关历史。）
 
 ## 代码与文档约定
 
