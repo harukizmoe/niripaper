@@ -193,7 +193,9 @@ pub fn read_pixels_rgb(width: u32, height: u32) -> Vec<u8> {
             rgba.as_mut_ptr().cast(),
         );
     }
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| [p[0], p[1], p[2]])
         .collect()
 }
