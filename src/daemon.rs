@@ -825,6 +825,19 @@ fn switch_wallpaper(
         path.display(),
         transition.effect().name()
     ));
+
+    // Dropping the old media frees a lot — an mpv context plus its decoder — but
+    // glibc keeps freed memory in its per-thread arenas rather than returning it
+    // to the kernel, and mpv runs enough threads that each new context tends to
+    // land in fresh arenas. Measured before this line existed: **~90 MB per
+    // wallpaper change, monotonically** (five changes took a 4K daemon from
+    // 233 MB to 621 MB of anonymous memory). `malloc_trim` hands the free arenas
+    // back. It is a hint, and it costs a few milliseconds, on an event that
+    // happens when a person changes their wallpaper.
+    #[cfg(target_env = "gnu")]
+    unsafe {
+        libc::malloc_trim(0);
+    }
     Ok(())
 }
 
