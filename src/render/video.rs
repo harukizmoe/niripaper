@@ -187,6 +187,11 @@ impl Video {
         // scripts, no audio, loop forever, and decode in hardware.
         for (name, value) in [
             ("vo", "libmpv"),
+            // mpv's default scalers are meant for watching films, not for a
+            // wallpaper: `fast` picks cheap bilinear scaling and drops the
+            // expensive defaults. On this machine the 4K→canvas scale was a
+            // measurable share of the GPU load.
+            ("profile", "fast"),
             ("hwdec", "auto-safe"),
             ("loop-file", "inf"),
             ("mute", "yes"),
