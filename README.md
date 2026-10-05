@@ -36,7 +36,7 @@ with the workspaces.
 
 ## Status
 
-Version 0.1.0, early.
+Version 0.2.0, early.
 
 Working today: static images (PNG, JPEG, WebP), **video wallpapers** (hardware-decoded),
 parallax, the overview transition, the wallpaper transition (nine effects), `fit` for
@@ -56,14 +56,21 @@ binaries.
 
 ## Install
 
-Build from source:
+Build from source. `libmpv`, `libEGL`, `libGL`, `libgbm` and `libwayland-client` have
+to be installed — the daemon links them by hand, so their development files are needed
+to build (`mpv`, `libglvnd`, `mesa`, `wayland` on Arch):
 
 ```bash
 git clone https://github.com/harukizmoe/niripaper.git
 cd niripaper
-cargo build --release
-install -Dm755 target/release/niripaper ~/.local/bin/niripaper
+cargo install --path . --locked --bin niripaper
 ```
+
+**`--bin niripaper` is not optional**: without it the diagnostic probes in `src/bin/`
+get installed alongside the daemon.
+
+There is a `PKGBUILD` in `packaging/aur/` for the AUR (not published yet — it needs a
+tagged release first).
 
 ## Usage
 
