@@ -111,6 +111,18 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // the control socket and a config-file reload both write here. Command-line
     // flags are a startup-only override, exactly as they are in niri.
     let mut options = options.clone();
+
+    // Refuse a duplicate start before any of the expensive setup below: a second
+    // daemon on the same output must not build a layer surface, load the media
+    // and create a Vulkan device only to give up — and it must not flash a
+    // second wallpaper while doing it. `Server::bind` makes the same check, but
+    // by then all of that work is already done.
+    let socket_path = match &options.socket {
+        Some(path) => path.clone(),
+        None => crate::ipc::default_path(&options.output)?,
+    };
+    crate::ipc::refuse_if_served(&socket_path)?;
+
     // --- wayland -----------------------------------------------------------
     let mut client = layer::Client::connect()?;
     let output = client
@@ -187,13 +199,16 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         POOL_DEPTH,
     )?;
     log(&format!(
-        "{}x{} {} via {} [{}] ({})",
+        "{}x{} {} via {} [{}] ({})\n\
+         vendor pinned: {}; vulkan ICDs: {}",
         surface.width,
         surface.height,
         gbm::fourcc_name(FORMAT),
         egl.vendor,
         egl.platform,
-        layer::describe_modifiers(pool.chosen())
+        layer::describe_modifiers(pool.chosen()),
+        egl.vendor_pinned,
+        egl.vulkan_pinned
     ));
     for (modifiers, err) in pool.failures() {
         log(&format!(
@@ -203,14 +218,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     }
 
     // The canvas is the output enlarged by `scale` (§4.1); a wallpaper is
-    // fitted to exactly that, so the shader samples it 1:1.
-    // `round`, not `ceil`: 1440 × 1.1 is 1584 exactly in decimal but
-    // 1584.0000000000002 in binary, and `ceil` would hand the shader a canvas
-    // one pixel too tall — which shifts the whole vertical travel by a pixel.
-    let canvas = (
-        (surface.width as f64 * options.scale).round() as u32,
-        (surface.height as f64 * options.scale).round() as u32,
-    );
+    // fitted to exactly that, so the shader samples it 1:1. `mut`, because a
+    // reload can change `scale` — a canvas that no longer matches the media is
+    // a wallpaper drawn at the wrong magnification.
+    let screen = (surface.width as f64, surface.height as f64);
+    let mut canvas = canvas_size(screen, options.scale);
     let mut media = match &options.wallpaper {
         Some(path) => {
             let loaded = Media::load(path, canvas, options.video_fps, options.fit)?;
@@ -238,7 +250,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
-    let screen = (surface.width as f64, surface.height as f64);
     let mut animator = Animator::new(
         niri.motion.progress(&options.output),
         options.animations.parallax,
@@ -297,10 +308,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         .unwrap_or(media::NO_WAKEUP);
     // The control socket (§3). Bound here, after everything that can fail at
     // startup has already failed: a socket that exists means a daemon that works.
-    let socket_path = match &options.socket {
-        Some(path) => path.clone(),
-        None => crate::ipc::default_path(&options.output)?,
-    };
+    // The duplicate-daemon check already ran at the top; `bind` repeats it
+    // because a stale socket still has to be cleared here.
     let ipc = crate::ipc::Server::bind(&socket_path)?;
     log(&format!("control socket {}", socket_path.display()));
     // Watch the configuration (§2). Directories, not files: tools write
@@ -457,15 +466,30 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     // spans — the moment anything touched the configuration, which is
                     // exactly what a panel writes to (`config.d/noctalia.toml`).
                     let params = reloaded.output(&options.output);
-                    // `fit` changes how the media is placed, so it needs the
-                    // same reload the wallpaper path gets.
-                    let changed_wallpaper =
-                        params.wallpaper != options.wallpaper || params.fit != options.fit;
+                    // `fit` changes how the media is placed and `scale` changes
+                    // the canvas it is built at, so both need the same reload the
+                    // wallpaper path gets. Leaving `scale` out made the schema
+                    // advertise it as hot while only half of it applied: the
+                    // animators moved to the new scale, the texture did not.
+                    let scale_changed = params.scale != options.scale;
+                    let reload_media = params.wallpaper != options.wallpaper
+                        || params.fit != options.fit
+                        || scale_changed;
                     if reloaded.namespace != options.namespace {
                         log("namespace changed: needs a restart to take effect");
                     }
                     if reloaded.video_fps != options.video_fps {
                         log("video_fps changed: applies to the next video load");
+                    }
+                    if scale_changed {
+                        // The media texture is built at the canvas size, so a new
+                        // scale only takes effect once that is rebuilt — which is
+                        // what the `reload_media` block below does.
+                        canvas = canvas_size(screen, params.scale);
+                        log(&format!(
+                            "canvas → {}×{} (scale {:.3})",
+                            canvas.0, canvas.1, params.scale
+                        ));
                     }
                     options.scale = params.scale;
                     options.column_span = params.column_span;
@@ -501,7 +525,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     )
                     .with_slowdown(options.animations.slowdown);
                     zoom.retarget(zoom_target, now);
-                    if changed_wallpaper {
+                    if reload_media {
                         if let Some(path) = options.wallpaper.clone() {
                             match switch_wallpaper(
                                 &path,
@@ -808,6 +832,19 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     })
 }
 
+/// The canvas: the output enlarged by `scale` (§4.1). A wallpaper is fitted to
+/// exactly this, so the shader samples it 1:1.
+///
+/// `round`, not `ceil`: 1440 × 1.1 is 1584 exactly in decimal but
+/// 1584.0000000000002 in binary, and `ceil` would hand the shader a canvas one
+/// pixel too tall — which shifts the whole vertical travel by a pixel.
+fn canvas_size(screen: (f64, f64), scale: f64) -> (u32, u32) {
+    (
+        (screen.0 * scale).round() as u32,
+        (screen.1 * scale).round() as u32,
+    )
+}
+
 /// Swap the wallpaper, cross-fading from whatever is on screen.
 ///
 /// Shared by `set` over the control socket and by a config reload — both mean
@@ -886,6 +923,16 @@ fn log(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_rounds_instead_of_ceiling() {
+        // 1440 × 1.1 is 1584 exactly in decimal but 1584.0000000000002 in
+        // binary. `ceil` would make the canvas a pixel too tall, which shifts
+        // the whole vertical travel by a pixel — and the canvas is exactly what
+        // the wallpaper is fitted to, so the error would be in the picture.
+        assert_eq!(canvas_size((2560.0, 1440.0), 1.1), (2816, 1584));
+        assert_eq!(canvas_size((2560.0, 1440.0), 1.0), (2560, 1440));
+    }
 
     /// A panel zips `schema` and `state` together by dotted key name. That only
     /// works if the two agree, and they are written in two different files — so

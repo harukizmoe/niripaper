@@ -115,6 +115,45 @@ pub fn find_path() -> Result<PathBuf, String> {
     }
 }
 
+/// Is a daemon listening on `path`?
+///
+/// A socket nobody listens on refuses the connection (ECONNREFUSED), and only
+/// that means "leftover from a daemon that died". Anything else counts as served
+/// — evicting something that is running is the worse mistake.
+fn served_by_daemon(path: &Path) -> bool {
+    match UnixStream::connect(path) {
+        Ok(mut probe) => {
+            // Say something valid before closing, so the daemon we are declining
+            // to replace does not log an empty request.
+            let _ = probe.write_all(b"query\n");
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// What a second daemon on the same output is told. One wording for two places:
+/// the early check in the daemon, and the authoritative one in [`Server::bind`].
+fn already_served(path: &Path) -> String {
+    format!(
+        "{} is served by a running daemon; kill it first, or use another --output",
+        path.display()
+    )
+}
+
+/// Fail fast when `path` is already served.
+///
+/// [`Server::bind`] refuses for the same reason, but a daemon only reaches that
+/// after building a layer surface, loading the media and creating a Vulkan
+/// device — work a duplicate start must never do, and a second wallpaper must
+/// never flash on the output while it does it.
+pub fn refuse_if_served(path: &Path) -> Result<(), String> {
+    if served_by_daemon(path) {
+        return Err(already_served(path));
+    }
+    Ok(())
+}
+
 pub struct Server {
     listener: UnixListener,
     path: PathBuf,
@@ -122,19 +161,31 @@ pub struct Server {
 
 impl Server {
     pub fn bind(path: &Path) -> Result<Self, String> {
-        // A leftover socket from a killed daemon would make `bind` fail with
-        // EADDRINUSE. Only ever remove a socket: if something else lives there,
-        // refusing is the right answer.
+        // Two different things can be sitting at this path, and they need
+        // opposite answers.
+        //
+        // A leftover socket from a daemon that died would make `bind` fail with
+        // EADDRINUSE, so it has to go. A *live* daemon on the same output must
+        // not be evicted: it keeps drawing (the compositor still holds its
+        // surface) but becomes unreachable, and when it eventually exits its
+        // `Drop` unlinks *our* socket instead — leaving both unaddressable.
+        // That is not hypothetical: it is how a stray second daemon on `DP-1`
+        // went unnoticed while it was doubling the work on one output.
+        //
+        // `connect` is what tells them apart. A socket nobody listens on
+        // refuses the connection; only that means "stale".
         if let Ok(meta) = std::fs::symlink_metadata(path) {
             use std::os::unix::fs::FileTypeExt;
-            if meta.file_type().is_socket() {
-                let _ = std::fs::remove_file(path);
-            } else {
+            if !meta.file_type().is_socket() {
                 return Err(format!(
                     "{} exists and is not a socket; refusing to remove it",
                     path.display()
                 ));
             }
+            if served_by_daemon(path) {
+                return Err(already_served(path));
+            }
+            let _ = std::fs::remove_file(path);
         }
         let listener =
             UnixListener::bind(path).map_err(|e| format!("binding {}: {e}", path.display()))?;
