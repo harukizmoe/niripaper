@@ -25,6 +25,15 @@ cargo clippy --all-targets      # 必须 0 警告
 cargo test
 ```
 
+这三条**在 CI 里也会跑**（`.github/workflows/ci.yml`，push 到 `main`/`dev` 与所有 PR），
+外加一个 release 构建 ✓。所以本地跑通不等于一定能过 —— CI 用的是**最新的 stable 工具链**，
+偶尔会有新 lint 冒出来 ✓；`clippy` 在 CI 里带 `-D warnings` ✓，任何警告都是失败 ✓。
+
+CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些库 ✓：
+`libmpv`（视频 render API）、`libEGL`/`libGL`（渲染器）、`libgbm`（dmabuf 分配）、
+`libwayland-client`（图层表面）✓。测试是纯逻辑 ✓（无 GPU / 无合成器 / 无显示 ✓），
+所以在什么显卡都没有的 runner 上照样跑 ✓。
+
 装到 `PATH`：`cargo install --path . --locked --bin niripaper` —— **必须带 `--bin niripaper`**，
 否则 `src/bin/` 下的两个诊断探针也会被一起装进 `~/.cargo/bin`。
 **改完代码要重装**：`PATH` 上的 `niripaper` 与 `target/release/niripaper` 是两份拷贝 ✗，
