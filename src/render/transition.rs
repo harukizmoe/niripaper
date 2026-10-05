@@ -337,6 +337,12 @@ impl Transition {
         if self.is_off() || self.effect == Effect::None || self.snapshot.is_none() {
             return None;
         }
+        // Once it has settled there is nothing left to blend: the wallpaper is
+        // just the wallpaper. Stopping here also means a mask that ends at 0.999
+        // rather than 1.0 cannot leave a residue behind.
+        if !self.animator.is_moving() {
+            return None;
+        }
         let (value, _) = self.animator.sample(now);
         // The raw value, so an overshooting curve reaches the effect; the shader
         // clamps where the *colour* mix needs it, and geometric effects get the

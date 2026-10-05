@@ -459,6 +459,13 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
                     options.transition = reloaded.transition.clone();
+                    // The transition owns its own settings, so a reload has to
+                    // rebuild it — the same way the animators above are rebuilt
+                    // rather than poked. Without this, editing `[transition]`
+                    // while the daemon runs silently does nothing, which is
+                    // exactly what a panel writes to.
+                    transition =
+                        Transition::new(options.transition.clone(), options.animations.slowdown);
                     options.wallpaper = reloaded.wallpaper.clone();
                     options.namespace = reloaded.namespace.clone();
                     niri.motion

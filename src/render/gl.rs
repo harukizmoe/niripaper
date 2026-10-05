@@ -542,8 +542,14 @@ void transition(out float mask, out vec2 old_uv, out vec2 new_uv) {
 
     if (u_effect == 2) {
         // Dissolve: grains of the new image appear all over at once.
+        //
+        // The threshold sweeps *down* across the grain range and leaves it: with
+        // a fixed band around t, a third of the pixels are still half-blended at
+        // t = 1, which is a permanent grain over the wallpaper rather than a
+        // transition.
         float grain = hash(floor(uv * u_screen / 3.0));
-        mask = smoothstep(t - u_softness, t + u_softness, grain);
+        float threshold = 1.0 + u_softness - t * (1.0 + 2.0 * u_softness);
+        mask = smoothstep(threshold - u_softness, threshold + u_softness, grain);
     } else if (u_effect == 3) {
         // Wipe: a straight edge sweeping along u_direction.
         float along = dot(uv - 0.5, u_direction) + 0.5;

@@ -65,7 +65,7 @@ fn main() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("{out}: {e}"))?;
     for name in Effect::NAMES {
         let effect = Effect::parse(name)?;
-        for progress in [0.35f32, 0.6] {
+        for progress in [0.35f32, 0.6, 1.0] {
             let blend = Blend {
                 previous: snapshot.texture(),
                 effect: effect.index(),
