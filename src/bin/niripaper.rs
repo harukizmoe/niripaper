@@ -348,9 +348,9 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.socket = over.socket;
     options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
-    // Animations come from the config only: they are tuned by feel, and a flag
-    // per parameter would be noise.
-    options.animations = config.animations.clone();
+    // Animations and the transition come from the config only: they are tuned by
+    // feel, and a flag per parameter would be noise.
+    apply_config_only_settings(&mut options, &config);
     options.wallpaper = over.wallpaper.or(params.wallpaper);
     if let Some(pattern) = over.pattern {
         options.pattern = pattern;
@@ -358,4 +358,51 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.trace = over.trace;
     println!("niripaper: config {source}");
     daemon::run(&options, &|| !EXIT.load(Ordering::SeqCst))
+}
+
+/// The settings no flag can override, applied in one place — and tested in one
+/// place, because a config key that never reaches `Options` is invisible until
+/// someone sets a non-default value and wonders why nothing changed. `[transition]`
+/// did exactly that: every one of its keys was ignored at startup, and the
+/// built-in defaults happened to match the documented values, so `state` looked
+/// right the whole time.
+fn apply_config_only_settings(options: &mut Options, config: &Config) {
+    options.animations = config.animations.clone();
+    options.transition = config.transition.clone();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every key of `[transition]` has to reach the daemon. This is the test that
+    /// would have caught the missing line.
+    #[test]
+    fn the_transition_settings_reach_the_daemon() {
+        let config = Config::parse_without_niri(
+            "[transition]\nselection = \"fixed\"\neffect = \"honeycomb\"\n\
+             duration_ms = 2400\ncurve = \"linear\"\nsoftness = 0.1\n\
+             center = [0.2, 0.8]\nstart_radius = 0.4\npush = 1.2\nstripes = 7\n\
+             cell = 0.3\non_start = false\nallow_overshoot = true",
+        )
+        .expect("parses");
+        let mut options = Options::new("test");
+        apply_config_only_settings(&mut options, &config);
+
+        let transition = &options.transition;
+        assert_eq!(transition.selection.name(), "fixed");
+        assert_eq!(transition.effect.name(), "honeycomb");
+        assert_eq!(transition.duration.as_millis(), 2400);
+        assert_eq!(transition.curve.name(), "linear");
+        assert_eq!(transition.softness, 0.1);
+        assert_eq!(transition.center, (0.2, 0.8));
+        assert_eq!(transition.start_radius, 0.4);
+        assert_eq!(transition.push, 1.2);
+        assert_eq!(transition.stripes, 7);
+        assert_eq!(transition.cell, 0.3);
+        assert!(!transition.on_start);
+        assert!(transition.allow_overshoot);
+        // And the animations beside it, which had the same shape of bug once.
+        assert_eq!(options.animations, config.animations);
+    }
 }
