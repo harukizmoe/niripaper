@@ -17,9 +17,14 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`: this project ships prebuilt binaries, so
+    # the machine that builds them should be a decision, not whatever GitHub rolled
+    # out this week. `ubuntu-latest` is slated to move to Ubuntu 26, where the
+    # package names below may well have changed.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The daemon links these by hand (no crate wraps them): libmpv for the video
       # render API, libEGL/libGL for the renderer, libgbm for the dmabuf
