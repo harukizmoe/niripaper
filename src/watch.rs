@@ -90,10 +90,22 @@ impl Watcher {
         self.fd.as_raw_fd()
     }
 
-    /// Read everything pending. `true` means "reload". EAGAIN (no more events)
-    /// is the normal way out.
+    /// Read everything pending. `true` means "something worth reloading happened".
+    /// EAGAIN (no more events) is the normal way out.
+    ///
+    /// The events are parsed rather than counted, because a file being *created*
+    /// is not a file being *finished*: reloading on `IN_CREATE` reads a file the
+    /// writer has not written yet and reports a TOML error for a perfectly normal
+    /// save. Waiting for `IN_CLOSE_WRITE` is the fix. A new *directory* has no
+    /// close to wait for, and is how `config.d` announces itself, so that one
+    /// counts on its own.
     pub fn drain(&mut self) -> bool {
-        let mut anything = false;
+        // `struct inotify_event`: wd, mask, cookie, len, then a NUL-padded name.
+        const HEADER: usize = 16;
+        const WORTH_RELOADING: u32 =
+            libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO | libc::IN_DELETE | libc::IN_MOVED_FROM;
+
+        let mut reload = false;
         loop {
             let read = unsafe {
                 libc::read(
@@ -103,9 +115,23 @@ impl Watcher {
                 )
             };
             if read <= 0 {
-                return anything;
+                return reload;
             }
-            anything = true;
+            let read = read as usize;
+            let mut offset = 0;
+            while offset + HEADER <= read {
+                let mask =
+                    u32::from_ne_bytes(self.buffer[offset + 4..offset + 8].try_into().unwrap());
+                let len =
+                    u32::from_ne_bytes(self.buffer[offset + 12..offset + 16].try_into().unwrap())
+                        as usize;
+                if mask & WORTH_RELOADING != 0
+                    || (mask & libc::IN_CREATE != 0 && mask & libc::IN_ISDIR != 0)
+                {
+                    reload = true;
+                }
+                offset += HEADER + len;
+            }
         }
     }
 }
