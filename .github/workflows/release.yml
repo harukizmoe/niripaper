@@ -58,7 +58,7 @@ jobs:
             "Check with: ldd ./niripaper" \
             "" \
             "Works on anything with at least that glibc and mpv 0.34. On a system with" \
-            "mpv 0.35 or newer ($soname is libmpv.so.2) take the other tarball." > INSTALL.txt
+            "mpv 0.35 or newer (libmpv.so.2) take the other tarball." > INSTALL.txt
           tar czf "dist/niripaper-${{ github.ref_name }}-x86_64-linux-gnu-mpv0.34.tar.gz" \
             -C target/release niripaper \
             -C "$GITHUB_WORKSPACE" INSTALL.txt README.md README.zh-CN.md LICENSE
