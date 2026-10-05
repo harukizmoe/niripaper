@@ -64,7 +64,8 @@ niripaper watch                           # 只打印视差目标值，不绘制
 
 ### 给运行中的守护进程换壁纸
 
-守护进程监听一个小控制 socket（`$XDG_RUNTIME_DIR/niripaper.sock`）：
+守护进程监听一个小控制 socket，**每个输出一个**
+（`$XDG_RUNTIME_DIR/niripaper-DP-1.sock`）：
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
@@ -95,13 +96,17 @@ spawn-at-startup "niripaper" "daemon"
 | `--scale F` | 画布放大倍数，`1.0`–`1.35` |
 | `--column-span N`、`--workspace-span N` | 视差铺开多少级 |
 | `--pattern blocks\|bands` | 内置测试图案，未指定壁纸时使用 |
-| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper.sock`） |
+| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper-<输出名>.sock`） |
+| `--output NAME` | 找哪个输出的守护进程；只有多个在跑时才需要 |
 | `--trace` | 逐帧打印（位置、缩放、耗时）—— 排查用 |
 
 ## 配置
 
 配置文件位于 `~/.config/niripaper/config.toml`。它是可选的：完全没有这个文件时，
-用内置默认值。取值优先级是 **命令行 → 配置文件 → 内置默认值**，
+用内置默认值。它旁边的 `config.d/` 目录也会被读取 —— 里面每个 `*.toml` 按文件名
+顺序合并到主配置之上（靠后的覆盖靠前的）。工具把自己的设置放在这里，不用动你的
+配置：删掉文件即还原。运行中改文件会即时生效；解析失败会报出原因并**继续用正在
+运行的配置**。取值优先级是 **命令行 → 配置文件 → 内置默认值**，
 所以文件里只需要写和默认不同的部分。
 
 ```toml

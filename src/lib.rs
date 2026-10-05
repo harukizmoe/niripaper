@@ -17,3 +17,4 @@ pub mod niri;
 pub mod niri_config;
 pub mod render;
 pub mod scene;
+pub mod watch;

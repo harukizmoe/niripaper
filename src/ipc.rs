@@ -55,11 +55,56 @@ impl Request {
     }
 }
 
-/// The default socket path: per-user, per-session, cleaned up by the session.
-pub fn default_path() -> Result<PathBuf, String> {
+/// The default socket path: per-user, per-session, **per output**.
+///
+/// There is one daemon per output, so one socket per output — a single path
+/// would have the second daemon treat the first one's socket as stale and
+/// unlink it (`Server::bind` is allowed to remove a socket).
+pub fn default_path(output: &str) -> Result<PathBuf, String> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .ok_or("XDG_RUNTIME_DIR is not set — the daemon must run inside a session")?;
-    Ok(PathBuf::from(dir).join("niripaper.sock"))
+    Ok(PathBuf::from(dir).join(format!("niripaper-{output}.sock")))
+}
+
+/// Find the socket when the caller did not name an output: exactly one is
+/// unambiguous, several need `--output`.
+pub fn find_path() -> Result<PathBuf, String> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .ok_or("XDG_RUNTIME_DIR is not set — the daemon must run inside a session")?;
+    let dir = PathBuf::from(dir);
+    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("reading {}: {e}", dir.display()))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("niripaper-") && name.ends_with(".sock"))
+        })
+        .collect();
+    found.sort();
+    match found.len() {
+        0 => Err(format!(
+            "no niripaper socket in {} — is the daemon running?",
+            dir.display()
+        )),
+        1 => Ok(found.remove(0)),
+        _ => {
+            let names: Vec<String> = found
+                .iter()
+                .map(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+                .collect();
+            Err(format!(
+                "several daemons are running ({}); pass --output NAME",
+                names.join(", ")
+            ))
+        }
+    }
 }
 
 pub struct Server {

@@ -158,16 +158,89 @@ pub struct OutputParams {
 impl Config {
     /// Load from the standard location, or fall back to defaults.
     pub fn load() -> Result<Self, String> {
-        match default_path() {
-            Some(path) if path.exists() => Self::load_from(&path),
-            _ => Ok(Self::default()),
+        let Some(path) = default_path() else {
+            return Ok(Self::default());
+        };
+        // No files at all is not an error: the built-in defaults are a valid
+        // configuration.
+        if !path.exists() && !path.with_extension("d").is_dir() {
+            return Ok(Self::default());
         }
+        Self::load_from(&path)
     }
 
+    /// Load the configuration for `path`: the file itself, then every `*.toml`
+    /// in the sibling `<stem>.d/` directory, in filename order. Later files
+    /// override earlier ones.
+    ///
+    /// That is what lets a tool own its own file (`config.d/noctalia.toml`)
+    /// without touching the user's hand-commented `config.toml`, and removing
+    /// the file is a clean undo (`HANDOFF.md` §2).
     pub fn load_from(path: &Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("reading {}: {e}", path.display()))?;
-        Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+        let files = Self::config_files(path)?;
+        let mut sources = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file)
+                .map_err(|e| format!("reading {}: {e}", file.display()))?;
+            sources.push((file.clone(), text));
+        }
+        Self::load_sources(&sources, true)
+    }
+
+    /// The files that make up the configuration for `path`.
+    ///
+    /// The main file has to exist — an explicit path with a typo should say so.
+    /// The `.d` directory is optional.
+    pub fn config_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+        // `config.toml` -> `config.d`
+        let dir = path.with_extension("d");
+        // Nothing at all is a typo worth reporting; a missing main file with a
+        // `config.d` next to it is a legitimate setup.
+        if !path.exists() && !dir.is_dir() {
+            return Err(format!("{} does not exist", path.display()));
+        }
+        let mut files = Vec::new();
+        if path.exists() {
+            files.push(path.to_owned());
+        }
+        if dir.is_dir() {
+            let mut extra: Vec<PathBuf> = std::fs::read_dir(&dir)
+                .map_err(|e| format!("reading {}: {e}", dir.display()))?
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|entry| {
+                    entry.extension().and_then(|e| e.to_str()) == Some("toml") && entry.is_file()
+                })
+                .collect();
+            extra.sort();
+            files.extend(extra);
+        }
+        Ok(files)
+    }
+
+    /// Merge and validate already-read sources.
+    ///
+    /// Every file is deserialized *on its own* first: with several files in
+    /// play, "unknown field" without a filename is a puzzle, and the whole
+    /// point of `config.d` is that a tool writes files the user never looks at.
+    pub fn load_sources(sources: &[(PathBuf, String)], read_niri: bool) -> Result<Self, String> {
+        let mut parsed = Vec::with_capacity(sources.len());
+        for (path, text) in sources {
+            let value: toml::Value =
+                toml::from_str(text).map_err(|e| format!("{}: {e}", path.display()))?;
+            if let Err(err) = toml::from_str::<RawConfig>(text) {
+                return Err(format!("{}: {err}", path.display()));
+            }
+            parsed.push(value);
+        }
+        let mut merged = toml::Value::Table(toml::map::Map::new());
+        for value in parsed {
+            merge(&mut merged, value);
+        }
+        let raw: RawConfig = merged
+            .try_into()
+            .map_err(|e: toml::de::Error| e.to_string())?;
+        Self::from_raw(raw, read_niri)
     }
 
     /// Parse and validate. Kept separate from the file handling so it is
@@ -185,6 +258,11 @@ impl Config {
 
     fn parse_inner(text: &str, read_niri: bool) -> Result<Self, String> {
         let raw: RawConfig = toml::from_str(text).map_err(|e| e.to_string())?;
+        Self::from_raw(raw, read_niri)
+    }
+
+    /// Validate and resolve a parsed (and possibly merged) raw config.
+    fn from_raw(raw: RawConfig, read_niri: bool) -> Result<Self, String> {
         let mut config = Self::default();
         if let Some(scale) = raw.scale {
             config.scale = check_scale("scale", scale)?;
@@ -271,6 +349,24 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 // --- validation -----------------------------------------------------------
+/// Deep-merge `from` into `into`: tables merge key by key, anything else is
+/// replaced. That is what makes "later file wins" work for nested tables like
+/// `[animations.parallax]` without either file having to repeat the other's keys.
+fn merge(into: &mut toml::Value, from: toml::Value) {
+    match (into, from) {
+        (toml::Value::Table(into), toml::Value::Table(from)) => {
+            for (key, value) in from {
+                match into.get_mut(&key) {
+                    Some(existing) => merge(existing, value),
+                    None => {
+                        into.insert(key, value);
+                    }
+                }
+            }
+        }
+        (into, from) => *into = from,
+    }
+}
 
 fn check_scale(key: &str, scale: f64) -> Result<f64, String> {
     if !scale.is_finite() {
@@ -640,6 +736,41 @@ mod tests {
             expand_home_at(Path::new("~/wall.png"), None),
             PathBuf::from("~/wall.png")
         );
+    }
+
+    #[test]
+    fn a_later_file_overrides_an_earlier_one() {
+        // This is what lets a tool own `config.d/<tool>.toml` without touching
+        // the user's hand-commented `config.toml`.
+        let main = (
+            PathBuf::from("config.toml"),
+            "scale = 1.1\n[animations.parallax]\nduration_ms = 600\ncurve = \"linear\"".to_owned(),
+        );
+        let extra = (
+            PathBuf::from("config.d/noctalia.toml"),
+            "[animations.parallax]\ncurve = \"ease-out-expo\"".to_owned(),
+        );
+        let config = Config::load_sources(&[main, extra], false).expect("merges");
+        assert_eq!(config.scale, 1.1, "the untouched key survives");
+        assert_eq!(
+            config.animations.parallax,
+            Animation::easing(Curve::EaseOutExpo, std::time::Duration::from_millis(600)),
+            "the later file wins for the key it sets"
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_names_the_file_that_has_it() {
+        // With several files in play, "unknown field" without a filename is a
+        // puzzle — and the files a tool writes are ones the user never reads.
+        let main = (PathBuf::from("config.toml"), "scale = 1.1".to_owned());
+        let extra = (
+            PathBuf::from("config.d/bad.toml"),
+            "nonsense = 1".to_owned(),
+        );
+        let err = Config::load_sources(&[main, extra], false).unwrap_err();
+        assert!(err.contains("config.d/bad.toml"), "{err}");
+        assert!(err.contains("nonsense"), "{err}");
     }
 
     #[test]

@@ -74,6 +74,7 @@ fn main() -> ExitCode {
 /// Talk to the running daemon over its control socket (`HANDOFF.md` §3).
 fn control(command: &str, args: &[String]) -> Result<(), String> {
     let mut path = None;
+    let mut output = None;
     let mut argument = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -83,13 +84,15 @@ fn control(command: &str, args: &[String]) -> Result<(), String> {
                     iter.next().ok_or("--socket needs a value")?,
                 ))
             }
+            "--output" => output = Some(iter.next().ok_or("--output needs a value")?.clone()),
             other if other.starts_with("--") => return Err(format!("unknown argument {other}")),
             other => argument = Some(other.to_owned()),
         }
     }
-    let path = match path {
-        Some(path) => path,
-        None => niripaper::ipc::default_path()?,
+    let path = match (path, output) {
+        (Some(path), _) => path,
+        (None, Some(output)) => niripaper::ipc::default_path(&output)?,
+        (None, None) => niripaper::ipc::find_path()?,
     };
     let request = match (command, argument) {
         ("set", Some(target)) => format!("set {target}"),
@@ -113,9 +116,9 @@ fn usage() {
          \x20             draw the wallpaper layer and follow niri's layout\n\
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n\
          \n\
-         \x20 set PATH [--socket PATH]    switch the running daemon's wallpaper\n\
-         \x20 query    [--socket PATH]    what is on screen right now\n\
-         \x20 kill     [--socket PATH]    ask the daemon to shut down\n"
+         \x20 set PATH [--output NAME] [--socket PATH]   switch the running daemon's wallpaper\n\
+         \x20 query    [--output NAME] [--socket PATH]   what is on screen right now\n\
+         \x20 kill     [--output NAME] [--socket PATH]   ask the daemon to shut down\n"
     );
 }
 
@@ -287,16 +290,26 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     install_signal_handlers();
     let over = parse_overrides(args)?;
 
-    let (config, source) = match &over.config {
-        Some(path) => (Config::load_from(path)?, path.display().to_string()),
-        None => {
-            let config = Config::load()?;
-            let source = match niripaper::config::default_path() {
-                Some(path) if path.exists() => path.display().to_string(),
-                _ => "built-in defaults (no config file)".to_owned(),
-            };
-            (config, source)
-        }
+    // The config file to watch for reloads: the explicit one, or the default one
+    // when it exists. Built-in defaults mean nothing to watch.
+    let (config, source, config_path) = match &over.config {
+        Some(path) => (
+            Config::load_from(path)?,
+            path.display().to_string(),
+            Some(path.clone()),
+        ),
+        None => match niripaper::config::default_path() {
+            Some(path) if path.exists() => {
+                let config = Config::load_from(&path)?;
+                let source = path.display().to_string();
+                (config, source, Some(path))
+            }
+            _ => (
+                Config::load()?,
+                "built-in defaults (no config file)".to_owned(),
+                None,
+            ),
+        },
     };
 
     // The output name may have to come from niri, and the per-output overrides
@@ -323,6 +336,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     options.scale = over.scale.unwrap_or(params.scale);
     options.column_span = over.column_span.unwrap_or(params.column_span);
     options.video_fps = config.video_fps;
+    options.config_path = config_path;
     options.socket = over.socket;
     options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());

@@ -62,6 +62,9 @@ pub struct Options {
     pub wallpaper: Option<std::path::PathBuf>,
     /// Frame-rate cap for video wallpapers (`0` keeps the source's).
     pub video_fps: u32,
+    /// The config file this daemon reads, for the reload watcher. `None` means
+    /// the built-in defaults with no file to watch.
+    pub config_path: Option<std::path::PathBuf>,
     /// Control socket to bind (`None` = `$XDG_RUNTIME_DIR/niripaper.sock`).
     /// Overridable so a second instance can be tested without fighting the
     /// session's daemon over one path.
@@ -85,6 +88,7 @@ impl Options {
             pattern: Pattern::Blocks,
             wallpaper: None,
             video_fps: 0,
+            config_path: None,
             socket: None,
             animations: crate::config::Animations::default(),
             trace: false,
@@ -96,6 +100,10 @@ impl Options {
 /// canvas-sized and are sampled identically — the only difference is that the
 /// video's texture is redrawn by libmpv as it plays.
 pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> {
+    // The *effective* configuration, owned so a reload can change it: `set` over
+    // the control socket and a config-file reload both write here. Command-line
+    // flags are a startup-only override, exactly as they are in niri.
+    let mut options = options.clone();
     // --- wayland -----------------------------------------------------------
     let mut client = layer::Client::connect()?;
     let output = client
@@ -224,14 +232,19 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
     let screen = (surface.width as f64, surface.height as f64);
-    let animations = &options.animations;
-    let mut animator = Animator::new(niri.motion.progress(&options.output), animations.parallax)
-        .with_slowdown(animations.slowdown);
+    let mut animator = Animator::new(
+        niri.motion.progress(&options.output),
+        options.animations.parallax,
+    )
+    .with_slowdown(options.animations.slowdown);
     // The overview transition animates the canvas scale (§4.1): pulling back
     // shows more of the wallpaper, which reads as the workspace receding.
-    let mut zoom = Animator::new(1.0f64, animations.overview_open_close.animation)
-        .with_slowdown(animations.slowdown);
-    let mut crossfade = CrossFade::new(animations.wallpaper_change, animations.slowdown);
+    let mut zoom = Animator::new(1.0f64, options.animations.overview_open_close.animation)
+        .with_slowdown(options.animations.slowdown);
+    let mut crossfade = CrossFade::new(
+        options.animations.wallpaper_change,
+        options.animations.slowdown,
+    );
     log(&format!(
         "initial progress h={:.3} v={:.3}",
         animator.target().horizontal,
@@ -276,10 +289,33 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // startup has already failed: a socket that exists means a daemon that works.
     let socket_path = match &options.socket {
         Some(path) => path.clone(),
-        None => crate::ipc::default_path()?,
+        None => crate::ipc::default_path(&options.output)?,
     };
     let ipc = crate::ipc::Server::bind(&socket_path)?;
     log(&format!("control socket {}", socket_path.display()));
+    // Watch the configuration (§2). Directories, not files: tools write
+    // atomically and may create `config.d` long after we started.
+    let mut watcher = crate::watch::Watcher::new()?;
+    let config_dirs: Vec<std::path::PathBuf> = match &options.config_path {
+        Some(path) => {
+            let dir = path.with_extension("d");
+            let parent = path.parent().map(|p| p.to_owned());
+            [parent, Some(dir)].into_iter().flatten().collect()
+        }
+        None => Vec::new(),
+    };
+    watcher.watch(&config_dirs)?;
+    if !config_dirs.is_empty() {
+        log(&format!(
+            "watching {} for config changes",
+            options
+                .config_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        ));
+    }
+
     let mut fds = [
         libc::pollfd {
             fd: client.fd(),
@@ -298,6 +334,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         },
         libc::pollfd {
             fd: ipc.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: watcher.fd(),
             events: libc::POLLIN,
             revents: 0,
         },
@@ -369,7 +410,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             // `retarget` ignores an unchanged target, so this is a no-op unless
             // the overview actually opened or closed.
             let wanted_zoom = if niri.overview_open {
-                animations.overview_open_close.zoom
+                options.animations.overview_open_close.zoom
             } else {
                 1.0
             };
@@ -384,31 +425,95 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 ));
             }
         }
+        if fds[4].revents & libc::POLLIN != 0 && watcher.drain() {
+            let Some(path) = options.config_path.clone() else {
+                continue;
+            };
+            // Watch *before* reloading. A `config.d` created just now is only
+            // discovered by this reload, and inotify reports no past events — so
+            // adding the watch afterwards would miss anything written into it in
+            // the meantime (a tool's `mkdir -p config.d && write`).
+            watcher.watch(&config_dirs)?;
+            match crate::config::Config::load_from(&path) {
+                // A failed reload keeps the running configuration: a tool
+                // writing a file has to be able to get it wrong without the
+                // screen going blank. (niri's `ConfigLoaded { failed: true }`.)
+                Err(err) => log(&format!("config reload failed, keeping current: {err}")),
+                Ok(reloaded) => {
+                    let changed_wallpaper = reloaded.wallpaper != options.wallpaper;
+                    if reloaded.namespace != options.namespace {
+                        log("namespace changed: needs a restart to take effect");
+                    }
+                    if reloaded.video_fps != options.video_fps {
+                        log("video_fps changed: applies to the next video load");
+                    }
+                    options.scale = reloaded.scale;
+                    options.column_span = reloaded.column_span;
+                    options.workspace_span = reloaded.workspace_span;
+                    options.video_fps = reloaded.video_fps;
+                    options.animations = reloaded.animations.clone();
+                    options.wallpaper = reloaded.wallpaper.clone();
+                    options.namespace = reloaded.namespace.clone();
+                    niri.motion
+                        .set_spans(options.column_span, options.workspace_span);
+                    // Rebuild the animators at their current position so a
+                    // changed curve or duration applies without a jump.
+                    let now = Instant::now();
+                    let position = animator.position(now);
+                    let target = animator.target();
+                    animator = Animator::new(position, options.animations.parallax)
+                        .with_slowdown(options.animations.slowdown);
+                    animator.retarget(target, now);
+                    let zoom_position = zoom.position(now);
+                    let zoom_target = zoom.target();
+                    zoom = Animator::new(
+                        zoom_position,
+                        options.animations.overview_open_close.animation,
+                    )
+                    .with_slowdown(options.animations.slowdown);
+                    zoom.retarget(zoom_target, now);
+                    if changed_wallpaper {
+                        if let Some(path) = options.wallpaper.clone() {
+                            match switch_wallpaper(
+                                &path,
+                                canvas,
+                                options.video_fps,
+                                &mut media,
+                                &mut crossfade,
+                                &pool,
+                                last_slot,
+                                screen,
+                            ) {
+                                Ok(()) => log(&format!("wallpaper → {}", path.display())),
+                                Err(err) => log(&format!("reloaded wallpaper: {err}")),
+                            }
+                        } else {
+                            media = None;
+                            log("wallpaper cleared");
+                        }
+                    }
+                    log(&format!("config reloaded from {}", path.display()));
+                }
+            }
+        }
+
         if fds[3].revents & libc::POLLIN != 0 {
             match ipc.accept() {
                 Ok((request, stream)) => match request {
                     crate::ipc::Request::Set(path) => {
                         // Load first, swap after: a bad path must leave the
                         // current wallpaper alone, not blank the screen.
-                        match Media::load(&path, canvas, options.video_fps) {
-                            Ok(loaded) => {
-                                media = Some(loaded);
-                                // Snapshot *before* the swap: that is what is on
-                                // screen right now. `begin` only binds the
-                                // framebuffer and sets the viewport, so it does
-                                // not disturb the pixels being copied.
-                                if !crossfade.is_off() {
-                                    if let Some(slot) = last_slot {
-                                        crossfade.restart(
-                                            (screen.0 as u32, screen.1 as u32),
-                                            Instant::now(),
-                                            |snapshot| {
-                                                pool.frame(slot).begin();
-                                                snapshot.capture();
-                                            },
-                                        );
-                                    }
-                                }
+                        match switch_wallpaper(
+                            &path,
+                            canvas,
+                            options.video_fps,
+                            &mut media,
+                            &mut crossfade,
+                            &pool,
+                            last_slot,
+                            screen,
+                        ) {
+                            Ok(()) => {
                                 crate::ipc::reply(&stream, "ok");
                                 log(&format!("wallpaper → {}", path.display()));
                             }
@@ -517,8 +622,42 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     Ok(())
 }
 
-/// Draw one frame of the parallax pattern.
+/// Swap the wallpaper, cross-fading from whatever is on screen.
+///
+/// Shared by `set` over the control socket and by a config reload — both mean
+/// "this is the wallpaper now", and both must behave the same way: load first,
+/// swap after, so a bad path leaves the current one alone.
 #[allow(clippy::too_many_arguments)]
+fn switch_wallpaper(
+    path: &std::path::Path,
+    canvas: (u32, u32),
+    video_fps: u32,
+    media: &mut Option<Media>,
+    crossfade: &mut CrossFade,
+    pool: &Pool<'_>,
+    last_slot: Option<usize>,
+    screen: (f64, f64),
+) -> Result<(), String> {
+    let loaded = Media::load(path, canvas, video_fps)?;
+    *media = Some(loaded);
+    // Snapshot *before* the swap: that is what is on screen right now.
+    // `Frame::begin` only binds the framebuffer and sets the viewport, so it
+    // does not disturb the pixels being copied.
+    if !crossfade.is_off() {
+        if let Some(slot) = last_slot {
+            crossfade.restart(
+                (screen.0 as u32, screen.1 as u32),
+                Instant::now(),
+                |snapshot| {
+                    pool.frame(slot).begin();
+                    snapshot.capture();
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 fn log(message: &str) {
     // Flush every line. When stdout is a file — which is exactly the autostart
     // case — Rust block-buffers it, so a crash or a SIGTERM would take the whole

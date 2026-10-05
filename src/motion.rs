@@ -157,6 +157,13 @@ impl Motion {
         self.column_span
     }
 
+    /// Take new spans from a reloaded config. Both axes are fixed by design
+    /// (§4.2.1), so this only ever changes the *scale* of the travel.
+    pub fn set_spans(&mut self, column_span: usize, workspace_span: usize) {
+        self.column_span = column_span.max(2);
+        self.workspace_span = workspace_span.max(2);
+    }
+
     pub fn workspace_span(&self) -> usize {
         self.workspace_span
     }
