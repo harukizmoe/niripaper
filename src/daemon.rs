@@ -322,6 +322,14 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         fds[0].revents = 0;
         fds[1].revents = 0;
         fds[2].revents = 0;
+        // Re-derive it every iteration: `set` can swap a still for a video, and
+        // the new one has its own wakeup fd. Capturing it once at startup meant
+        // a video switched in later was never pumped — the wallpaper stayed
+        // black.
+        fds[2].fd = media
+            .as_ref()
+            .map(|media| media.wakeup_fd())
+            .unwrap_or(media::NO_WAKEUP);
         fds[3].revents = 0;
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if ready < 0 {
@@ -471,8 +479,8 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                     "frame {drawn:4} h={:.4} v={:.4} zoom={zoom_now:.4} fade={fade:.3} dt={:>5.1}ms moving={moving} submitted={} in_flight={} released={} skipped={skipped}",
                     progress.horizontal,
                     progress.vertical,
-                    submitted_slot.is_some(),
                     dt.as_secs_f64() * 1000.0,
+                    submitted_slot.is_some(),
                     pool.in_flight(),
                     client.state.releases,
                 ));
