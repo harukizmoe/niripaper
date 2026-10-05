@@ -192,6 +192,12 @@ impl Video {
             // expensive defaults. On this machine the 4K→canvas scale was a
             // measurable share of the GPU load.
             ("profile", "fast"),
+            // Measured, not assumed: `vulkan-copy` is what this picks on the test
+            // machine (AMD, Mesa), and it is the right answer. `vaapi-egl` — the
+            // obvious "avoid the host copy" candidate — falls back to *software*
+            // decoding here (`hwdec-current = no`) and uses 2.4x the memory
+            // (568 MB vs 232 MB anonymous). `auto` picks the same thing as
+            // `auto-safe`. Re-measure with `niripaper query` before changing this.
             ("hwdec", "auto-safe"),
             ("loop-file", "inf"),
             ("mute", "yes"),
