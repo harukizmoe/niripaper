@@ -32,6 +32,7 @@ use serde::Deserialize;
 use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_SCALE, DEFAULT_WORKSPACE_SPAN, MAX_SCALE};
 use crate::render::anim::{Animation, Curve, Spring};
 use crate::render::transition::{Direction, Effect, Selection, Settings};
+use crate::render::Fit;
 
 /// The daemon's layer-shell namespace, and the name users match in
 /// `~/.config/niri/rules.kdl` (§2).
@@ -63,6 +64,8 @@ pub struct Config {
     /// invalidates the backdrop, so a 60 fps source sits exactly on the edge.
     pub video_fps: u32,
     pub namespace: String,
+    /// How a source whose aspect ratio does not match the canvas is placed.
+    pub fit: Fit,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
     /// The transition when the wallpaper changes.
@@ -81,6 +84,7 @@ impl Default for Config {
             workspace_span: DEFAULT_WORKSPACE_SPAN,
             video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
+            fit: Fit::Fill,
             animations: Animations::default(),
             transition: Settings::default(),
             wallpaper: None,
@@ -143,6 +147,7 @@ pub struct OutputOverride {
     pub column_span: Option<usize>,
     pub workspace_span: Option<usize>,
     pub wallpaper: Option<PathBuf>,
+    pub fit: Option<String>,
 }
 
 /// The parameters in effect for one output.
@@ -152,6 +157,7 @@ pub struct OutputParams {
     pub column_span: usize,
     pub workspace_span: usize,
     pub wallpaper: Option<PathBuf>,
+    pub fit: Fit,
 }
 
 impl Config {
@@ -301,6 +307,9 @@ impl Config {
             }
             config.namespace = namespace;
         }
+        if let Some(fit) = &raw.fit {
+            config.fit = Fit::parse(fit).map_err(|e| format!("fit: {e}"))?;
+        }
         // The global `off` is an animation switch, and the wallpaper transition
         // is an animation: turning everything off has to turn this off too.
         config.transition =
@@ -317,6 +326,9 @@ impl Config {
             }
             if let Some(wallpaper) = &output.wallpaper {
                 check_wallpaper(&format!("outputs.{name}.wallpaper"), wallpaper.clone())?;
+            }
+            if let Some(fit) = &output.fit {
+                Fit::parse(fit).map_err(|e| format!("outputs.{name}.fit: {e}"))?;
             }
             config.outputs.insert(name, output);
         }
@@ -335,6 +347,13 @@ impl Config {
             wallpaper: over
                 .and_then(|o| o.wallpaper.clone())
                 .or_else(|| self.wallpaper.clone()),
+            // The override was parsed when the config was read, so this cannot
+            // fail; falling back rather than unwrapping keeps a future refactor
+            // from turning a validated key into a panic.
+            fit: over
+                .and_then(|o| o.fit.as_deref())
+                .and_then(|name| Fit::parse(name).ok())
+                .unwrap_or(self.fit),
         }
     }
 }
@@ -781,6 +800,7 @@ struct RawConfig {
     workspace_span: Option<usize>,
     video_fps: Option<u32>,
     namespace: Option<String>,
+    fit: Option<String>,
     #[serde(default)]
     animations: RawAnimations,
     #[serde(default)]

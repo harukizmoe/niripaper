@@ -25,6 +25,7 @@ use serde_json::{json, Value};
 use crate::config::{Animations, Config};
 use crate::render::anim::{Animation, Curve};
 use crate::render::transition::{Direction, Effect, Selection, Settings};
+use crate::render::Fit;
 
 /// What a key holds. A panel switches on this to pick a widget.
 #[derive(Debug, Clone, Serialize)]
@@ -151,6 +152,16 @@ pub fn keys() -> Vec<Key> {
             unit: None,
             hot: true,
             about: "Vertical parallax spread, in workspaces.",
+        },
+        Key {
+            name: "fit",
+            kind: Kind::Enum {
+                options: names(&Fit::NAMES),
+            },
+            default: json!(config.fit.name()),
+            unit: None,
+            hot: true,
+            about: "How a source that does not match the canvas aspect is placed: cover crops, contain pads, stretch distorts.",
         },
         Key {
             name: "namespace",

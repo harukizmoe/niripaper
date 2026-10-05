@@ -31,6 +31,7 @@ use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
 use crate::render::layer::{self, Pool};
 use crate::render::transition::Transition;
+use crate::render::Fit;
 use crate::scene::Scene;
 use crate::{gpu, motion};
 
@@ -73,6 +74,8 @@ pub struct Options {
     pub animations: crate::config::Animations,
     /// The transition when the wallpaper changes.
     pub transition: crate::render::transition::Settings,
+    /// How a source whose aspect ratio does not match the canvas is placed.
+    pub fit: Fit,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -94,6 +97,7 @@ impl Options {
             socket: None,
             animations: crate::config::Animations::default(),
             transition: crate::render::transition::Settings::default(),
+            fit: Fit::Fill,
             trace: false,
         }
     }
@@ -209,7 +213,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     );
     let mut media = match &options.wallpaper {
         Some(path) => {
-            let loaded = Media::load(path, canvas, options.video_fps)?;
+            let loaded = Media::load(path, canvas, options.video_fps, options.fit)?;
             log(&format!(
                 "{} {} → canvas {}×{}, fps cap {}",
                 if media::is_video(path) {
@@ -446,7 +450,10 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 // screen going blank. (niri's `ConfigLoaded { failed: true }`.)
                 Err(err) => log(&format!("config reload failed, keeping current: {err}")),
                 Ok(reloaded) => {
-                    let changed_wallpaper = reloaded.wallpaper != options.wallpaper;
+                    // `fit` changes how the media is placed, so it needs the
+                    // same reload the wallpaper path gets.
+                    let changed_wallpaper =
+                        reloaded.wallpaper != options.wallpaper || reloaded.fit != options.fit;
                     if reloaded.namespace != options.namespace {
                         log("namespace changed: needs a restart to take effect");
                     }
@@ -468,6 +475,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                         Transition::new(options.transition.clone(), options.animations.slowdown);
                     options.wallpaper = reloaded.wallpaper.clone();
                     options.namespace = reloaded.namespace.clone();
+                    options.fit = reloaded.fit;
                     niri.motion
                         .set_spans(options.column_span, options.workspace_span);
                     // Rebuild the animators at their current position so a
@@ -492,6 +500,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                                 &path,
                                 canvas,
                                 options.video_fps,
+                                options.fit,
                                 &mut media,
                                 &mut transition,
                                 &pool,
@@ -521,6 +530,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                             &path,
                             canvas,
                             options.video_fps,
+                            options.fit,
                             &mut media,
                             &mut transition,
                             &pool,
@@ -691,6 +701,7 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     put("column_span", json!(options.column_span));
     put("workspace_span", json!(options.workspace_span));
     put("namespace", json!(options.namespace));
+    put("fit", json!(options.fit.name()));
     let animations = &options.animations;
     put("animations.follow_niri", json!(animations.follow_niri));
     put("animations.off", json!(animations.off));
@@ -776,6 +787,9 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
                 "path": media.path().display().to_string(),
                 "kind": media.kind(),
                 "hwdec": media.hwdec(),
+                // The *effective* fit: a video cannot be tiled, so `tile` shows
+                // up here as `fill` even when the configuration says otherwise.
+                "fit": media.fit().name(),
             }),
             None => Value::Null,
         },
@@ -797,13 +811,14 @@ fn switch_wallpaper(
     path: &std::path::Path,
     canvas: (u32, u32),
     video_fps: u32,
+    fit: Fit,
     media: &mut Option<Media>,
     transition: &mut Transition,
     pool: &Pool<'_>,
     last_slot: Option<usize>,
     screen: (f64, f64),
 ) -> Result<(), String> {
-    let loaded = Media::load(path, canvas, video_fps)?;
+    let loaded = Media::load(path, canvas, video_fps, fit)?;
     *media = Some(loaded);
     // Snapshot *before* the swap: that is what is on screen right now.
     // `Frame::begin` only binds the framebuffer and sets the viewport, so it
@@ -821,11 +836,34 @@ fn switch_wallpaper(
     // Say which effect ran: "the transition did something odd" is otherwise
     // impossible to pin on one of ten.
     log(&format!(
-        "wallpaper → {} ({} transition)",
+        "wallpaper → {} ({}, {} transition)",
         path.display(),
+        media
+            .as_ref()
+            .map(|media| media.fit().name())
+            .unwrap_or("?"),
         transition.effect().name()
     ));
+
+    // Dropping the old media frees a lot — an mpv context plus its decoder — but
+    // glibc keeps freed memory in its per-thread arenas rather than returning it
+    // to the kernel, and mpv runs enough threads that each new context tends to
+    // land in fresh arenas. Measured before this line existed: **~90 MB per
+    // wallpaper change, monotonically** (five changes took a 4K daemon from
+    // 233 MB to 621 MB of anonymous memory). `malloc_trim` hands the free arenas
+    // back. It is a hint, and it costs a few milliseconds, on an event that
+    // happens when a person changes their wallpaper.
+    #[cfg(target_env = "gnu")]
+    unsafe {
+        libc::malloc_trim(0);
+    }
     Ok(())
+}
+
+/// `log`, for modules that are not the daemon (the watcher reports what it picks
+/// up, and that report is how "why did my edit do nothing" gets answered).
+pub(crate) fn log_public(message: &str) {
+    log(message);
 }
 
 fn log(message: &str) {

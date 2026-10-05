@@ -1,5 +1,7 @@
 # niripaper
 
+[![CI](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml/badge.svg)](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml)
+
 **English** · [简体中文](README.zh-CN.md)
 
 **A wallpaper that moves with your layout.**
@@ -37,10 +39,14 @@ with the workspaces.
 Version 0.1.0, early.
 
 Working today: static images (PNG, JPEG, WebP), **video wallpapers** (hardware-decoded),
-parallax, the overview transition, configuration, per-output settings, and changing the
-wallpaper of a running daemon.
+parallax, the overview transition, the wallpaper transition (nine effects), `fit` for
+sources that do not match the canvas, configuration with a `config.d` directory and hot
+reload, per-output settings, `schema`/`state` for a panel to build its UI from, and
+changing the wallpaper of a running daemon.
 
-Not here yet: a cross-fade when the wallpaper changes.
+Not here yet: the Noctalia panel (a separate project — the daemon side of the interface
+is `schema`, `state` and `config.d`, all of which are here), an AUR package, and prebuilt
+binaries.
 
 ## Requirements
 
@@ -85,6 +91,10 @@ niripaper kill                        # shut it down
 
 `set` loads the new wallpaper *before* swapping it in, so a bad path reports an error
 and leaves the current one on screen instead of blanking it.
+
+`set` is a **temporary override**: it changes what is on screen, not the configuration,
+and any reload of `config.d` or `config.toml` puts the configured wallpaper back. To keep
+a wallpaper, put it in the configuration.
 
 `schema` and `state` are what a panel (the Noctalia plugin, or anything else) talks to.
 `schema` lists every configuration key with its type, bounds, default, unit and whether
@@ -176,6 +186,7 @@ scale = 1.2
 | `scale` | canvas enlargement (default `1.1`, max `1.35`) |
 | `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |
 | `workspace_span` | fixed workspace span for the vertical parallax (default `6`, min `2`) |
+| `fit` | how a source that does not match the canvas aspect is placed: `fill` (default), `fit`, `stretch`, `center`, `tile` |
 | `namespace` | layer-shell namespace (default `niripaper`) |
 | `[animations] follow_niri` | take the overview transition's settings from niri (default `true`) |
 | `[animations] slowdown` | stretch every animation's timeline |
@@ -232,6 +243,24 @@ niri's curves are all fast at the start and slow at the end, which is the opposi
 what a reveal wants. For slow-fast-slow, use a bezier — `curve = "cubic-bezier"` with
 `cubic_bezier = [0.42, 0, 0.58, 1]`, which is CSS's `ease-in-out` (solved the same way,
 `x(u) = t`).
+
+`fit` decides what happens when a wallpaper's aspect ratio is not the canvas's, and the
+names are **Wallpaper Engine's** (Windows' before it): `fill` (the default) scales until
+the canvas is full and crops the overflow; `fit` shows the whole source and pads the rest
+with black, which is worth having for film-shaped sources — a 2.35:1 picture loses about a
+quarter of its width to `fill`; `stretch` distorts; `center` does not scale at all, so the
+source sits at its own pixel size in the middle; `tile` repeats it at that size from the
+top-left. (Windows' `span` is left out: spreading a picture across monitors cannot mean
+anything to a daemon that draws on one output.)
+
+The names are borrowed on purpose: anyone arriving from Wallpaper Engine already knows
+what each one does, and a config that spells them differently is one they have to learn
+twice. `tile` is the one mode a video cannot honour — mpv scales a video into the frame
+and does not repeat it — so a video with `tile` falls back to `fill`, which `state`
+reports under `wallpaper.fit` next to the configured value.
+
+It is per output, and both the still and the video path use it, so a wallpaper cannot
+change shape depending on whether it happens to be a picture or a film.
 
 `niripaper schema` lists every key above, with its type, bounds and whether editing
 the file while the daemon runs takes effect.

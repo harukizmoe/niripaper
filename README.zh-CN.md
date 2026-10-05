@@ -1,5 +1,7 @@
 # niripaper
 
+[![CI](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml/badge.svg)](https://github.com/harukizmoe/niripaper/actions/workflows/ci.yml)
+
 [English](README.md) · **简体中文**
 
 **会跟着你的布局一起动的壁纸。**
@@ -30,9 +32,11 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 版本 0.1.0，早期。
 
 现在能用：静态图像（PNG / JPEG / WebP）、**视频壁纸**（硬件解码）、视差、总览过渡、
-配置文件、按输出配置，以及给运行中的守护进程换壁纸。
+换图过渡（九个效果）、`fit`（源与画布宽高比不一致时的五种放法）、带 `config.d` 目录
+与热重载的配置、按输出配置、给面板用的 `schema`/`state`，以及给运行中的守护进程换壁纸。
 
-还没有：换图时的交叉淡入。
+还没有：Noctalia 面板（**另开一个项目** —— 守护进程这侧的接口是 `schema`、`state` 和
+`config.d`，这些都已经有了）、AUR 包、预编译二进制。
 
 ## 环境要求
 
@@ -76,6 +80,9 @@ niripaper kill                        # 让它退出
 ```
 
 `set` 会**先加载成功再换** —— 路径写错就回报错误并保持原壁纸，而不是把屏幕搞空。
+
+`set` 是**临时覆盖**：它只改屏幕上是什么，不改配置；任何一次 `config.d` 或
+`config.toml` 的重载都会把配置里的壁纸放回来。想留住一张壁纸，就把它写进配置。
 
 `schema` 与 `state` 是给面板（Noctalia 插件，或别的什么）用的。`schema` 列出每一个配置项
 及其类型、取值范围、默认值、单位、以及改动后能否即时生效；`state` 用**同一套名字**报出生效值，
@@ -161,6 +168,7 @@ scale = 1.2
 | `scale` | 画布放大倍数（默认 `1.1`，上限 `1.35`） |
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |
 | `workspace_span` | 纵向视差的固定工作区跨度（默认 `6`，最小 `2`） |
+| `fit` | 源与画布宽高比不一致时怎么放：`fill`（默认）、`fit`、`stretch`、`center`、`tile` |
 | `namespace` | layer-shell 命名空间（默认 `niripaper`） |
 | `[animations] follow_niri` | 总览过渡的设置取自 niri（默认 `true`） |
 | `[animations] slowdown` | 把所有动画的时间轴拉长 |
@@ -211,6 +219,21 @@ niri 那五个缓动都是"开头快、结尾慢"，正好和一个"张开"想�
 **先慢 → 中间快 → 最后慢**，用贝塞尔：`curve = "cubic-bezier"` 配
 `cubic_bezier = [0.42, 0, 0.58, 1]`，也就是 CSS 的 `ease-in-out`
 （解法和浏览器一样：解 `x(u) = t`）。
+
+`fit` 决定壁纸宽高比和画布不一致时怎么办，**名字用的是 Wallpaper Engine 那一套**
+（也就是 Windows 桌面背景的）：`fill`（默认）放大铺满、裁掉多余；`fit` 完整显示、其余
+补黑边 —— 对电影画幅的源值得用，因为 2.35:1 的画面被 `fill` 裁掉会损失约四分之一宽度；
+`stretch` 拉伸变形；`center` 完全不缩放，按原始像素居中；`tile` 按原始尺寸从左上角
+平铺重复。（Windows 的 `span` 没做：跨显示器铺一张，对一个只画一个输出的守护进程
+没有意义。）
+
+名字是**故意**借来的：从 Wallpaper Engine 过来的人已经知道每个是什么，换个拼法就是
+要人学两遍。`tile` 是视频唯一做不到的一种 —— mpv 把视频缩放进画框，不会重复它 ——
+所以视频配 `tile` 会退回 `fill`，`state` 里的 `wallpaper.fit` 会报出实际生效的那个，
+和配置里的值并排放着。
+
+它**按输出**生效，而且**图片与视频走同一套**，所以壁纸不会因为"恰好是图片还是视频"
+而变形状。
 
 `niripaper schema` 会列出上面每一个配置项，连同类型、取值范围、以及运行中改文件
 是否即时生效。
