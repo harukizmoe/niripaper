@@ -78,6 +78,10 @@ pub struct Options {
     pub transition: crate::render::transition::Settings,
     /// How a source whose aspect ratio does not match the canvas is placed.
     pub fit: Fit,
+    /// The command line's per-output overrides, and the configuration they are
+    /// resolved against — see [`Options::resolve_output`].
+    pub cli: CliOverrides,
+    pub config: Option<crate::config::Config>,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
     /// acceptance is checked, and the cadence shows whether frames are being
     /// dropped.
@@ -100,8 +104,46 @@ impl Options {
             animations: crate::config::Animations::default(),
             transition: crate::render::transition::Settings::default(),
             fit: Fit::Fill,
+            cli: CliOverrides::default(),
+            config: None,
             trace: false,
         }
+    }
+}
+
+/// The command line's overrides for the keys that can differ per output.
+///
+/// Kept apart from the resolved values because "which output" is only known once
+/// the daemon has enumerated them: [`Options::resolve_output`] resolves each
+/// output's table and then lets these win.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CliOverrides {
+    pub scale: Option<f64>,
+    pub column_span: Option<usize>,
+    pub workspace_span: Option<usize>,
+    pub wallpaper: Option<std::path::PathBuf>,
+    pub fit: Option<Fit>,
+}
+
+impl Options {
+    /// Resolve the keys that can differ per output for `name`: command line,
+    /// then that output's `[outputs."NAME"]` table, then the global keys.
+    ///
+    /// This is the *only* place per-output resolution happens, so a single-output
+    /// run and one worker of a multi-output run cannot drift apart — which they
+    /// did: resolving against `"*"` silently dropped every `[outputs."NAME"]`
+    /// value as soon as the daemon drew on more than one output.
+    pub fn resolve_output(&mut self, name: &str) {
+        self.output = name.to_owned();
+        let Some(config) = &self.config else {
+            return;
+        };
+        let params = config.output(name);
+        self.scale = self.cli.scale.unwrap_or(params.scale);
+        self.column_span = self.cli.column_span.unwrap_or(params.column_span);
+        self.workspace_span = self.cli.workspace_span.unwrap_or(params.workspace_span);
+        self.wallpaper = self.cli.wallpaper.clone().or(params.wallpaper);
+        self.fit = self.cli.fit.unwrap_or(params.fit);
     }
 }
 
@@ -204,7 +246,7 @@ pub fn run(options: &Options, running: Arc<dyn Fn() -> bool + Send + Sync>) -> R
     for name in &names {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut worker_options = options.clone();
-        worker_options.output = name.clone();
+        worker_options.resolve_output(name);
         let worker_running = Arc::clone(&worker_running);
         let worker_name = name.clone();
         handles.push(std::thread::spawn(move || {

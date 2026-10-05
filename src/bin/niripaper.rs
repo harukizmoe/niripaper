@@ -340,21 +340,26 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
         .clone()
         .unwrap_or_else(|| niripaper::ipc::EVERY_OUTPUT.to_owned());
 
-    let params = config.output(&output);
-    let mut options = Options::new(output);
-    options.scale = over.scale.unwrap_or(params.scale);
-    options.column_span = over.column_span.unwrap_or(params.column_span);
+    let mut options = Options::new(output.clone());
+    // The per-output keys are resolved by `Options::resolve_output` — here for a
+    // single output, and again by each worker when the daemon draws on several.
+    // One code path, so the two cannot drift apart.
+    options.cli = daemon::CliOverrides {
+        scale: over.scale,
+        column_span: over.column_span,
+        workspace_span: over.workspace_span,
+        wallpaper: over.wallpaper.clone(),
+        fit: None,
+    };
+    options.config = Some(config.clone());
+    options.resolve_output(&output);
     options.video_fps = config.video_fps;
     options.config_path = config_path;
     options.socket = over.socket;
-    options.workspace_span = over.workspace_span.unwrap_or(params.workspace_span);
     options.namespace = over.namespace.unwrap_or_else(|| config.namespace.clone());
     // Animations and the transition come from the config only: they are tuned by
     // feel, and a flag per parameter would be noise.
     apply_config_only_settings(&mut options, &config);
-    options.wallpaper = over.wallpaper.or(params.wallpaper);
-    // Per output, like the spans and the wallpaper itself.
-    options.fit = params.fit;
     if let Some(pattern) = over.pattern {
         options.pattern = pattern;
     }
