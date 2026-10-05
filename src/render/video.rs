@@ -199,6 +199,14 @@ impl Video {
             // (568 MB vs 232 MB anonymous). `auto` picks the same thing as
             // `auto-safe`. Re-measure with `niripaper query` before changing this.
             ("hwdec", "auto-safe"),
+            // Fill the frame instead of fitting inside it. mpv's default is to
+            // scale the video to fit, which leaves black bars whenever the
+            // source's aspect ratio is not the canvas's — and the still-image
+            // path does the opposite (`image.rs` centre-crops to "cover"), so the
+            // two disagreed. `panscan=1.0` is the same "cover": zoom until the
+            // frame is full, crop the overflow. Measured on a 2.34:1 source in a
+            // 16:9 canvas: without this, ~173 px of black top and bottom.
+            ("panscan", "1.0"),
             ("loop-file", "inf"),
             ("mute", "yes"),
             ("aid", "no"),
