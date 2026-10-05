@@ -383,7 +383,7 @@ mod tests {
             "[transition]\nselection = \"fixed\"\neffect = \"honeycomb\"\n\
              duration_ms = 2400\ncurve = \"linear\"\nsoftness = 0.1\n\
              center = [0.2, 0.8]\nstart_radius = 0.4\npush = 1.2\nstripes = 7\n\
-             cell = 0.3\non_start = false\nallow_overshoot = true",
+             cell = 0.3\nhold_ms = 250\non_start = false\nallow_overshoot = true",
         )
         .expect("parses");
         let mut options = Options::new("test");
@@ -400,6 +400,7 @@ mod tests {
         assert_eq!(transition.push, 1.2);
         assert_eq!(transition.stripes, 7);
         assert_eq!(transition.cell, 0.3);
+        assert_eq!(transition.hold.as_millis(), 250);
         assert!(!transition.on_start);
         assert!(transition.allow_overshoot);
         // And the animations beside it, which had the same shape of bug once.

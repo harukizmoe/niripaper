@@ -647,6 +647,7 @@ struct RawTransition {
     cell: Option<f64>,
     push: Option<f64>,
     start_radius: Option<f64>,
+    hold_ms: Option<u64>,
     on_start: Option<bool>,
 }
 
@@ -738,6 +739,16 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         ));
     }
 
+    let hold = std::time::Duration::from_millis(raw.hold_ms.unwrap_or(0));
+    if hold >= duration {
+        return Err(format!(
+            "{key}.hold_ms ({}) must be shorter than {key}.duration_ms ({}): the transition has to \
+             have time to move",
+            hold.as_millis(),
+            duration.as_millis()
+        ));
+    }
+
     Ok(Settings {
         // A hard cut is the honest reading of "no animations": nothing to pick.
         selection: if global_off {
@@ -757,6 +768,7 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
         cell,
         push,
         start_radius,
+        hold,
         on_start: raw.on_start.unwrap_or(defaults.on_start),
     })
 }

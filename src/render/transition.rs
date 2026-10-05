@@ -221,6 +221,14 @@ pub struct Settings {
     /// begins as a complete circle, which is what makes the shape readable from
     /// the first frame.
     pub start_radius: f64,
+    /// How long the transition sits on its first frame before it starts moving.
+    ///
+    /// This is what makes a small circle *readable*: a circle that begins at
+    /// `start_radius` and immediately expands is gone before the eye has decided
+    /// what it is looking at. Holding it still for a moment is the difference
+    /// between "something grew" and "a circle opened". It is part of
+    /// `duration_ms`, not extra: the whole transition still lasts that long.
+    pub hold: Duration,
     /// Play one when the daemon starts, so logging in is not a hard cut.
     pub on_start: bool,
 }
@@ -250,6 +258,8 @@ impl Default for Settings {
             push: 0.55,
             // A point, which is what a circle growing from nothing looks like.
             start_radius: 0.0,
+            // Nothing: move as soon as it starts.
+            hold: Duration::ZERO,
             on_start: true,
         }
     }
@@ -277,7 +287,13 @@ impl Transition {
     /// Starts settled at 1.0 — "fully the new content". A transition only exists
     /// while the wallpaper is changing.
     pub fn new(settings: Settings, slowdown: f64) -> Self {
-        let animation = Animation::easing(settings.curve, settings.duration);
+        // The hold is part of the duration, so the motion itself is what is left
+        // of it. `restart` pushes the animator's clock out by the hold, which is
+        // what parks it on the first frame until the hold is over.
+        let animation = Animation::easing(
+            settings.curve,
+            settings.duration.saturating_sub(settings.hold),
+        );
         Self {
             settings,
             slowdown,
@@ -340,7 +356,11 @@ impl Transition {
             capture(snapshot);
         }
         self.animator = Animator::new(0.0, self.animation).with_slowdown(self.slowdown);
-        self.animator.retarget(1.0, now);
+        // `elapsed` saturates, so a start time in the future parks the animation
+        // at t = 0 until it arrives — and `slowdown` stretches the hold the same
+        // way it stretches everything else.
+        self.animator
+            .retarget(1.0, now + self.settings.hold.mul_f64(self.slowdown));
     }
 
     /// What the shader needs right now, or `None` when there is nothing to
@@ -440,6 +460,7 @@ mod tests {
             cell: 0.12,
             push: 0.55,
             start_radius: 0.0,
+            hold: Duration::ZERO,
             on_start: true,
         }
     }

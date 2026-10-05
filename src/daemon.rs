@@ -737,6 +737,10 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     put("transition.cell", json!(transition.cell));
     put("transition.push", json!(transition.push));
     put("transition.start_radius", json!(transition.start_radius));
+    put(
+        "transition.hold_ms",
+        json!(transition.hold.as_millis() as u64),
+    );
     put("transition.on_start", json!(transition.on_start));
 
     // Which files this configuration is made of: the main one plus every

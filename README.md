@@ -190,6 +190,7 @@ scale = 1.2
 | `[transition] stripes`, `cell` | bands in `stripes`; hexagon size in `honeycomb` |
 | `[transition] push` | how far `portal` pushes the old frame outward; `0` makes it an `iris` |
 | `[transition] start_radius` | how wide the hole already is at the start (a fraction of the screen height) |
+| `[transition] hold_ms` | how long the first frame is held before the transition moves (part of `duration_ms`) |
 | `[transition] allow_overshoot`, `on_start` | let the curve bounce; play one at startup |
 | `[outputs."NAME"]` | per-output overrides of any of the above |
 
@@ -216,9 +217,14 @@ That is the whole difference, and `push` is how far it goes.
 The circle itself is tunable: `center` is where it opens — `[x, y]` as fractions of the
 screen, read from the **top-left**, so it matches how a screenshot is read — and
 `start_radius` is how wide it already is when the transition begins. Left at `0` it
-grows from a point; set to something like `0.25` it begins as a **complete circle** on
-screen, which makes the shape readable from the first frame. However it is placed, it
-grows until it has covered the farthest corner from `center`.
+grows from a point; set to something like `0.08` it begins as a small **complete
+circle**. However it is placed, it grows until it has covered the farthest corner from
+`center`.
+
+A small circle that starts expanding immediately is gone before the eye has decided what
+it is looking at, so `hold_ms` sits on that first frame for a moment before anything
+moves — that is the difference between "something grew" and "a circle opened". It is
+part of `duration_ms`, not extra.
 
 `niripaper schema` lists every key above, with its type, bounds and whether editing
 the file while the daemon runs takes effect.

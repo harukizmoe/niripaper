@@ -336,6 +336,14 @@ pub fn keys() -> Vec<Key> {
             about: "How wide the hole already is at the start, as a fraction of the screen height.",
         },
         Key {
+            name: "transition.hold_ms",
+            kind: Kind::Int { min: 0, max: None },
+            default: json!(transition.hold.as_millis() as u64),
+            unit: Some("ms"),
+            hot: true,
+            about: "How long the first frame is held before the transition moves; part of duration_ms.",
+        },
+        Key {
             name: "transition.on_start",
             kind: Kind::Bool,
             default: json!(transition.on_start),
