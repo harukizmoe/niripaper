@@ -44,10 +44,17 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          tar czf "dist/niripaper-${{ github.ref_name }}-x86_64-linux.tar.gz" \
+          # Named for the distribution, not for "linux": the sonames it links are
+          # that distribution's ABI. Built here it wants libmpv.so.1 (mpv 0.34);
+          # Arch ships libmpv.so.2 (mpv 0.41), so the tarball is useless there.
+          # Anyone not on Ubuntu 22.04 or newer builds from source.
+          tar czf "dist/niripaper-${{ github.ref_name }}-ubuntu-22.04-x86_64.tar.gz" \
             -C target/release niripaper \
             -C "$GITHUB_WORKSPACE" README.md README.zh-CN.md LICENSE
           tar tzf dist/*.tar.gz
+          # Say out loud what it ended up linked against: this is the line that
+          # tells you which distributions the artifact can actually run on.
+          ldd target/release/niripaper | grep -E "libmpv|libEGL|libgbm|libwayland-client" || true
 
       # `gh` is preinstalled on the runner, so this needs no third-party action.
       # `--generate-notes` collects the merged pull requests, which is what the
