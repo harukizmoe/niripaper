@@ -59,8 +59,14 @@ cargo install --path . --locked --bin niripaper
 **`--bin niripaper` 不能省**：不写它，`src/bin/` 下的诊断探针也会一起装进
 `~/.cargo/bin`。
 
-`packaging/aur/` 里有一份给 AUR 用的 `PKGBUILD`（**还没发布到 AUR** —— 得先有
-一个打了 tag 的 release）。
+`packaging/aur/` 里有一份给 AUR 用的 `PKGBUILD`（**还没发布到 AUR** —— AUR 现在
+不收新账号，见 `packaging/aur/README.md`）。
+
+Release 里带**两个** `x86_64` 二进制 —— 因为一个链接 `libmpv`、`libEGL`、`libgbm`、
+`libwayland-client` 的守护进程会被钉在构建它的那个发行版的 ABI 上：Ubuntu 那份要
+`libmpv.so.1`（mpv 0.34），而 Arch 装的是 `libmpv.so.2`（mpv 0.41），一个包没法同时
+服务两边。取和你发行版匹配的那个 —— Arch 及其衍生版用 `-arch-`，Ubuntu 22.04 及更新
+版本用 `-ubuntu-22.04-` —— 或者从源码构建，那是到处都能用的方式。
 
 ## 用法
 
