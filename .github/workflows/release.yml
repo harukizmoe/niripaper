@@ -68,7 +68,7 @@ jobs:
       - name: System dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel pkgconf mpv libglvnd mesa wayland rust github-cli
+            base-devel git pkgconf mpv libglvnd mesa wayland rust github-cli
 
       - uses: Swatinem/rust-cache@v2
 
