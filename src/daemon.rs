@@ -59,6 +59,10 @@ pub struct Options {
     pub wallpaper: Option<std::path::PathBuf>,
     /// Frame-rate cap for video wallpapers (`0` keeps the source's).
     pub video_fps: u32,
+    /// Control socket to bind (`None` = `$XDG_RUNTIME_DIR/niripaper.sock`).
+    /// Overridable so a second instance can be tested without fighting the
+    /// session's daemon over one path.
+    pub socket: Option<std::path::PathBuf>,
     /// Animation parameters, in niri's vocabulary (see `config.rs`).
     pub animations: crate::config::Animations,
     /// Log every frame: the per-frame progress is how the "monotonic easing"
@@ -78,6 +82,7 @@ impl Options {
             pattern: Pattern::Blocks,
             wallpaper: None,
             video_fps: 0,
+            socket: None,
             animations: crate::config::Animations::default(),
             trace: false,
         }
@@ -90,6 +95,38 @@ impl Options {
 enum Media {
     Image(crate::render::image::Wallpaper),
     Video(crate::render::video::Video),
+}
+
+/// Load a wallpaper: a still image, or a video routed by extension. Shared by
+/// startup and by `set` over the control socket.
+fn load_media(path: &std::path::Path, canvas: (u32, u32), video_fps: u32) -> Result<Media, String> {
+    if is_video(path) {
+        let video = crate::render::video::Video::new(path, canvas.0, canvas.1, video_fps)?;
+        return Ok(Media::Video(video));
+    }
+    Ok(Media::Image(crate::render::image::Wallpaper::load(
+        path, canvas,
+    )?))
+}
+
+/// One line describing what is on screen, for `query`.
+fn describe(media: &Option<Media>, progress: motion::Progress, options: &Options) -> String {
+    let kind = match media {
+        Some(Media::Image(_)) => "image".to_owned(),
+        Some(Media::Video(video)) => {
+            let hwdec = video.hwdec();
+            if hwdec.is_empty() {
+                "video".to_owned()
+            } else {
+                format!("video hwdec={hwdec}")
+            }
+        }
+        None => format!("pattern {:?}", options.pattern),
+    };
+    format!(
+        "ok {kind} h={:.4} v={:.4}",
+        progress.horizontal, progress.vertical
+    )
 }
 
 /// Video containers mpv handles and `image` does not. Routed by extension
@@ -277,6 +314,14 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         Some(Media::Video(video)) => video.fd(),
         _ => -1,
     };
+    // The control socket (§3). Bound here, after everything that can fail at
+    // startup has already failed: a socket that exists means a daemon that works.
+    let socket_path = match &options.socket {
+        Some(path) => path.clone(),
+        None => crate::ipc::default_path()?,
+    };
+    let ipc = crate::ipc::Server::bind(&socket_path)?;
+    log(&format!("control socket {}", socket_path.display()));
     let mut fds = [
         libc::pollfd {
             fd: client.fd(),
@@ -290,6 +335,11 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         },
         libc::pollfd {
             fd: video_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: ipc.fd(),
             events: libc::POLLIN,
             revents: 0,
         },
@@ -309,10 +359,12 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // A decoded video frame that has not been presented yet. This is what turns
     // mpv's wakeup into a frame request.
     let mut video_present = false;
-    while running() {
+    let mut quit = false;
+    while running() && !quit {
         fds[0].revents = 0;
         fds[1].revents = 0;
         fds[2].revents = 0;
+        fds[3].revents = 0;
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if ready < 0 {
             let err = std::io::Error::last_os_error();
@@ -367,6 +419,38 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 ));
             }
         }
+        if fds[3].revents & libc::POLLIN != 0 {
+            match ipc.accept() {
+                Ok((request, stream)) => match request {
+                    crate::ipc::Request::Set(path) => {
+                        // Load first, swap after: a bad path must leave the
+                        // current wallpaper alone, not blank the screen.
+                        match load_media(&path, canvas, options.video_fps) {
+                            Ok(loaded) => {
+                                media = Some(loaded);
+                                crate::ipc::reply(&stream, "ok");
+                                log(&format!("wallpaper → {}", path.display()));
+                            }
+                            Err(err) => {
+                                crate::ipc::reply(&stream, &format!("error {err}"));
+                                log(&format!("set {}: {err}", path.display()));
+                            }
+                        }
+                    }
+                    crate::ipc::Request::Query => {
+                        let (progress, _) = animator.sample(Instant::now());
+                        crate::ipc::reply(&stream, &describe(&media, progress, options));
+                    }
+                    crate::ipc::Request::Kill => {
+                        crate::ipc::reply(&stream, "ok");
+                        log("kill requested");
+                        quit = true;
+                    }
+                },
+                Err(err) => log(&format!("control socket: {err}")),
+            }
+        }
+
         if fds[0].revents & libc::POLLIN != 0 {
             client.wait_events(Duration::ZERO)?;
         }
