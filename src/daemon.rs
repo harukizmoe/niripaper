@@ -228,6 +228,29 @@ pub fn run(options: &Options, running: Arc<dyn Fn() -> bool + Send + Sync>) -> R
         if names.is_empty() {
             return Err("niri reported no outputs; pass --output".to_owned());
         }
+        // niri keeps at least one workspace on every output it has enabled, so the
+        // workspace list is the enabled set — but an output the compositor is
+        // presenting while nothing covers it is a wallpaper that is silently
+        // missing. Cheap to check, so check: a second connection that is dropped
+        // right away, and not a layer surface, because `create_layer_surface`
+        // waits for a configure that a disabled output never sends.
+        if let Ok(client) = layer::Client::connect() {
+            let presented: Vec<String> = client
+                .state
+                .outputs
+                .iter()
+                .filter_map(|output| client.state.output_info(output))
+                .filter_map(|info| info.name.clone())
+                .filter(|name| !name.is_empty())
+                .collect();
+            for name in presented {
+                if !names.contains(&name) {
+                    log(&format!(
+                        "{name}: presented by the compositor but no workspace is on it; not drawing there"
+                    ));
+                }
+            }
+        }
         names
     };
 
@@ -621,6 +644,10 @@ fn run_output(
     // A decoded video frame that has not been presented yet. This is what turns
     // mpv's wakeup into a frame request.
     let mut video_present = false;
+    // Set once the reload path has reported a `namespace` change: the value
+    // cannot take effect without a restart, so warning on every reload would be
+    // noise that says nothing new.
+    let mut warned_namespace = false;
     while running() {
         fds[0].revents = 0;
         fds[1].revents = 0;
@@ -721,8 +748,14 @@ fn run_output(
                     let reload_media = params.wallpaper != options.wallpaper
                         || params.fit != options.fit
                         || scale_changed;
-                    if reloaded.namespace != options.namespace {
+                    // The layer surface was created with a namespace and cannot
+                    // change it without a restart, so `state` has to keep reporting
+                    // the one actually in force. Saying so once is enough: the
+                    // assignment below deliberately does *not* happen, and without
+                    // this flag every reload would warn again.
+                    if reloaded.namespace != options.namespace && !warned_namespace {
                         log("namespace changed: needs a restart to take effect");
+                        warned_namespace = true;
                     }
                     if reloaded.video_fps != options.video_fps {
                         log("video_fps changed: applies to the next video load");
@@ -751,7 +784,6 @@ fn run_output(
                     transition =
                         Transition::new(options.transition.clone(), options.animations.slowdown);
                     options.wallpaper = params.wallpaper;
-                    options.namespace = reloaded.namespace.clone();
                     options.fit = params.fit;
                     niri.motion
                         .set_spans(options.column_span, options.workspace_span);
