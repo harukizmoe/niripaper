@@ -128,7 +128,9 @@ The config file lives at `~/.config/niripaper/config.toml`. It is optional: with
 file at all, the built-in defaults are used. A `config.d/` directory next to it is
 read too — every `*.toml` in it, in filename order, merged over the main file
 (later files win). That is where a tool keeps its own settings without touching
-yours: delete the file and it is gone. Edits are picked up while the daemon runs;
+yours: delete the file and it is gone. A fragment has to spell out its own table
+headers — `[transition]` and the like — since it is merged, not textually
+spliced; a key at the wrong level is an unknown field, which is a hard error. Edits are picked up while the daemon runs;
 a file that fails to parse is reported and the running configuration is kept. Values are resolved as
 **command line → config file → built-in default**, so the file only needs to state
 what differs.
