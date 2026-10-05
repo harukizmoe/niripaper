@@ -98,15 +98,18 @@ fn control(command: &str, args: &[String]) -> Result<(), String> {
             other => argument = Some(other.to_owned()),
         }
     }
-    let path = match (path, output) {
-        (Some(path), _) => path,
-        (None, Some(output)) => niripaper::ipc::default_path(&output)?,
-        (None, None) => niripaper::ipc::find_path()?,
+    let path = match path {
+        Some(path) => path,
+        None => niripaper::ipc::find_path()?,
     };
+    // The output belongs to the *request* now: one daemon draws all of them, and
+    // `*` (or saying nothing) means every output.
+    let output = output.unwrap_or_else(|| "*".to_owned());
     let request = match (command, argument) {
-        ("set", Some(target)) => format!("set {target}"),
+        ("set", Some(target)) => format!("set {output} {target}"),
         ("set", None) => return Err("set needs a path".to_owned()),
-        (other, None) => other.to_owned(),
+        ("schema" | "kill", None) => command.to_owned(),
+        (other, None) => format!("{other} {output}"),
         (other, Some(_)) => return Err(format!("{other} takes no argument")),
     };
     let reply = niripaper::ipc::request(&path, &request)?;
@@ -329,24 +332,13 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     };
     let source = niripaper::config::describe_source(config_path.as_deref());
 
-    // The output name may have to come from niri, and the per-output overrides
-    // are keyed by it, so resolve it before building the effective options.
-    let output = match over.output.clone() {
-        Some(name) => name,
-        None => {
-            // This connection only reads the output list — the per-output
-            // spans are not known until the output name is — so the global
-            // ones stand in.
-            let mut niri = Niri::connect(config.column_span, config.workspace_span)?;
-            niri.wait_for_full_state()?;
-            niri.motion
-                .workspaces()
-                .iter()
-                .map(|w| w.output.clone())
-                .find(|name| !name.is_empty())
-                .ok_or("niri reported no outputs; pass --output")?
-        }
-    };
+    // `--output` limits the daemon to one output. Without it the daemon draws on
+    // every output niri reports, and each worker resolves its own per-output
+    // overrides — so there is nothing to resolve here.
+    let output = over
+        .output
+        .clone()
+        .unwrap_or_else(|| niripaper::ipc::EVERY_OUTPUT.to_owned());
 
     let params = config.output(&output);
     let mut options = Options::new(output);
@@ -368,7 +360,10 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     }
     options.trace = over.trace;
     println!("niripaper: config {source}");
-    daemon::run(&options, &|| !EXIT.load(Ordering::SeqCst))
+    daemon::run(
+        &options,
+        std::sync::Arc::new(|| !EXIT.load(Ordering::SeqCst)),
+    )
 }
 
 /// The settings no flag can override, applied in one place — and tested in one

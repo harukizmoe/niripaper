@@ -82,8 +82,8 @@ niripaper watch                           # 只打印视差目标值，不绘制
 
 ### 给运行中的守护进程换壁纸
 
-守护进程监听一个小控制 socket，**每个输出一个**
-（`$XDG_RUNTIME_DIR/niripaper-DP-1.sock`）：
+守护进程监听一个小控制 socket，**所有输出共用一个**
+（`$XDG_RUNTIME_DIR/niripaper.sock`）：
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
@@ -120,15 +120,15 @@ spawn-at-startup "niripaper" "daemon"
 
 | 参数 | 含义 |
 | --- | --- |
-| `--output NAME` | 在哪个输出上绘制（默认：niri 报告的第一个） |
+| `--output NAME` | 只在某一个输出上绘制（默认：niri 报告的所有输出） |
 | `--config PATH` | 读取的配置文件（默认 `~/.config/niripaper/config.toml`） |
 | `--namespace NAME` | layer-shell 命名空间（默认 `niripaper`） |
 | `--wallpaper PATH` | 要绘制的图像 |
 | `--scale F` | 画布放大倍数，`1.0`–`1.35` |
 | `--column-span N`、`--workspace-span N` | 视差铺开多少级 |
 | `--pattern blocks\|bands` | 内置测试图案，未指定壁纸时使用 |
-| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper-<输出名>.sock`） |
-| `--output NAME` | 找哪个输出的守护进程；只有多个在跑时才需要 |
+| `--socket PATH` | 用哪个控制 socket（默认 `$XDG_RUNTIME_DIR/niripaper.sock`） |
+| `--output NAME` | 这条请求针对哪个输出；`*`（默认）表示所有输出 |
 | `--trace` | 逐帧打印（位置、缩放、耗时）—— 排查用 |
 
 ## 配置

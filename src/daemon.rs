@@ -20,6 +20,8 @@
 //!   callback arrives exactly when niri is ready to present, so a 180 Hz output
 //!   gets 180 Hz and a busy compositor does not get a backlog.
 
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::media::{self, Media};
@@ -103,25 +105,236 @@ impl Options {
     }
 }
 
-/// What is being drawn: a decoded still, or a playing video. Both end up
-/// canvas-sized and are sampled identically — the only difference is that the
-/// video's texture is redrawn by libmpv as it plays.
-pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> {
+/// One command for one output's worker.
+enum Command {
+    /// Swap this output's wallpaper (`set`).
+    Set(PathBuf),
+    /// What is on screen right now (`query`).
+    Query(std::sync::mpsc::Sender<String>),
+    /// The full snapshot for `state`.
+    State(std::sync::mpsc::Sender<serde_json::Value>),
+}
+
+/// How long a request waits for a worker before giving up on it. A worker that
+/// is busy decoding is not stuck, but a client must not be able to hang either.
+const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The workers a request applies to: the one it names, or all of them.
+///
+/// A name nobody serves is an error rather than an empty answer — "it silently
+/// did nothing" is the failure mode this whole project keeps getting bitten by.
+fn pick<'a>(
+    channels: &'a [(String, std::sync::mpsc::Sender<Command>)],
+    output: Option<&str>,
+) -> Result<Vec<&'a (String, std::sync::mpsc::Sender<Command>)>, String> {
+    let picked: Vec<&(String, std::sync::mpsc::Sender<Command>)> = channels
+        .iter()
+        .filter(|(name, _)| output.is_none_or(|wanted| wanted == name))
+        .collect();
+    if picked.is_empty() {
+        let known: Vec<&str> = channels.iter().map(|(name, _)| name.as_str()).collect();
+        return Err(format!(
+            "no output {:?}; this daemon draws on {}",
+            output.unwrap_or_default(),
+            known.join(", ")
+        ));
+    }
+    Ok(picked)
+}
+
+/// The output a request names, for [`pick`].
+fn named_output(request: &crate::ipc::Request) -> Option<&str> {
+    match request {
+        crate::ipc::Request::Set { output, .. }
+        | crate::ipc::Request::Query { output }
+        | crate::ipc::Request::State { output } => output.as_deref(),
+        crate::ipc::Request::Schema | crate::ipc::Request::Kill => None,
+    }
+}
+
+/// One process, every output.
+///
+/// A thread per output, each with its own Wayland connection, EGL context and
+/// media — so the single-output loop below does not have to learn about several
+/// surfaces at once (`HANDOFF.md` §2 has the decision and the reasons). What is
+/// shared is the control socket and nothing else: a client names the output it
+/// means, this routes the request, and `state` answers for every output in one
+/// call. That is the shape a panel wants.
+pub fn run(options: &Options, running: Arc<dyn Fn() -> bool + Send + Sync>) -> Result<(), String> {
+    let socket_path = match &options.socket {
+        Some(path) => path.clone(),
+        None => crate::ipc::default_path()?,
+    };
+    crate::ipc::refuse_if_served(&socket_path)?;
+
+    // Which outputs to draw on: the one named (`--output`, which is also how a
+    // test instance stays off the user's screens), or every output niri knows.
+    let names = if options.output != crate::ipc::EVERY_OUTPUT {
+        vec![options.output.clone()]
+    } else {
+        let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
+        niri.wait_for_full_state()?;
+        let mut names: Vec<String> = niri
+            .motion
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.output.clone())
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.sort();
+        names.dedup();
+        if names.is_empty() {
+            return Err("niri reported no outputs; pass --output".to_owned());
+        }
+        names
+    };
+
+    // `kill` has to stop the workers too, and they only know the caller's
+    // closure — so they get "the caller says keep going *and* nobody asked us to
+    // stop".
+    let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_running: Arc<dyn Fn() -> bool + Send + Sync> = {
+        let quit = Arc::clone(&quit);
+        let running = Arc::clone(&running);
+        Arc::new(move || running() && !quit.load(std::sync::atomic::Ordering::Relaxed))
+    };
+
+    let mut channels: Vec<(String, std::sync::mpsc::Sender<Command>)> = Vec::new();
+    let mut handles = Vec::new();
+    for name in &names {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut worker_options = options.clone();
+        worker_options.output = name.clone();
+        let worker_running = Arc::clone(&worker_running);
+        let worker_name = name.clone();
+        handles.push(std::thread::spawn(move || {
+            if let Err(err) = run_output(&worker_options, &worker_running, &rx) {
+                log(&format!("{worker_name}: {err}"));
+            }
+        }));
+        channels.push((name.clone(), tx));
+    }
+
+    // Bound after the workers exist, so "the socket exists" still means "there
+    // is a daemon that works" — the property the one-process-per-output daemon
+    // had, and the reason the bind is not the first thing here.
+    let ipc = crate::ipc::Server::bind(&socket_path)?;
+    log(&format!(
+        "control socket {} (outputs: {})",
+        socket_path.display(),
+        names.join(", ")
+    ));
+
+    while worker_running() {
+        let mut fd = libc::pollfd {
+            fd: ipc.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // A timeout so `running()` is checked even when nobody is talking to us.
+        let ready = unsafe { libc::poll(&mut fd, 1, 250) };
+        if ready < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(format!("poll: {err}"));
+        }
+        if ready == 0 {
+            continue;
+        }
+        let (request, stream) = match ipc.accept() {
+            Ok(accepted) => accepted,
+            Err(err) => {
+                log(&format!("control socket: {err}"));
+                continue;
+            }
+        };
+        let targets = match pick(&channels, named_output(&request)) {
+            Ok(targets) => targets,
+            Err(err) => {
+                crate::ipc::reply(&stream, &format!("error {err}"));
+                continue;
+            }
+        };
+        let reply = match request {
+            crate::ipc::Request::Schema => Some(json_line(&crate::schema::schema())),
+            crate::ipc::Request::Kill => {
+                quit.store(true, std::sync::atomic::Ordering::Relaxed);
+                Some("ok".to_owned())
+            }
+            crate::ipc::Request::Set { path, .. } => {
+                let mut failed = Vec::new();
+                for (name, tx) in targets {
+                    if tx.send(Command::Set(path.clone())).is_err() {
+                        failed.push(name.clone());
+                    }
+                }
+                Some(if failed.is_empty() {
+                    "ok".to_owned()
+                } else {
+                    format!("error no worker for {}", failed.join(", "))
+                })
+            }
+            crate::ipc::Request::Query { .. } => {
+                let mut lines = Vec::new();
+                for (name, tx) in targets {
+                    let (tx2, rx2) = std::sync::mpsc::channel();
+                    if tx.send(Command::Query(tx2)).is_ok() {
+                        match rx2.recv_timeout(REPLY_TIMEOUT) {
+                            Ok(line) => lines.push(format!("{name}: {line}")),
+                            Err(_) => lines.push(format!("{name}: no reply")),
+                        }
+                    }
+                }
+                Some(lines.join("; "))
+            }
+            crate::ipc::Request::State { output } => {
+                let mut map = serde_json::Map::new();
+                for (name, tx) in targets {
+                    let (tx2, rx2) = std::sync::mpsc::channel();
+                    if tx.send(Command::State(tx2)).is_ok() {
+                        if let Ok(value) = rx2.recv_timeout(REPLY_TIMEOUT) {
+                            map.insert(name.clone(), value);
+                        }
+                    }
+                }
+                // Naming one output hands back that output's own object, so a
+                // client that asked for one does not have to unwrap a map.
+                let value = if output.is_some() {
+                    map.into_values().next().unwrap_or(serde_json::Value::Null)
+                } else {
+                    serde_json::json!({ "outputs": map })
+                };
+                Some(json_line(&value))
+            }
+        };
+        if let Some(reply) = reply {
+            crate::ipc::reply(&stream, &reply);
+        }
+    }
+
+    for handle in handles {
+        let _ = handle.join();
+    }
+    Ok(())
+}
+
+/// Draw the wallpaper layer for one output until asked to stop.
+///
+/// One thread runs this per output, so everything in here is that output's own:
+/// its Wayland connection, its EGL context, its media, its animators. The only
+/// thing it shares with its siblings is the `commands` channel the supervisor
+/// feeds, which is how `set`/`query`/`state` reach it.
+fn run_output(
+    options: &Options,
+    running: &Arc<dyn Fn() -> bool + Send + Sync>,
+    commands: &std::sync::mpsc::Receiver<Command>,
+) -> Result<(), String> {
     // The *effective* configuration, owned so a reload can change it: `set` over
     // the control socket and a config-file reload both write here. Command-line
     // flags are a startup-only override, exactly as they are in niri.
     let mut options = options.clone();
-
-    // Refuse a duplicate start before any of the expensive setup below: a second
-    // daemon on the same output must not build a layer surface, load the media
-    // and create a Vulkan device only to give up — and it must not flash a
-    // second wallpaper while doing it. `Server::bind` makes the same check, but
-    // by then all of that work is already done.
-    let socket_path = match &options.socket {
-        Some(path) => path.clone(),
-        None => crate::ipc::default_path(&options.output)?,
-    };
-    crate::ipc::refuse_if_served(&socket_path)?;
 
     // --- wayland -----------------------------------------------------------
     let mut client = layer::Client::connect()?;
@@ -306,12 +519,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
         .as_ref()
         .map(|media| media.wakeup_fd())
         .unwrap_or(media::NO_WAKEUP);
-    // The control socket (§3). Bound here, after everything that can fail at
-    // startup has already failed: a socket that exists means a daemon that works.
-    // The duplicate-daemon check already ran at the top; `bind` repeats it
-    // because a stale socket still has to be cleared here.
-    let ipc = crate::ipc::Server::bind(&socket_path)?;
-    log(&format!("control socket {}", socket_path.display()));
     // Watch the configuration (§2). Directories, not files: tools write
     // atomically and may create `config.d` long after we started.
     let mut watcher = crate::watch::Watcher::new()?;
@@ -352,11 +559,6 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             revents: 0,
         },
         libc::pollfd {
-            fd: ipc.fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        },
-        libc::pollfd {
             fd: watcher.fd(),
             events: libc::POLLIN,
             revents: 0,
@@ -377,8 +579,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
     // A decoded video frame that has not been presented yet. This is what turns
     // mpv's wakeup into a frame request.
     let mut video_present = false;
-    let mut quit = false;
-    while running() && !quit {
+    while running() {
         fds[0].revents = 0;
         fds[1].revents = 0;
         fds[2].revents = 0;
@@ -391,7 +592,10 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             .map(|media| media.wakeup_fd())
             .unwrap_or(media::NO_WAKEUP);
         fds[3].revents = 0;
-        let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+        // A timeout, not `-1`: `running()` has to be re-checked even when nothing
+        // is happening, or `kill` could never stop this thread — it would sit in
+        // `poll` forever and the supervisor's `join` would never return.
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 250) };
         if ready < 0 {
             let err = std::io::Error::last_os_error();
             if err.kind() == std::io::ErrorKind::Interrupted {
@@ -444,7 +648,7 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
                 ));
             }
         }
-        if fds[4].revents & libc::POLLIN != 0 && watcher.drain() {
+        if fds[3].revents & libc::POLLIN != 0 && watcher.drain() {
             let Some(path) = options.config_path.clone() else {
                 continue;
             };
@@ -551,68 +755,50 @@ pub fn run(options: &Options, running: &dyn Fn() -> bool) -> Result<(), String> 
             }
         }
 
-        if fds[3].revents & libc::POLLIN != 0 {
-            match ipc.accept() {
-                Ok((request, stream)) => match request {
-                    crate::ipc::Request::Set(path) => {
-                        // Load first, swap after: a bad path must leave the
-                        // current wallpaper alone, not blank the screen.
-                        match switch_wallpaper(
-                            &path,
-                            canvas,
-                            options.video_fps,
-                            options.fit,
-                            &mut media,
-                            &mut transition,
-                            &pool,
-                            last_slot,
-                            screen,
-                        ) {
-                            Ok(()) => crate::ipc::reply(&stream, "ok"),
-                            Err(err) => {
-                                crate::ipc::reply(&stream, &format!("error {err}"));
-                                log(&format!("set {}: {err}", path.display()));
-                            }
-                        }
+        // Commands from the supervisor. This worker's output is already decided,
+        // so a request never has to name it.
+        for command in commands.try_iter() {
+            match command {
+                Command::Set(path) => {
+                    // Load first, swap after: a bad path must leave the current
+                    // wallpaper alone, not blank the screen.
+                    match switch_wallpaper(
+                        &path,
+                        canvas,
+                        options.video_fps,
+                        options.fit,
+                        &mut media,
+                        &mut transition,
+                        &pool,
+                        last_slot,
+                        screen,
+                    ) {
+                        Ok(()) => {}
+                        Err(err) => log(&format!("set {}: {err}", path.display())),
                     }
-                    crate::ipc::Request::Query => {
-                        let (progress, _) = animator.sample(Instant::now());
-                        let kind = match &media {
-                            Some(media) => media.describe(),
-                            None => format!("pattern {:?}", options.pattern),
-                        };
-                        crate::ipc::reply(
-                            &stream,
-                            &format!(
-                                "ok {kind} h={:.4} v={:.4}",
-                                progress.horizontal, progress.vertical
-                            ),
-                        );
-                    }
-                    crate::ipc::Request::Schema => {
-                        crate::ipc::reply(&stream, &json_line(&crate::schema::schema()));
-                    }
-                    crate::ipc::Request::State => {
-                        let now = Instant::now();
-                        let (progress, _) = animator.sample(now);
-                        crate::ipc::reply(
-                            &stream,
-                            &json_line(&state_json(&Snapshot {
-                                options: &options,
-                                media: media.as_ref(),
-                                canvas,
-                                position: (progress.horizontal, progress.vertical),
-                                zoom: zoom.position(now),
-                            })),
-                        );
-                    }
-                    crate::ipc::Request::Kill => {
-                        crate::ipc::reply(&stream, "ok");
-                        log("kill requested");
-                        quit = true;
-                    }
-                },
-                Err(err) => log(&format!("control socket: {err}")),
+                }
+                Command::Query(reply) => {
+                    let (progress, _) = animator.sample(Instant::now());
+                    let kind = match &media {
+                        Some(media) => media.describe(),
+                        None => format!("pattern {:?}", options.pattern),
+                    };
+                    let _ = reply.send(format!(
+                        "ok {kind} h={:.4} v={:.4}",
+                        progress.horizontal, progress.vertical
+                    ));
+                }
+                Command::State(reply) => {
+                    let now = Instant::now();
+                    let (progress, _) = animator.sample(now);
+                    let _ = reply.send(state_json(&Snapshot {
+                        options: &options,
+                        media: media.as_ref(),
+                        canvas,
+                        position: (progress.horizontal, progress.vertical),
+                        zoom: zoom.position(now),
+                    }));
+                }
             }
         }
 

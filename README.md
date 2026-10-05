@@ -93,8 +93,8 @@ which helps tell whether a problem is in niri's events or in the rendering.
 
 ### Changing the wallpaper of a running daemon
 
-The daemon listens on a small control socket, one per output
-(`$XDG_RUNTIME_DIR/niripaper-DP-1.sock`):
+The daemon listens on a small control socket, one for all of them
+(`$XDG_RUNTIME_DIR/niripaper.sock`):
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # switch it, image or video
@@ -136,15 +136,15 @@ The binary has to be on `PATH` for that to work — hence the `install` line abo
 
 | Flag | Meaning |
 | --- | --- |
-| `--output NAME` | which output to draw on (default: the first one niri reports) |
+| `--output NAME` | draw on one output only (default: every output niri reports) |
 | `--config PATH` | config file to read (default: `~/.config/niripaper/config.toml`) |
 | `--namespace NAME` | layer-shell namespace (default: `niripaper`) |
 | `--wallpaper PATH` | image to draw |
 | `--scale F` | canvas enlargement, `1.0`–`1.35` |
 | `--column-span N`, `--workspace-span N` | how many steps the parallax spreads over |
 | `--pattern blocks\|bands` | the built-in test pattern, used when no wallpaper is given |
-| `--socket PATH` | control socket to use (default: `$XDG_RUNTIME_DIR/niripaper-<output>.sock`) |
-| `--output NAME` | which output's daemon to talk to; needed only when several are running |
+| `--socket PATH` | control socket to use (default: `$XDG_RUNTIME_DIR/niripaper.sock`) |
+| `--output NAME` | which output the request is about; `*` (the default) means all of them |
 | `--trace` | log every frame (position, zoom, timing) — for debugging |
 
 ## Configuration
