@@ -80,7 +80,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Talk to the running daemon over its control socket (`HANDOFF.md` §3).
+/// Talk to the running daemon over its control socket (§3).
 fn control(command: &str, args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut output = None;

@@ -1,4 +1,4 @@
-//! Watching the configuration for changes (`HANDOFF.md` §2).
+//! Watching the configuration for changes (§2).
 //!
 //! Raw inotify rather than a crate: the job is "tell me when something in these
 //! directories changed", and the fd drops straight into the daemon's existing

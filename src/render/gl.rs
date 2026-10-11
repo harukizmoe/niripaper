@@ -235,7 +235,7 @@ pub enum Pattern {
     /// Four colour bands: unambiguous in a screenshot, used to check that a
     /// layer really is inside the backdrop.
     Bands,
-    /// Pseudo-random blocks with a vertical gradient. §8 needs *unique*
+    /// Pseudo-random blocks with a vertical gradient. docs/verification.md needs *unique*
     /// structure for the pixel-displacement correlation: a repeating pattern
     /// aliases and reports "no movement".
     Blocks,
@@ -497,7 +497,7 @@ impl Drop for Renderer {
 /// The pattern is evaluated in *canvas* space, so the offset slides it.
 ///
 /// `Blocks` is a hash of the block coordinate: unique structure everywhere,
-/// which is what the §8 displacement measurement needs.
+/// which is what the docs/verification.md displacement measurement needs.
 const FRAGMENT_SRC: &str = r#"#version 330 core
 in vec2 uv;
 uniform vec2 u_screen;

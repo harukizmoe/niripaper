@@ -3,7 +3,7 @@
 //! Deliberately explicit rather than generic: this is the layer the daemon will
 //! grow into, and the interesting parts (which output, which namespace, which
 //! dmabuf formats the compositor actually accepts) are exactly the things
-//! `HANDOFF.md` §6 M0b has to prove.
+//! the checks in docs/verification.md have to prove.
 
 use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};

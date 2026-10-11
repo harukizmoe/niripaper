@@ -10,7 +10,7 @@
 //!
 //! This matters because the compositor may drive two outputs from two different
 //! vendors: rendering an output's wallpaper on the wrong GPU means every frame
-//! is copied across GPUs. See `HANDOFF.md` §7.1.
+//! is copied across GPUs. See docs/adr/0002-follow-compositor-main-device.md.
 
 use std::fs;
 use std::io;

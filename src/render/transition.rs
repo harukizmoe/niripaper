@@ -1,4 +1,4 @@
-//! The transition when the wallpaper changes (`HANDOFF.md` §2, M2's last piece).
+//! The transition when the wallpaper changes (§2).
 //!
 //! The snapshot is of the **rendered** frame, not of the source: that is what
 //! makes any pair of sources blend identically (still ↔ video ↔ still), keeps

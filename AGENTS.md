@@ -1,7 +1,7 @@
 # AGENTS.md — niripaper 开发约定
 
-给在本仓库工作的 coding agent。**开发约束都在这里**；设计规格、已定决策、里程碑进度在维护者
-本地的 `HANDOFF.md`（不进仓库，见下），代码注释里的 `§x.y` 指向它。
+给在本仓库工作的 coding agent。**开发约束都在这里**；设计规格与已定决策在
+`docs/SPEC.md` 与 `docs/adr/`（都在仓库里），代码注释里的 `§x.y` 指向 `docs/SPEC.md`。
 
 ---
 
@@ -15,7 +15,7 @@
   `NIRI_SOCKET=$(ls -t /run/user/1000/niri.*.sock | head -1)`，否则 `niri msg` 报 "No such file or directory"。
 - `socat` 未安装（用 OpenBSD 版 `nc`）。
 - **下结论前先确认指标可信**：`--dump-stats` 是抽样输出、`nvidia-smi` 在桌面日常负载下噪声极大
-  （基线 26–65%）。不要用它们宣称"更省"或"更流畅"；可用的测量方法见本地 `HANDOFF.md` §8。
+  （基线 26–65%）。不要用它们宣称"更省"或"更流畅"；可用的测量方法见 `docs/verification.md`。
 
 ## 构建与自检
 
@@ -50,19 +50,18 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
 - `main` = 发布线，`dev` = 开发线。**绝不在 `main` 上开发**；`dev` 保留不删。
 - **`main` 的历史必须干净、简洁、有意义**：一个里程碑一条提交，`main` 上**不出现**
   "改错别字 / 补文档"这类修补提交。
-- **`main` 的提交信息要能独立读懂 —— 不许出现里程碑代号**（`M2`、`M5`…）：里程碑表在
-  本地的 `HANDOFF.md` 里，而它**不进仓库**，所以外面的人看到 `M5:` 完全无从理解。
+- **`main` 的提交信息要能独立读懂 —— 不许出现内部里程碑代号**（`M2`、`M5`…）：里程碑是
+  内部进度记号，仓库外的人看到 `M5:` 完全无从理解。
   PR 标题与**正文**都算 —— 正文会变成那条 squash 提交的正文。同理也别写"见 §3"这类
-  只有本地文档才定义得出的指代。写"这个提交本身做了什么"。
+  只有内部文档才定义得出的指代。写"这个提交本身做了什么"。
   唯一例外是 `ab4be5a`：它是 `dev` 与 `main` 的共同根，动它会让两边变成无关历史。里程碑发布后发现的小问题，改在 `dev` 上，
   随**下一个**里程碑 PR 一起 squash 进去，不要为它单独建 PR。
   PR 标题会成为 `main` 上那条提交的标题，所以要能独立说明这个里程碑做了什么。
 - **PR 按里程碑建**：一个里程碑完成时才从 `dev` 向 `main` 建 PR，用 **squash** 合入
   （`main` 上只留一条提交）。里程碑之间的小修小改——文档措辞、拼写、注释、`.gitignore`、
   小 bug 修正——**直接提交本地 `dev` 分支即可，不建 PR**。
-  里程碑：M0 渲染地基（EGL/GBM/dmabuf 交换链）、M1 niri IPC + 视差、M2 静态图 / 总览过渡 / 换图过渡、
-  **M3 视频壁纸**（libmpv 硬解 + `video_fps` + 控制 socket）、M4 Noctalia 插件、
-  M5 开源收尾（README / CI / AUR / Releases）。详见本地 `HANDOFF.md` §6。
+  已完成的里程碑：渲染地基（EGL/GBM/dmabuf 交换链）、niri IPC + 视差、
+  静态图 / 总览过渡 / 换图过渡、视频壁纸（libmpv 硬解 + `video_fps` + 控制 socket）、开源收尾。
 - **每次 squash 合入之后都要 back-merge**：`git checkout dev && git merge origin/main`。
   squash 之后 `dev` 的提交不再是 `main` 的祖先，不做这一步下一个 PR 会带一堆旧提交并报 `CONFLICTING`。
   冲突通常只在 README / LICENSE / Cargo.toml 这类两边都改过的文件上，取 `dev` 的版本（它更新）：
@@ -80,16 +79,24 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
   实测过，加 fade 时 `daemon.rs` 与 `src/bin/m0b.rs` 都得跟着改。
 - **别让模块互相知道对方的细节**：`media` 不暴露它有几个变体给 daemon（用 `content()`/`pump()`/
   `wakeup_fd()` 这些动词），`crossfade` 不碰缓冲池（快照由调用方填）。
-- `HANDOFF.md` 是维护者本地的设计与进度文档，**不进仓库**（已在 `.gitignore` 里）。不要把它提交，
-  也不要把它当成给外部读者的文档。**权威副本现在放在 `~/workspace/rust/niripaperdocs/HANDOFF.md`**
-  （仓库旁边那个目录，不在 `$HOME` 根下），仓库里那份只是工作副本。
-- **不要在仓库里做跨越 `a287e6b`（「HANDOFF.md 不进仓库」）的历史操作**：`HANDOFF.md` 在它之前
-  **一直被跟踪**（`ab4be5a` 及此后十几个提交都有它），是那个提交把它从索引里删掉的。于是往回
-  checkout 会把**旧版本从 git 里还原**出来、盖掉你的编辑；再往前走又被删掉。`git rebase -i ab4be5a`
-  两头都占（2026-10-05 改 `main` 历史时就这么丢过一大段）。要改就改
-  `~/workspace/rust/niripaperdocs/` 那份，仓库里那份改完同步过去即可；在仓库里编辑前先确认没跑过
-  rebase。
-- 代码注释里的 `§x.y` 指向 `HANDOFF.md` 的章节，是内部可追溯约定，**保留**。
+- **文档图**（改代码前先读对应的那份）：
+  - `docs/SPEC.md` —— 系统规格（架构、运动规格、协议、配置）。代码注释的 `§x.y` 指向这里，**§1–§4 的编号是稳定的**。
+  - `docs/adr/` —— 架构决策与理由（硬改不动、且从代码看不出来的那些）。
+  - `CONTEXT.md` —— 领域术语表（术语以它为准，不要另造同义词）。
+  - `docs/verification.md` —— 怎么验证改动（测量方法与期望数值）。
+  - `docs/gotchas.md` —— 经验性坑与失败模式（动手前扫一眼自己那块）。
+  - `docs/references.md` —— 外部资料与规范链接。
+  - `docs/agents/` —— agent 流程配置（issue tracker / triage 标签 / 领域文档规则）。
+  - `tasks/` —— 需求与规格（PRD / SPEC），新功能从这里开始。
+- 代码注释里的 `§x.y` 指向 `docs/SPEC.md` 的章节，是内部可追溯约定，**保留**。
+- **本机环境事实不进仓库**（当前是哪块 GPU、哪条 path、哪个版本、实测数值）——那是每台机器各自的，
+  维护者本地另有记录（`~/workspace/rust/niripaperdocs/`）。仓库文档里只写**稳定**的事，
+  不写"本机是 AMD/NVIDIA"这类会变的事实。
+- **构建产物放哪**：`/tmp` 在本机是 tmpfs（约 7.8 GB），大依赖树会撑爆（实测 gpui-kit 的
+  849 个 crate 就会，报 `Disk quota exceeded`）。构建 GUI 时把 `CARGO_TARGET_DIR` 指到 `/home` 下。
+- **不要往回 checkout 很旧的工作树、也不要 `git rebase -i` 到很旧的提交**：历史上有过"文件先被
+  跟踪、后来移出索引"的情形（`HANDOFF.md` 就是），往回走会把它从 git 里还原出来、覆盖当前工作副本。
+  查一个文件的历史归属用 `git log --all -- <path>`，不要 checkout。详见 `docs/gotchas.md` 的风险 15。
 - 面向使用者的说明写在 `README.md`（英文）与 `README.zh-CN.md`（中文）里，两份**逐节对应**；
   改一份就要同步另一份。措辞用直白陈述，不要俏皮话，不要写未实现的功能。
 - `src/bin/eglpin.rs`、`src/bin/m0b.rs` 是 M0 阶段的诊断探针（EGL 按设备绑定、dmabuf 通路），
@@ -102,3 +109,21 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
   shader，而它已经抓到过三个真 bug：径向效果的 reach 误用整条对角线、honeycomb 用剪切取整
   得到的是平行四边形、以及纹理漏设 `GL_TEXTURE_MIN_FILTER` 导致快照采样恒为黑（后者意味着
   换图过渡一直在从黑淡入，只验 fade 数值是看不出来的）。
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+本仓库的 issue 与规格放在 GitHub Issues（`github.com/harukizmoe/niripaper`），操作走 `gh` CLI。
+详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+沿用五个 canonical triage 角色的默认标签字符串：`needs-triage` / `needs-info` /
+`ready-for-agent` / `ready-for-human` / `wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单 context（single-context）：根部一份 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。

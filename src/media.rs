@@ -1,4 +1,4 @@
-//! What is being drawn: a still image, or a video (`HANDOFF.md` §3).
+//! What is being drawn: a still image, or a video (§3).
 //!
 //! Keeping this in one place is what lets the rest of the daemon stay ignorant
 //! of the difference: it loads a path, asks for a [`gl::Content`] to draw, and
@@ -14,7 +14,7 @@ use crate::render::video::Video;
 use crate::render::Fit;
 
 /// A video's wakeup fd is polled; a still's is `-1`, which `poll()` ignores —
-/// that is what keeps the idle cost at zero for stills (§6, M0b criterion ④).
+/// that is what keeps the idle cost at zero for stills (docs/verification.md).
 pub const NO_WAKEUP: RawFd = -1;
 
 /// A wallpaper: what to draw, and where it came from.

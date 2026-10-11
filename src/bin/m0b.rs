@@ -1,7 +1,7 @@
 //! M0b probe: a minimal layer-shell client with a self-managed dmabuf
 //! swapchain, on a *chosen* GPU.
 //!
-//! It exists to prove four things (`HANDOFF.md` §6):
+//! it exists to prove four things (docs/verification.md):
 //!
 //! 1. the layer reaches the compositor with the namespace we asked for;
 //! 2. with a `place-within-backdrop` layer rule it lands in the backdrop, so

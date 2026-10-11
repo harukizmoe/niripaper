@@ -1,6 +1,6 @@
 //! A dmabuf that we render into and then hand to the compositor.
 //!
-//! This is the "self-managed swapchain" of `HANDOFF.md` §6: we allocate on the
+//! This is the "self-managed swapchain" of docs/SPEC.md §3: we allocate on the
 //! GPU that drives the output, import the buffer into GL as a texture, render
 //! into it through an FBO, and advertise it to the compositor with
 //! `zwp_linux_dmabuf_v1`. No `wl_egl_window`, no `eglSwapBuffers`, and therefore

@@ -15,7 +15,7 @@
 //!
 //! * **Nothing is drawn unless the layout is moving.** At rest the animator is
 //!   at its target, no frame callback is outstanding, and the process blocks in
-//!   `poll()` — idle cost is zero (`HANDOFF.md` §6, M0b criterion ④).
+//!   `poll()` — idle cost is zero (docs/verification.md).
 //! * **The animation is paced by the compositor**, not by a timer: a frame
 //!   callback arrives exactly when niri is ready to present, so a 180 Hz output
 //!   gets 180 Hz and a busy compositor does not get a backlog.
@@ -198,7 +198,7 @@ fn named_output(request: &crate::ipc::Request) -> Option<&str> {
 ///
 /// A thread per output, each with its own Wayland connection, EGL context and
 /// media — so the single-output loop below does not have to learn about several
-/// surfaces at once (`HANDOFF.md` §2 has the decision and the reasons). What is
+/// surfaces at once (§2 has the decision and the reasons). What is
 /// shared is the control socket and nothing else: a client names the output it
 /// means, this routes the request, and `state` answers for every output in one
 /// call. That is the shape a panel wants.
@@ -416,7 +416,7 @@ fn run_output(
 
     // --- which GPU ---------------------------------------------------------
     // The compositor's main device is the one it composites on; anywhere else
-    // means a cross-GPU copy per frame (§7.1).
+    // means a cross-GPU copy per frame (docs/adr/0002-follow-compositor-main-device.md).
     let node = match client.state.main_device {
         Some(device) => gpu::node_for_device_id(device)?,
         None => {

@@ -1,5 +1,5 @@
 //! The shape of the configuration, for clients that must not hardcode it
-//! (`HANDOFF.md` §2).
+//! (§2).
 //!
 //! `niripaper schema` over the control socket returns this: one JSON line
 //! listing every key a UI can offer — type, bounds, default, unit, and whether

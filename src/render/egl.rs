@@ -3,8 +3,8 @@
 //! The whole point of this module is that the display is created from a *GBM
 //! device* (`EGL_PLATFORM_GBM_KHR`) rather than from the Wayland connection.
 //! `EGL_PLATFORM_WAYLAND_KHR` always ends up on the compositor's default GPU,
-//! which on this machine is the AMD iGPU while DP-1 is driven by NVIDIA — every
-//! frame would then be copied across GPUs. See `HANDOFF.md` §7.1.
+//! which need not be the GPU that drives the output — on a hybrid machine every
+//! frame would then be copied across GPUs. See docs/adr/0002-follow-compositor-main-device.md.
 //!
 //! Nothing is linked beyond `libEGL.so` (the GLVND loader, which dispatches to
 //! `libEGL_nvidia` / `libEGL_mesa`) and every optional entry point is fetched
@@ -204,7 +204,7 @@ impl EglVendor {
     /// Pin the Vulkan ICD list to this vendor's family, the way
     /// [`Self::vendor_json`] pins EGL.
     ///
-    /// Two APIs, one rule (§7.2): the compositor composites on a single GPU, so
+    /// Two APIs, one rule (docs/adr/0003-bare-ffi-no-egl-crates.md): the compositor composites on a single GPU, so
     /// a process that ends up with *both* vendors' drivers gains nothing and
     /// costs a crash. `hwdec=auto-safe` resolves to `vulkan-copy` on this
     /// machine, so mpv/FFmpeg create a Vulkan instance — and creating one makes

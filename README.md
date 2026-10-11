@@ -44,9 +44,9 @@ sources that do not match the canvas, configuration with a `config.d` directory 
 reload, per-output settings, `schema`/`state` for a panel to build its UI from, and
 changing the wallpaper of a running daemon.
 
-Not here yet: the Noctalia panel (a separate project — the daemon side of the interface
-is `schema`, `state` and `config.d`, all of which are here), an AUR package, and prebuilt
-binaries.
+Not here yet: the desktop app (a separate program talking to the daemon's control socket —
+the daemon side of the interface is `schema`, `state` and `config.d`, all of which are
+here), an AUR package, and prebuilt binaries.
 
 ## Requirements
 
@@ -111,12 +111,12 @@ and leaves the current one on screen instead of blanking it.
 and any reload of `config.d` or `config.toml` puts the configured wallpaper back. To keep
 a wallpaper, put it in the configuration.
 
-`schema` and `state` are what a panel (the Noctalia plugin, or anything else) talks to.
+`schema` and `state` are what a front end (a panel, or a desktop app) talks to.
 `schema` lists every configuration key with its type, bounds, default, unit and whether
 a reload picks it up; `state` reports the effective values under the same names, plus
 the output, the canvas, the wallpaper actually on screen and the parallax position. A
-panel asks for the schema once to build its widgets, and afterwards only needs `state` —
-so adding a key here never requires a panel change.
+front end asks for the schema once to build its widgets, and afterwards only needs
+`state` — so adding a key here never requires a front-end change.
 
 `state`'s `config.values` is what the configuration says, while `wallpaper.path` is what
 is *actually* on screen: `set` swaps the media without touching the configuration, so

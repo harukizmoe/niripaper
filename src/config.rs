@@ -180,7 +180,7 @@ impl Config {
     ///
     /// That is what lets a tool own its own file (`config.d/noctalia.toml`)
     /// without touching the user's hand-commented `config.toml`, and removing
-    /// the file is a clean undo (`HANDOFF.md` §2).
+    /// the file is a clean undo (§2).
     pub fn load_from(path: &Path) -> Result<Self, String> {
         let files = Self::config_files(path)?;
         let mut sources = Vec::new();

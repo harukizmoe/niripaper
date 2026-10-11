@@ -1,4 +1,4 @@
-//! The control socket (`HANDOFF.md` §3): `$XDG_RUNTIME_DIR/niripaper.sock`.
+//! The control socket (§3): `$XDG_RUNTIME_DIR/niripaper.sock`.
 //!
 //! One line in, one line out. The protocol is deliberately tiny:
 //!
