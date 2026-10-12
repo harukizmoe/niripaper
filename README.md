@@ -22,7 +22,8 @@ with the workspaces.
 - **It draws the wallpaper itself.** No mpv, no shell scripts, no helper processes:
   a single binary puts a layer-shell surface on the background layer and renders
   into it.
-- **Video wallpapers.** mp4, webm, mkv, mov, m4v and avi, hardware-decoded.
+- **Video wallpapers.** mp4, webm, mkv, mov, m4v, avi and gif, hardware-decoded.
+  (A gif is played as a video, so it animates — Wallpaper Engine treats it the same way.)
   [mpv](https://mpv.io) is used as a *library* — no `mpv` process, no window, no IPC,
   no config file of its own — and it draws the decoded frame into a texture this
   daemon owns, so a video is sampled with the parallax offset exactly like a still.
@@ -213,7 +214,7 @@ scale = 1.2
 
 | Key | Meaning |
 | --- | --- |
-| `wallpaper` | image or video to draw (PNG/JPEG/WebP, or mp4/webm/mkv/mov/m4v/avi) |
+| `wallpaper` | image or video to draw (PNG/JPEG/WebP, or mp4/webm/mkv/mov/m4v/avi/gif) |
 | `video_fps` | frame-rate cap for video wallpapers (default `0`, i.e. the source's) |
 | `scale` | canvas enlargement (default `1.1`, max `1.35`) |
 | `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |

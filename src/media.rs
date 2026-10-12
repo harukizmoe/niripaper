@@ -132,13 +132,18 @@ impl Media {
 /// Video containers mpv handles and `image` does not. Routed by extension
 /// because guessing wrong is worse than a clear failure: a still handed to mpv
 /// plays as a one-frame video, while a video handed to `image` fails to decode.
+///
+/// `gif` is here rather than with the stills: `image` is built without its gif
+/// decoder, so an animated gif routed as a still is a hard error ("The image
+/// format Gif is not supported"), while mpv plays it — animation and all, the
+/// way Wallpaper Engine treats it.
 pub fn is_video(path: &Path) -> bool {
     matches!(
         path.extension()
             .and_then(|e| e.to_str())
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi")
+        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi" | "gif")
     )
 }
 
@@ -149,7 +154,9 @@ mod tests {
 
     #[test]
     fn routes_by_extension() {
-        for video in ["a.mp4", "A.WEBM", "b.mkv", "c.mov", "d.m4v", "e.avi"] {
+        for video in [
+            "a.mp4", "A.WEBM", "b.mkv", "c.mov", "d.m4v", "e.avi", "f.gif", "G.GIF",
+        ] {
             assert!(is_video(&PathBuf::from(video)), "{video} is a video");
         }
         for still in ["a.png", "b.jpg", "c.webp", "no-extension", "d.mp4.txt"] {

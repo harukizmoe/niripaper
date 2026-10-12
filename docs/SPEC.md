@@ -84,7 +84,7 @@ niripaper（Rust 守护进程）
 │               未知键与越界值都报错并指出键名
 ├── schema.rs   schema 输出：每个 UI 能提供的键（类型 / 边界 / 默认 / 单位 / 是否热改）
 ├── watch.rs    inotify 热重载
-├── media.rs    媒体路由：静态图 / 视频
+├── media.rs    媒体路由：静态图 / 视频（见 §5.3）
 ├── scene.rs    一帧的绘制输入（收成结构体，加参数不波及调用点）
 ├── crossfade.rs 换图过渡
 ├── daemon.rs   Options、事件循环与日志、多输出监督
@@ -289,3 +289,17 @@ thumbnail <id> [w h]    渲一帧 PNG
 - 旋钮类改动不经过这个文件：`set` 是**内存临时覆盖**，任何一次热重载都会盖掉它。
 
 `schema` 与 `state` 见 `niripaper schema` / `niripaper state` 的实际输出；`schema` 的 `per_output` 列出可以写在 `[outputs."NAME"]` 下的键，其余是全局键。
+
+### 5.3 支持的媒体格式
+
+**按扩展名路由**，判错了比明确失败更糟：图片交给 mpv 会当成一帧视频播，视频交给 `image` 解不开。
+
+| 类别 | 扩展名 | 走哪条路 |
+| --- | --- | --- |
+| 图片 | `png` / `jpg` / `jpeg` / `webp` | `image` crate（按内容探测） |
+| 视频 | `mp4` / `webm` / `mkv` / `mov` / `m4v` / `avi` / **`gif`** | mpv |
+
+**`gif` 归在视频**：`image` crate 编译时没开 gif feature，动图当图片走是**硬错误**
+（`The image format Gif is not supported`），而 mpv 能播它（含动画）。与 Wallpaper Engine 一致。
+
+**单一来源**：`is_video()` 是唯一的判定处。将来加格式只改它一处，`list` 与装载路径自动一致。

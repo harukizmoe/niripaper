@@ -18,7 +18,8 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 - **视差。** 在窗口之间、工作区之间移动时，壁纸朝同一方向移动几十像素。
 - **自己绘制壁纸。** 不需要 mpv，不需要 shell 脚本，也没有辅助进程：一个二进制，
   在 background 层放一个 layer-shell 表面，直接往里渲染。
-- **视频壁纸。** mp4、webm、mkv、mov、m4v、avi，**硬件解码**。
+- **视频壁纸。** mp4、webm、mkv、mov、m4v、avi、gif，**硬件解码**。
+  （gif 按视频播，所以会动 —— Wallpaper Engine 也是这么处理的。）
   [mpv](https://mpv.io) 在这里是**库**：没有 mpv 进程、没有窗口、没有 IPC、不读它自己的配置；
   它把解码好的帧画进我们自己的纹理，于是视频和静态图一样，按视差偏移采样。
 - **总览过渡跟随 niri。** 默认 `follow_niri = true`：它的弹簧或缓动曲线从 niri 的配置里读，
@@ -190,7 +191,7 @@ scale = 1.2
 
 | 配置项 | 含义 |
 | --- | --- |
-| `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi） |
+| `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi/gif） |
 | `video_fps` | 视频帧率上限（默认 `0`，即跟着源帧率走） |
 | `scale` | 画布放大倍数（默认 `1.1`，上限 `1.35`） |
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |

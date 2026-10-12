@@ -1,13 +1,11 @@
 # 决策记录：独立桌面应用
 
-这份文件记录"niripaper 从守护进程 + 废弃插件，变成 niri 桌面的独立应用"这件事上，
-**已经定下来的**与**还没定的**。
+这份文件记录"niripaper 从守护进程 + 废弃插件，变成 niri 桌面的独立应用"这件事上
+**已经定下来的**决策，以及每条为什么。
 
-- 已定的每条都写清了为什么 —— 它们之后会变成 `docs/adr/` 或 `docs/SPEC.md`。
-- 没定的每条给出可选方案与推荐，**不要**在没定之前动手实现。
+- 每条都写清了理由与实测依据 —— 它们之后会变成 `docs/adr/` 或 `docs/SPEC.md`。
+- **本文件里没有待定项了**（2026-10-12）：讨论收敛完毕，可以按 4.5 的顺序开工。
 - 本文件是讨论的收敛点，不是规格。规格在 [docs/SPEC.md](../docs/SPEC.md)。
-
-状态标记：**已定** / **待定**。
 
 ---
 
@@ -149,7 +147,7 @@ diff 只有那两行
 | 启动的是谁 | **守护进程**（必须） | 壁纸要先于任何窗口出现在屏幕上 |
 | GUI | **静默启动**（不弹主窗口，只留托盘图标） | 用户明确要求 |
 | 开关 | 由**用户在应用里选择**，默认不开 | 不写死 |
-| 通路 | **待定**（见下） | |
+| 通路 | **systemd user service**（+ `.desktop` 兜底）—— 见 4.1 | |
 
 已核实：本机 `xdg-desktop-autostart.target` **active**，`Clash Verge` / `NetworkManager Applet` /
 `Fcitx 5` 等确实由它拉起；systemd user session 也在跑。niri 自己只认 `spawn-at-startup`，
@@ -157,31 +155,34 @@ diff 只有那两行
 
 ---
 
-## 四、待定（**不要**在定下来之前动手）
+## 四、其余各项（**标「已定」的已定，其余在定下来之前不要动手**）
 
-### 4.1 自启动用哪条通路
+### 4.1 自启动用哪条通路 —— **已定**（2026-10-12）
 
-| 方案 | 好处 | 代价 |
-| --- | --- | --- |
-| **systemd user service**（推荐） | 崩溃自动重启；**日志进 journald**（顺手干掉现在 `sh -c … > ~/.cache/niripaper.log` 那个手工 hack）；`After=graphical-session.target` | 绑 systemd |
-| XDG autostart（`.desktop`） | 标准、可移植，非 systemd 的 niri 用户也能用 | 无崩溃重启；日志要自己重定向 |
-| 两者都发 | 不排除任何人 | 多写一点 |
+**用 systemd user service**（`niripaper.service`），另打包一份 `.desktop` 给非 systemd 的 niri 用户。
 
-### 4.2 托盘管什么
+选 systemd 是因为它一次解决三件事：
 
-**待定，且有后果**：托盘的 D-Bus 通路与"托盘能做什么"绑在一起。
+- **崩溃自动重启** —— 守护进程挂了壁纸自己回来，不需要用户手动救；
+- **日志进 journald** —— 顺手干掉现在那个 `spawn-at-startup "sh" "-c" "… >~/.cache/niripaper.log"` 的手工重定向，改看 `journalctl --user -u niripaper`；
+- **依赖顺序** —— `After=graphical-session.target`。
 
-- 只做**打开主窗口 / 退出应用** → 不碰守护进程，**不新增协议动词**。
-- 要做**暂停 / 下一张** → 必须新增守护进程动词，PRD 的"只有 `list` + `thumbnail` 两个新动词"要改。
+`.desktop` 兜底是为了不排除没有 systemd 的 niri 用户（XDG autostart 是标准）。
+开关由用户**在应用里**选择（`systemctl --user enable/disable`，或写/删 `.desktop`），**默认不开**。
 
-**推荐先做前者**，把控制壁纸留给主窗口。
+### 4.2 托盘管什么 —— **已定**（2026-10-12）
 
-### 4.3 托盘怎么实现（gpui-kit 没有托盘组件，实测 0 命中）
+**只做"打开主窗口 / 退出应用"。** 不碰守护进程，因此**不新增协议动词** ——
+PRD 的"只有 `list` + `thumbnail` 两个新动词"这条约定保持不变。控制壁纸留给主窗口。
 
-| 方案 | 好处 | 代价 |
-| --- | --- | --- |
-| **自写 StatusNotifierItem + `zbus`**（推荐） | 纯 Rust、无新 C 依赖；`zbus` **已在 gpui-kit 依赖树里** | 要自己实现 D-Bus 接口 |
-| `libayatana-appindicator3` | 现成、成熟（本机 0.6.0） | 多一个 GTK 时代的 C 依赖 |
+### 4.3 托盘怎么实现 —— **已定**（2026-10-12）
+
+**自写 StatusNotifierItem + `zbus`。**
+
+实测：`zbus` **已经在 gpui-kit 的依赖树里**（`cargo generate-lockfile` 验过），所以是纯 Rust、
+无新 C 依赖。另一条路 `libayatana-appindicator3`（本机有 0.6.0）会引入一个 GTK 时代的 C 库。
+gpui-kit 自己**没有**托盘组件（搜遍 SKILL.md 与 30 篇 references：`tray`/`systray`/
+`StatusNotifierItem`/`indicator` 零命中），所以无论哪条路都要自己接。
 
 ### 4.4 "壁纸包"这个概念要不要 —— **已定：不做**（2026-10-12）
 
@@ -196,45 +197,106 @@ diff 只有那两行
 **连带**：PRD 的 US-008（`manifest.toml`）、US-011（包参数）、FR-11、FR-12 **作废**。
 库网格退化为"扫描一个目录 + `list` + `thumbnail`"。
 
-### 4.5 v1 做哪一半：设置页 vs 库网格
+### 4.5 v1 的顺序 —— **已定**（2026-10-12）
 
-| | 设置页（US-002/003/004） | 库网格（US-006/007/008/009） |
+**① 设置页 → ② 运行期状态 → ③ 库网格。**
+
+| 块 | 内容 | 守护进程改动 |
 | --- | --- | --- |
-| 复用既有接口 | **全部**（`schema` / `state` / 热重载） | 要 `list` + `thumbnail` + 包格式 + 缓存 |
-| 守护进程改动 | **0** | 2 个新动词 |
-| 风险 | 低 | 中 |
+| ① 设置页 | `schema` 驱动的全部 27 键；`toml_edit` 写入；只读状态视图 | **0** |
+| ② 运行期状态 | 轮播（定时器）+ 输出热插拔 + 遮满暂停；`Kind::Paths`；`state` 扩展 | 新子系统 |
+| ③ 库网格 | `list` + `thumbnail` + 缩略图缓存 | 2 个新动词 |
 
-**推荐先做设置页**（几乎零新机制，且直接消灭"手编辑配置文件"这个最大痛点），库网格后置。
+① 几乎零新机制，且直接消灭"手编辑配置"这个最大痛点；② 与 UI 解耦、可独立验证；③ 最重。
 
-### 4.6 应用住在哪
+### 4.6 应用住在哪 —— **已定**（2026-10-12）
 
-| 方案 | 好处 | 代价 |
+**一个 Cargo workspace，三个 crate：**
+
+```
+niripaper-proto/   纯逻辑，零 IO 依赖（serde/serde_json/toml）
+                   ├─ socket 客户端（一行进一行出）
+                   ├─ Schema / State / Key / Kind 类型
+                   ├─ schema()            ← 守护进程「生成」它，UI 也用它
+                   └─ per_output 路由规则  ← UI 与守护进程共用同一条，写不错
+niripaper/         守护进程（wayland / EGL / libmpv）—— 现状不变
+niripaper-app/     UI（gpui-kit / GPUI）
+```
+
+**CI 是硬约束，而它正好被解掉**：`.github/workflows/ci.yml` 用的是 `cargo test --locked`
+（**没有** `--workspace`），所以加了 workspace 之后**根包仍是 `niripaper`，测试与 release
+build 默认仍只覆盖它** —— gpui-kit 那 849 个 crate 不会进守护进程的 CI（现在 `timeout-minutes: 20`，
+进了一定超时）。
+
+### 4.7 守护进程不在时，应用还能不能改配置 —— **已定：能**（2026-10-12）
+
+**schema 来自编译期，不走 socket。** 关键事实：`schema()` 是**纯函数**
+（`src/schema.rs:379`，只依赖 `Config::default()`，无 IO、无运行期状态），所以
+**守护进程能算的，UI 编译时也算得出来，不会漂移**。而它很小：27 键 = **8.3 KB** JSON。
+
+于是 UI 建界面**不需要**守护进程：
+
+| 场景 | 现在能怎样 |
+| --- | --- |
+| 守护进程没跑 | 能建界面、能改配置（写文件）✓ |
+| **壁纸路径写错、守护进程起不来** | **正是最需要改配置的时刻** —— 现在能改 ✓ |
+
+被否掉的替代：**UI 每次启动缓存一份 schema** —— 首次启动没有缓存，且与守护进程版本可能差一步。
+编译期链接没有这两个问题。
+
+**已知代价**：若守护进程更新而 UI 没重编，UI 会显示一个守护进程不认识的新键 →
+写进去 → 守护进程报错。这条**本来就有**（[SPEC §5.2](../docs/SPEC.md)：解析失败保留旧配置
+并报错），UI 把这个错误弹出来即可。
+
+### 4.8 缩略图缓存 —— **已定**（2026-10-12）
+
+**位置**：`$XDG_CACHE_HOME/niripaper/thumbnails/`（可 `rm -rf` 重建）。
+**键**：`路径 + 大小 + mtime`，**不用纯内容哈希** —— 哈希要读整个文件，而图片可能很大；
+`mtime` 会被 `cp`/`rsync`/解压改掉，所以**把路径与大小一起算进去**来消掉大部分误重渲。
+**懒加载 + 渐进生成**：只为**可见**的网格项渲缩略图，后台补。
+（视频要解码，不可一次性全渲。）
+
+### 4.9 应用的名字 —— **已定**（2026-10-12）
+
+| 项 | 值 |
+| --- | --- |
+| 显示名 | **NiriPaper** |
+| 二进制 | `niripaper-app`（守护进程已占 `niripaper` 这个命令名） |
+| `.desktop` / 托盘 | `niripaper-app.desktop`，图标名 `niripaper` |
+| 包名 | `niripaper-app`（AUR 不能与已有 `niripaper` 冲突） |
+
+**约束**：显示名是 **NiriPaper**，而**配置目录、socket、crate、守护进程命令名都仍是
+小写 `niripaper`** —— 那是既有的、稳定的标识，不要因为改了显示名去动它们。
+
+### 4.10 库目录 —— **已定**（2026-10-12）
+
+**默认 `~/Pictures/Wallpapers`**（尊重 `$XDG_PICTURES_DIR`，即 `<PICTURES>/Wallpapers`）。
+目录不存在 → 库为空，界面显示空状态（不是错误）。GUI 里可改。
+
+### 4.11 支持的格式 —— **已定**（2026-10-12）
+
+| 类别 | 扩展名 | 走哪条路 |
 | --- | --- | --- |
-| 同 workspace 成员 | 共享 `schema` / 协议类型定义 | **一条 `cargo build` 拖进 849 个 crate**；CI 必须能跳过它 |
-| **独立 crate + 抽 `niripaper-proto`**（推荐） | 消除跨 crate 镜像，又不把 GUI 拖进守护进程的 CI | 多一个 crate |
-| 独立仓库 | 最干净 | 协议变更两头对 |
+| 图片 | `png` / `jpg` / `jpeg` / `webp` | `image` crate（按内容探测） |
+| 视频 | `mp4` / `webm` / `mkv` / `mov` / `m4v` / `avi` | mpv |
+| **GIF** | `gif` | **mpv**（当视频）—— 见下 |
 
-**CI 是硬约束**：现在 CI 只装 libmpv/egl/gl/gbm/wayland，`timeout-minutes: 20`，`ubuntu-24.04`。
-GUI 进同一 workspace 意味着 runner 要装 GTK3 + 一整套，还要编译 849 个 crate（本机增量 35s、
-干净构建几分钟）—— **大概率超时**。
+**为什么 GIF 当视频**：`image` crate 编译时没开 gif feature，所以动图当图片走是**硬错误**
+（实测原文：`The image format Gif is not supported`），而 mpv 能播它（含动画）。
+这也与 Wallpaper Engine 一致。
 
-### 4.7 守护进程不在时，应用还能不能改配置
+**硬要求**：`list` 只报扩展名在**支持列表**里的文件，且**支持列表是单一来源**
+（`is_video` 与"是不是图片"都从同一个地方派生）—— 否则会出现"UI 说能点、点了把守护进程搞挂"。
+用户壁纸目录里一定有杂物（`.txt`/`.md`/`.svg`/`.psd`），**扫进库就是让用户一点就崩**。
 
-`schema` 是**走 socket 问守护进程**的。守护进程没跑 → 没有 schema → 界面建不起来 → **改不了配置**。
-而"守护进程起不来"恰恰是最需要改配置的时刻（比如壁纸路径写错了）。
+---
 
-- **UI 内置一份 schema 快照**（编译期从同一份 Rust 类型生成）→ 守护进程不在也能编辑；代价是版本错位要处理。
-- 或**接受强耦合**：只当运行中守护进程的遥控器。
+### 4.12 两件顺手的（**已定**，2026-10-12）
 
-### 4.8 缩略图缓存
-
-落在哪（`$XDG_CACHE_HOME/niripaper/thumbnails/`？）、键用什么（包 mtime 还是内容哈希？）、
-库变大时的清理策略。视频缩略图要解码，200 个包 = 200 次解码，必须懒加载 + 缓存。
-
-### 4.9 应用的名字
-
-守护进程叫 `niripaper`。应用叫什么（二进制名、`.desktop` 名、包名、托盘图标名）？
-这不是小事——影响打包、自启动条目、AUR。
+| 项 | 决定 | 为什么 |
+| --- | --- | --- |
+| 单实例 | UI 第二次启动**聚焦已有窗口**，不开第二个 | 否则两个 UI 同时写同一份配置 |
+| 写入前备份 | UI 保存前留一份 `config.toml.bak` | `toml_edit` 万一出问题，用户能退回 |
 
 ---
 
