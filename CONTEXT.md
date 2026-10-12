@@ -99,7 +99,7 @@ niripaper 以 Wayland layer-shell 客户端的身份把自己的表面放进合�
 _Avoid_: 窗口、surface
 
 **namespace**:
-layer-shell 表面报给合成器的身份（默认 `niripaper`），niri 的 layer rule 按它匹配。用户不做任何配置时它是工作区背景，加规则命中才进 **backdrop**。
+layer-shell 表面报给合成器的身份（固定 `niripaper`），niri 的 layer rule 按它匹配。**不是配置键** —— 改了它，用户写的规则就匹配不上。用户不做任何配置时它是工作区背景，加规则命中才进 **backdrop**。
 _Avoid_: 应用名、app_id
 
 **backdrop**:
@@ -126,6 +126,6 @@ _Avoid_: 过渡（换图过渡自成一段 `[transition]`，不是 animation）
 `animations.follow_niri`（默认 true）：读 niri 自己的 `config.kdl`（含它的 `include`），只取用两者共享的 `overview-open-close` 与 `slowdown`；niri 的全局 `off` 只关掉总览过渡，不动视差。优先级是**本文件显式值 > niri 配置 > 自己的默认值**，来源写进启动日志。
 _Avoid_: 镜像 niri 配置（只跟随明确共享的那几个键）
 
-**config.d drop-in**:
-配置目录 `~/.config/niripaper/config.d/*.toml`：每份文件先单独反序列化（出错能指名文件与行），再按**文件名排序**深合并。每个工具可以独占一份（例如 GUI 写 `config.d/ui.toml`），与手工配置互不打架。
-_Avoid_: include（niri 的机制；这里刻意用配置目录，而不是发明 include）
+**意图 vs 镜像**:
+意图 = 用户选了什么（GUI 写进配置文件的那些）；镜像 = 守护进程报出来的实际状态（`state` / `query`）。**只有意图写进配置**，把镜像写回去会让守护进程的输出变成它自己的输入，来回翻转。
+_Avoid_: 把 `state` 的值写回配置、把"当前在画什么"当设置

@@ -8,7 +8,10 @@
 //! scale = 1.2          # canvas enlargement (§4.1); 1.0 ..= 1.35
 //! column_span = 5      # fixed column span (§4.2.1); >= 2
 //! workspace_span = 4   # fixed workspace span; >= 2
-//! namespace = "niripaper"
+//!
+//! `namespace` is deliberately *not* in that list: it is the name niri's layer
+//! rules match, so changing it can only break the rule the user wrote. It stays
+//! a build-time constant, overridable on the command line for diagnostics.
 //!
 //! [animations]
 //! follow_niri = true   # reuse niri's own animation settings
@@ -35,7 +38,11 @@ use crate::render::transition::{Direction, Effect, Selection, Settings};
 use crate::render::Fit;
 
 /// The daemon's layer-shell namespace, and the name users match in
-/// `~/.config/niri/rules.kdl` (§2).
+/// `~/.config/niri/config.kdl` to place the wallpaper in the overview backdrop
+/// (§2.15.1). Not a configuration key: changing it would stop the rule the user
+/// wrote from matching, so it is fixed at build time. `--namespace` overrides it
+/// for diagnostics (`--namespace mpvpaper` hits the rule niri ships for mpvpaper,
+/// which is how the backdrop behaviour was verified without touching any config).
 pub const DEFAULT_NAMESPACE: &str = "niripaper";
 
 /// How much the canvas pulls back while the overview is open. Subtle on
@@ -166,21 +173,22 @@ impl Config {
         let Some(path) = default_path() else {
             return Ok(Self::default());
         };
-        // No files at all is not an error: the built-in defaults are a valid
+        // No file at all is not an error: the built-in defaults are a valid
         // configuration.
-        if !path.exists() && !path.with_extension("d").is_dir() {
+        if !path.exists() {
             return Ok(Self::default());
         }
         Self::load_from(&path)
     }
 
-    /// Load the configuration for `path`: the file itself, then every `*.toml`
-    /// in the sibling `<stem>.d/` directory, in filename order. Later files
-    /// override earlier ones.
+    /// Load the configuration for `path`.
     ///
-    /// That is what lets a tool own its own file (`config.d/noctalia.toml`)
-    /// without touching the user's hand-commented `config.toml`, and removing
-    /// the file is a clean undo (§2).
+    /// There is exactly one file. Whatever changes the configuration edits this
+    /// one in place, preserving its comments: an earlier design layered a
+    /// `config.d/` directory merged in filename order, and the implicit "later
+    /// filename wins" rule was more machinery than the job needed. Keeping the
+    /// whole configuration in the file the user reads also means the comments
+    /// documenting each key stay where they are.
     pub fn load_from(path: &Path) -> Result<Self, String> {
         let files = Self::config_files(path)?;
         let mut sources = Vec::new();
@@ -192,42 +200,21 @@ impl Config {
         Self::load_sources(&sources, true)
     }
 
-    /// The files that make up the configuration for `path`.
+    /// The file that makes up the configuration for `path`.
     ///
-    /// The main file has to exist — an explicit path with a typo should say so.
-    /// The `.d` directory is optional.
+    /// It has to exist: an explicit path with a typo should say so.
     pub fn config_files(path: &Path) -> Result<Vec<PathBuf>, String> {
-        // `config.toml` -> `config.d`
-        let dir = path.with_extension("d");
-        // Nothing at all is a typo worth reporting; a missing main file with a
-        // `config.d` next to it is a legitimate setup.
-        if !path.exists() && !dir.is_dir() {
+        if !path.exists() {
             return Err(format!("{} does not exist", path.display()));
         }
-        let mut files = Vec::new();
-        if path.exists() {
-            files.push(path.to_owned());
-        }
-        if dir.is_dir() {
-            let mut extra: Vec<PathBuf> = std::fs::read_dir(&dir)
-                .map_err(|e| format!("reading {}: {e}", dir.display()))?
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|entry| {
-                    entry.extension().and_then(|e| e.to_str()) == Some("toml") && entry.is_file()
-                })
-                .collect();
-            extra.sort();
-            files.extend(extra);
-        }
-        Ok(files)
+        Ok(vec![path.to_owned()])
     }
 
-    /// Merge and validate already-read sources.
+    /// Validate already-read sources.
     ///
-    /// Every file is deserialized *on its own* first: with several files in
-    /// play, "unknown field" without a filename is a puzzle, and the whole
-    /// point of `config.d` is that a tool writes files the user never looks at.
+    /// Takes a slice because the reader is also the test seam; the daemon always
+    /// passes exactly one. Each source is deserialized *on its own* first, so an
+    /// error can name the file it came from.
     pub fn load_sources(sources: &[(PathBuf, String)], read_niri: bool) -> Result<Self, String> {
         let mut parsed = Vec::with_capacity(sources.len());
         for (path, text) in sources {
@@ -864,9 +851,8 @@ mod tests {
         assert_eq!(config.output("eDP-1").column_span, 4);
         // The per-output section does not override what it does not mention.
         assert_eq!(config.output("eDP-1").workspace_span, 5);
-        // The per-output wallpaper wins over the global one. This is what a
-        // panel's `config.d/noctalia.toml` relies on: one daemon per output,
-        // one wallpaper per output, all from one file.
+        // The per-output wallpaper wins over the global one: one wallpaper
+        // per output, all from one file.
         assert_eq!(
             config.output("eDP-1").wallpaper.as_deref(),
             Some(Path::new("/etc/hostname"))
@@ -907,24 +893,14 @@ mod tests {
     }
 
     #[test]
-    fn a_later_file_overrides_an_earlier_one() {
-        // This is what lets a tool own `config.d/<tool>.toml` without touching
-        // the user's hand-commented `config.toml`.
-        let main = (
-            PathBuf::from("config.toml"),
-            "scale = 1.1\n[animations.parallax]\nduration_ms = 600\ncurve = \"linear\"".to_owned(),
-        );
-        let extra = (
-            PathBuf::from("config.d/noctalia.toml"),
-            "[animations.parallax]\ncurve = \"ease-out-expo\"".to_owned(),
-        );
-        let config = Config::load_sources(&[main, extra], false).expect("merges");
-        assert_eq!(config.scale, 1.1, "the untouched key survives");
-        assert_eq!(
-            config.animations.parallax,
-            Animation::easing(Curve::EaseOutExpo, std::time::Duration::from_millis(600)),
-            "the later file wins for the key it sets"
-        );
+    fn an_unknown_key_names_its_file() {
+        // One file, so the filename is only interesting when a `--config` path
+        // points somewhere unexpected — but the message still has to name it,
+        // and name the offending key.
+        let main = (PathBuf::from("config.toml"), "nonsense = 1".to_owned());
+        let err = Config::load_sources(&[main], false).unwrap_err();
+        assert!(err.contains("config.toml"), "{err}");
+        assert!(err.contains("nonsense"), "{err}");
     }
 
     #[test]
@@ -938,20 +914,6 @@ mod tests {
         for push in [0.0, 1.5] {
             Config::parse_without_niri(&format!("[transition]\npush = {push}")).expect("in range");
         }
-    }
-
-    #[test]
-    fn an_unknown_key_names_the_file_that_has_it() {
-        // With several files in play, "unknown field" without a filename is a
-        // puzzle — and the files a tool writes are ones the user never reads.
-        let main = (PathBuf::from("config.toml"), "scale = 1.1".to_owned());
-        let extra = (
-            PathBuf::from("config.d/bad.toml"),
-            "nonsense = 1".to_owned(),
-        );
-        let err = Config::load_sources(&[main, extra], false).unwrap_err();
-        assert!(err.contains("config.d/bad.toml"), "{err}");
-        assert!(err.contains("nonsense"), "{err}");
     }
 
     #[test]

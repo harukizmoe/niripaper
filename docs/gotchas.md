@@ -200,7 +200,7 @@
 
 **现象**（2026-10-06 实测，Noctalia 插件侧）：每 ~2 秒翻一次，10 秒里 7 次 `config reloaded`，日志里 `wallpaper → …` 成对出现。
 
-**机制**：`buildConfig` 曾把 `effective` 写进 `config.d` 的 `[outputs."X"] wallpaper`，而 `effective` 同时又是"daemon 现在在画什么"的**镜像** —— 于是 daemon 的**输出**被喂回它自己的**输入**：两个来源差一步就永远来回翻，每翻一次就是一次**拆旧媒体 + 建新媒体**。
+**机制**：那个工具曾把 `effective` 写进配置的 `[outputs."X"] wallpaper`，而 `effective` 同时又是"daemon 现在在画什么"的**镜像** —— 于是 daemon 的**输出**被喂回它自己的**输入**：两个来源差一步就永远来回翻，每翻一次就是一次**拆旧媒体 + 建新媒体**。
 
 **修法**：把**意图**（用户选了什么）和**镜像**（daemon 报了什么）分成两张表，只有意图写进配置。
 

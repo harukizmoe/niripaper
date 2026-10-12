@@ -164,14 +164,6 @@ pub fn keys() -> Vec<Key> {
             about: "How a source that does not match the canvas aspect is placed: cover crops, contain pads, stretch distorts.",
         },
         Key {
-            name: "namespace",
-            kind: Kind::Text,
-            default: json!(config.namespace),
-            unit: None,
-            hot: false,
-            about: "layer-shell namespace, matched by niri's layer rules. Needs a restart.",
-        },
-        Key {
             name: "animations.follow_niri",
             kind: Kind::Bool,
             default: json!(animations.follow_niri),

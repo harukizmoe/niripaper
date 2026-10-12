@@ -1,5 +1,23 @@
 # PRD: niripaper GUI —— 独立桌面壁纸应用
 
+> ⚠️ **本 PRD 部分内容已被推翻，动手前先读 [decisions.md](./decisions.md)。**
+>
+> 2026-10-12 的讨论改动了几处根本前提：
+>
+> | 本文件里 | 现在是 |
+> | --- | --- |
+> | 「非目标」写不做自启管理、不做托盘 | **两者都做**；自启动取代 niri `spawn-at-startup`，GUI 静默启动到托盘 |
+> | FR-6 / US-003：写 `config.d/niripaper-gui.toml` | **单一 `config.toml`**，只有 GUI 写（`toml_edit` + 原子替换）；`config.d/` 作废 |
+> | US-008 / US-011 / FR-11 / FR-12：壁纸包 `manifest.toml` + 包参数 | **不做包**；库 = 一个目录里的媒体文件 + `list` + `thumbnail` |
+> | `wallpaper` 是单张 | **列表**（轮播）+ `interval` + `order`，三者都在 `per_output` |
+> | FR-7：`hot: false` 的键要标注 | **没有这种键了**（`namespace` 已从 schema 移除，它是唯一一个） |
+> | 未提暂停 | **被窗口完全遮住时暂停整个渲染 + 解码** |
+>
+> 仍待定：v1 做设置页还是库网格（推荐①→②→③，见 decisions.md）、应用住哪、自启动通路、托盘职责与实现、守护进程不在时能否改配置、缩略图缓存、应用的名字。
+>
+> 本文件保留的价值：用户故事与验收标准的**写法**（可测、具体、带反例回归）。
+> 落点变了的故事，以 `decisions.md` 为准。
+
 ## 概述
 
 niripaper 已经有了完整的**引擎**：守护进程自己拥有壁纸图层与渲染循环，支持静态图与视频、布局反应式视差、换图过渡，并且把配置做成了机器可读的（`niripaper schema` / `niripaper state`）。它缺的只有**前端**：今天要换一张壁纸，用户得手动编辑 `~/.config/niripaper/config.toml`，或者敲 `niripaper set <path>` —— 没有缩略图、不知道有哪些图可选、也不知道当前屏幕上到底是什么。

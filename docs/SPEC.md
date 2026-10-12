@@ -30,7 +30,7 @@
 | 2.9 | 进度来源 | 守护进程**自己**连 `$NIRI_SOCKET` 读 event stream，不依赖外部推送 |
 | 2.10 | 多输出 | 一个进程管所有输出，**每个输出一个线程** — **ADR** [0004](./adr/0004-one-process-thread-per-output.md) |
 | 2.11 | 控制 socket | 单一 `niripaper.sock`，协议 `set <output\|*> <path>` — **ADR** [0008](./adr/0008-single-control-socket.md) |
-| 2.12 | 配置目录 | `config.toml` + `config.d/*.toml` 分层合并，不发明 include — **ADR** [0006](./adr/0006-config-d-directory-not-include.md) |
+| 2.12 | 配置 | **单一文件** `~/.config/niripaper/config.toml`；只有 GUI 写（`toml_edit` 保注释、原子替换），守护进程只读 — **ADR** [0009](./adr/0009-single-config-file.md) |
 | 2.13 | 热重载 | 裸 inotify，**监视目录而不是文件** — 见 §3 |
 | 2.14 | 换图过渡 | 屏幕空间混合 + 冻结快照 — **ADR** [0007](./adr/0007-screen-space-transition-with-frozen-snapshot.md) |
 | 2.15 | 命名空间 / layer rule | 守护进程用 `niripaper`；**规则是可选的**（见 §2.15.1） |
@@ -46,6 +46,8 @@
 ### 2.15.1 命名空间与 layer rule
 
 默认（不加规则）= 壁纸是**工作区背景**；加 `match namespace="niripaper"` + `place-within-backdrop true` = 壁纸进 **backdrop**。两者**模糊效果相同**（实测），区别只有两处：① backdrop 时总览背景整屏都是壁纸、且切工作区时壁纸不跟着滑；② 工作区背景时总览背景干净、壁纸出现在各工作区缩略图里（所有缩略图共用一张、同一偏移 —— layer 是 per-output，做不到按工作区独立视差）。
+
+**`namespace` 固定为 `niripaper`，不是配置键** —— 它是用户 layer-rule 匹配的名字，改了它规则就失效。命令行 `--namespace` 可覆盖（排障用，例如命中 niri 自带的 `^mpvpaper$` 规则做零配置验证）。
 
 ### 2.17.1 动画配置的语义
 
@@ -107,7 +109,9 @@ niripaper（Rust 守护进程）
 
 **热重载**：`watch.rs` 把 inotify fd 直接进 `poll()`，**监视目录而不是文件**（编辑器多为"写临时文件再 rename"，盯文件会跟丢）。必须**解析事件**：`IN_CREATE` 早于内容落盘，所以重载只在 `IN_CLOSE_WRITE` / `IN_MOVED_TO` / `IN_DELETE` / `IN_MOVED_FROM` 上做，`IN_CREATE` 只在 `IN_ISDIR` 时算。`Watcher` **不依赖"记住"目录** —— `inotify_add_watch` 幂等，每轮无脑重加，目录被删了再建也能重新盯上。
 
-**配置合并**：`config.toml` + `config.d/*.toml` **按文件名排序**逐个解析再深合并。每份先单独反序列化（出错能指名是哪个文件、哪一行），失败**保留旧配置**并打印原因。两条硬要求：**解析失败不许把 daemon 打挂**；**`output` / `namespace` 不能热改**（重建输出代价太大，改了也只当没看见）。
+**配置加载**：只有一个文件，解析后验证。失败**保留旧配置**并打印原因。一条硬要求：**解析失败不许把 daemon 打挂**。
+
+**`namespace` 不是配置键**：它是 layer-shell 表面报给合成器的身份，也是用户 layer-rule 匹配的名字（§2.15.1）。改了它，用户写的规则就匹配不上 —— 所以它固定在编译期，只有 `--namespace` 能在命令行上覆盖（排障用）。
 
 **技术选型**
 
@@ -272,8 +276,16 @@ thumbnail <id> [w h]    渲一帧 PNG
 
 ### 5.2 配置
 
-`~/.config/niripaper/config.toml` + `config.d/*.toml`（按文件名排序深合并）。优先级：**CLI > 配置文件 > 内置默认值**。
+**只有一个文件**：`~/.config/niripaper/config.toml`（`--config PATH` 可指定别的）。优先级：**CLI > 配置文件 > 内置默认值**。
 
-**TOML 规则**：顶层键必须写在第一个 `[表]` 之前；写在表头之后会被当成那个表的字段并报 unknown field。碎片文件必须**自己写表头**（它是被合并的，不是文本拼接）。
+文件缺失**不是错误** —— 内置默认值是合法的配置，此时画程序化测试图案（见 §2.16）。解析失败**保留正在运行的配置**并打印原因，不把守护进程打挂。
+
+**TOML 规则**：顶层键必须写在第一个 `[表]` 之前；写在表头之后会被当成那个表的字段并报 unknown field。
+
+**谁写这个文件**：只有 GUI（用户意图）。**守护进程永远只读**。
+
+- GUI 改写时**必须用 `toml_edit`**（外科手术式：只替换被改的键，保留其余字节），否则会抹掉文件里那批逐键说明的注释。
+- GUI **写临时文件再 `rename`**（原子替换）。守护进程监视的是**目录**且认 `IN_MOVED_TO`，所以这条路径本来就接得住。
+- 旋钮类改动不经过这个文件：`set` 是**内存临时覆盖**，任何一次热重载都会盖掉它。
 
 `schema` 与 `state` 见 `niripaper schema` / `niripaper state` 的实际输出；`schema` 的 `per_output` 列出可以写在 `[outputs."NAME"]` 下的键，其余是全局键。

@@ -584,15 +584,12 @@ fn run_output(
         .as_ref()
         .map(|media| media.wakeup_fd())
         .unwrap_or(media::NO_WAKEUP);
-    // Watch the configuration (§2). Directories, not files: tools write
-    // atomically and may create `config.d` long after we started.
+    // Watch the configuration (§2). We watch the *directory*, not the file: a
+    // writer replacing it atomically (write a temp file, then rename) would be
+    // missed by a per-file watch, and that is how the GUI saves.
     let mut watcher = crate::watch::Watcher::new()?;
     let config_dirs: Vec<std::path::PathBuf> = match &options.config_path {
-        Some(path) => {
-            let dir = path.with_extension("d");
-            let parent = path.parent().map(|p| p.to_owned());
-            [parent, Some(dir)].into_iter().flatten().collect()
-        }
+        Some(path) => path.parent().map(|p| p.to_owned()).into_iter().collect(),
         None => Vec::new(),
     };
     watcher.watch(&config_dirs)?;
@@ -721,10 +718,9 @@ fn run_output(
             let Some(path) = options.config_path.clone() else {
                 continue;
             };
-            // Watch *before* reloading. A `config.d` created just now is only
-            // discovered by this reload, and inotify reports no past events — so
-            // adding the watch afterwards would miss anything written into it in
-            // the meantime (a tool's `mkdir -p config.d && write`).
+            // Watch *before* reloading: a watcher added afterwards would miss
+            // anything written in the meantime, and inotify reports no past
+            // events.
             watcher.watch(&config_dirs)?;
             match crate::config::Config::load_from(&path) {
                 // A failed reload keeps the running configuration: a tool
@@ -737,7 +733,7 @@ fn run_output(
                     // reload has to resolve the same way startup does. Reading the
                     // globals here dropped a per-output wallpaper — and its scale and
                     // spans — the moment anything touched the configuration, which is
-                    // exactly what a panel writes to (`config.d/noctalia.toml`).
+                    // exactly what an editor writing the file would trigger.
                     let params = reloaded.output(&options.output);
                     // `fit` changes how the media is placed and `scale` changes
                     // the canvas it is built at, so both need the same reload the
@@ -1057,9 +1053,8 @@ fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
     );
     put("transition.on_start", json!(transition.on_start));
 
-    // Which files this configuration is made of: the main one plus every
-    // `config.d/*.toml` merged over it. A panel showing "where does this value
-    // come from" needs exactly this list.
+    // Which file this configuration came from. A UI showing "where does this
+    // value come from" needs exactly this list.
     let files: Vec<String> = options
         .config_path
         .as_deref()

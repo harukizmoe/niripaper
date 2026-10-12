@@ -1,11 +1,15 @@
 # 分层配置用 `config.d/` 目录，不自造 include 指令
 
-配置是顶层 `~/.config/niripaper/config.toml` + `config.d/*.toml` **按文件名排序**逐个解析再深合并，而不是发明一条 `include` 指令。好处是来源归属由文件名直接给出：每份文件先单独反序列化，出错能指名是哪个文件、哪一行；Noctalia 插件独占 `config.d/noctalia.toml`，与手工配置互不打架。
+> **已被 [ADR 0009](0009-single-config-file.md) 取代（2026-10-12）。**
+> 配置现在只有一个文件，`config.d/` 与文件名排序合并都不再存在。本文件保留作为决策记录 ——
+> 它解释了当初为什么选目录而不是 include，以及那条"文件名当优先级"的隐式规则是怎么来的。
+
+配置是顶层 `~/.config/niripaper/config.toml` + `config.d/*.toml` **按文件名排序**逐个解析再深合并，而不是发明一条 `include` 指令。好处是来源归属由文件名直接给出：每份文件先单独反序列化，出错能指名是哪个文件、哪一行；工具独占一份 drop-in，与手工配置互不打架。
 
 ## Considered Options
 
 - **自造 `include` 指令**：否决——合并语义、路径解析、循环包含都要自己再定义一遍。
-- **`config.d/` 目录 + 文件名顺序**：采用。
+- **`config.d/` 目录 + 文件名顺序**：采用（**后被 ADR 0009 取代**）。
 
 ## Consequences
 
