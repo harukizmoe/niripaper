@@ -92,8 +92,8 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
 - **本机环境事实不进仓库**（当前是哪块 GPU、哪条 path、哪个版本、实测数值）——那是每台机器各自的，
   维护者本地另有记录（`~/workspace/rust/niripaperdocs/`）。仓库文档里只写**稳定**的事，
   不写"本机是 AMD/NVIDIA"这类会变的事实。
-- **构建产物放哪**：`/tmp` 在本机是 tmpfs（约 7.8 GB），大依赖树会撑爆（实测 gpui-kit 的
-  849 个 crate 就会，报 `Disk quota exceeded`）。构建 GUI 时把 `CARGO_TARGET_DIR` 指到 `/home` 下。
+- **构建产物放哪**：`/tmp` 在本机是 tmpfs（约 7.8 GB），大依赖树会撑爆（实测一个 849 crate 的
+  GUI 依赖树就会，报 `Disk quota exceeded`）。构建大依赖树时把 `CARGO_TARGET_DIR` 指到 `/home` 下。
 - **不要往回 checkout 很旧的工作树、也不要 `git rebase -i` 到很旧的提交**：历史上有过"文件先被
   跟踪、后来移出索引"的情形（`HANDOFF.md` 就是），往回走会把它从 git 里还原出来、覆盖当前工作副本。
   查一个文件的历史归属用 `git log --all -- <path>`，不要 checkout。详见 `docs/gotchas.md` 的风险 15。

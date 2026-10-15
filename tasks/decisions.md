@@ -55,10 +55,13 @@ Onevra 的"复杂组件"四类里没有；MujicaUI、8bitMyGoUI 也没有），�
 
 | 东西 | 处置 |
 | --- | --- |
-| `tasks/prototype/`（Rust + GPUI 原型） | 技术栈作废。界面上的发现已单独记在 `tasks/ui-prototype-findings.md`，那份**与框架无关**，保留 |
-| `.omp/skills/gpui-kit{,-design-guides}`（本地技能，29 个文件，未入库） | gpui API 部分作废；**design-guides 里的设计规范与框架无关**，值得原样留用 |
-| 本文档三里的"托盘怎么用 `zbus` 接" | 作废（mygo 内置托盘） |
-| 本文档四里的 `niripaper-app/ UI（gpui-kit / GPUI）`、849 crate 的 CI 说明 | 改成 Go 模块；CI 顾虑消失 |
+| `tasks/prototype/`（Rust + GPUI 原型，1168 行） | **已删除**（2026-10-16） |
+| `.omp/skills/gpui-kit{,-design-guides}`（本地技能，29 个文件） | **已删除**（2026-10-16） |
+| `tasks/ui-design-research.md`、`tasks/ui-prototype-findings.md` | **已删除**（2026-10-16） |
+| 本文档三里的"托盘怎么用 `zbus` 接" | 已就地标作废（mygo 内置托盘） |
+| 本文档四里的 `niripaper-app/ UI（gpui-kit / GPUI）`、849 crate 的 CI 说明 | 已就地标作废（Go 模块，不进 cargo） |
+
+**UI 设计改由本机 open-design 产出**（2026-10-16）：自攒的设计调研、原型、设计规范与两份 gpui 技能**整套作废并删除**，项目里只留**需求文档** `tasks/prd-niripaper-gui.md` —— 它已重写为自包含，是交给 open-design 的**唯一输入**（旧版里 `config.d/`、壁纸包、`gpui-kit`、"首版不做托盘与自启动"、`hot: false`、`wallpaper` 是单张这些前提都已在文档里声明作废并更新）。
 
 ---
 
@@ -73,7 +76,7 @@ Onevra 的"复杂组件"四类里没有；MujicaUI、8bitMyGoUI 也没有），�
 | 工具包 | **`mygo`**（Go，`github.com/egoist/mygo`，原生 `ui` 包） | 2026-10-16 从 `gpui-kit` 改回，理由与实测依据见 **〇**。一句话：托盘/菜单/对话框/通知/全局快捷键**内置**（正好补掉 gpui-kit 唯一那条已知缺口），组件表覆盖本应用要用的全部，且已在本机 niri + Wayland + NVIDIA 实测开窗渲染成功。**新缺口：没有视频组件**（见 〇） |
 | 前端画布 | **原生控件**（不是 webview） | 保持"单二进制、无 WebKitGTK"的分发哲学 |
 | Noctalia 插件 | **废弃，不复活** | 见 [docs/SPEC.md](../docs/SPEC.md)「非目标」 |
-| 视觉 | 现代、密度适中、信息优先；规范见 `tasks/ui-design-research.md` 与 `.omp/skills/gpui-kit-design-guides/references/design-guides.md` | 该 guide 是要求不是灵感。**它是设计规范、与框架无关**，所以换框架后仍然有效（那个技能目录的名字带着 gpui，但规范部分可以原样留用；技能里的 gpui API 部分随框架作废） |
+| 视觉 | 现代、密度适中、信息优先 —— **由本机 open-design 产出设计**（2026-10-16） | 原先自攒的设计调研、原型与两份 gpui 技能**全部作废并已删除**：设计交给专门工具做，项目里只留需求文档 `tasks/prd-niripaper-gui.md`（它自包含，是交给 open-design 的唯一输入）。open-design 自带 5 套设计方向，本应用气质与 `modern-minimal`（Linear / Vercel）最贴 |
 
 ---
 
