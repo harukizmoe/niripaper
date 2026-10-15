@@ -4,8 +4,61 @@
 **已经定下来的**决策，以及每条为什么。
 
 - 每条都写清了理由与实测依据 —— 它们之后会变成 `docs/adr/` 或 `docs/SPEC.md`。
-- **本文件里没有待定项了**（2026-10-12）：讨论收敛完毕，可以按 4.5 的顺序开工。
+- **本文件里没有待定项了**（2026-10-12；2026-10-16 工具包改回 mygo，见 **〇** —— 那是决定，不是待定项）：讨论收敛完毕，可以按 4.5 的顺序开工。
 - 本文件是讨论的收敛点，不是规格。规格在 [docs/SPEC.md](../docs/SPEC.md)。
+
+---
+
+## 〇、2026-10-16：工具包改回 mygo（Rust/GPUI → Go）
+
+原来定的是 `gpui-kit`（Rust，GPUI）。改成 **mygo**（Go，`github.com/egoist/mygo`，MIT，
+文档称 v0.5.1）。**界面方式不变** —— 仍是原生控件、无 webview（上表"前端画布"一行不动）。
+
+**为什么改**
+
+| 依据 | 事实 |
+| --- | --- |
+| 托盘 | mygo 把**托盘 / 菜单 / 对话框 / 通知 / 全局快捷键 / 深链 / 文件关联 / 最近文档**都做成内置能力。gpui-kit 那边**没有托盘组件**，得自己用 `zbus` 接一套（见三）—— 这条缺口消失了 |
+| 组件覆盖 | `ui` 包正好覆盖本应用要用的全部：`Grid view`（文档原话 "items in a grid of any size, **as a photo library**"）、`Image`/`Icon`、`Sidebar`/`Tabs`/`Split view`、`List`/`Table`/`Tree`/`Outline`、`Dialog`/`Alert`/`Popover`/`Tooltip`/`Toast`、`Form`、`Slider`/`Select`/`Combobox`/`Color picker`、`Charts`，以及 `motion`（弹簧 / 关键帧 / 时间轴）、`transitions`、`Transforms` |
+| 可测性 | 视图**不开窗**就能跑（文档 `Testing`："as fast as a unit test"），另有 `Inspector` 看元素盒与每帧耗时 —— 与守护进程那边"纯逻辑可测"的口径一致 |
+| 本机实测 | 2026-10-11 实测过：mygo 原生 UI 在 **niri + Wayland + NVIDIA** 上开窗并渲染成功（`app_id = probe`，GL 初始化干净） |
+| 体积 | 文档给出的数字：单二进制 **~7 MB**、原生 UI 常驻 **~44 MB**、空闲 CPU **0%** —— 与"单二进制、无 WebKitGTK"的分发哲学一致 |
+| 语言 | UI 与桌面 API 都是 Go 单语言，不必为 UI 再养一套 Rust 构建 —— gpui-kit 那 849 个 crate 的 CI 顾虑（见四）一并作废 |
+
+**社区组件库：四个，2026-10-16 逐一核实过**（这是"改回 mygo"的主要理由之一）
+
+| 库 | 是什么 | 对这个应用有用的部分 |
+| --- | --- | --- |
+| **`smallnest/uix`**（MIT，13★） | shadcn/ui 风格的 **mygo 原生**组件库，**~110 个组件**（含 BoardUI / shadcn expansions / onevra 三批移植） | `gridview` ✓、`item`（带媒体缩略图的列表行）✓、`carousel` ✓、`aspectratio` ✓、`scroll`/`scrollboth`/`infinitescroll` ✓、`command`（⌘K 面板）✓、`settings` ✓、`appshell` ✓、`image`/`icon`/`lucide` ✓、`split`/`sidebar`/`tree`/`list`/`table` ✓、`dialog`/`sheet`/`drawer`/`popover`/`toast` ✓、`code`/`markdown` ✓、**`webview`**（局部逃生口）✓ |
+| **`oneo-me/onevra`**（MIT） | 原生 Go 组件库：主题控件 + 复杂组件 + **窗口 Shell** + Lucide 图标 + **Packer** + 起步模板 | 窗口 Shell（隐藏系统标题栏、跟随系统明暗）✓、**托盘起步模板**✓、**Packer**（dmg / zip / tar.gz，打包省一大截）✓、复杂组件（图表 / 命令面板 / 代码高亮 / Markdown / 对话）✓ |
+| **MujicaUI**（`HycJack/MujicaUI`，fork 自 `ZacharyZhang-NY/MujicaUI`） | 按类别组织的 mygo 组件库，已迁移到 MyGo v0.3 的 value-type Element API | 已被一个真实应用采用（见下）；**许可证待确认** ✗ |
+| **8bitMyGoUI**（`8bitui.zacharyzhang.com`） | 16-bit 像素风组件，同一份 Go 代码编到 WebAssembly | 风格取向，与本应用气质不合 ✗ —— 记下存在即可 |
+
+**这套栈有实机旁证**：`HycJack/MujicaUI-agent-demo`（**Crux Agent**）是一个完整的 Codex 风格
+桌面应用，就用 mygo 原生 UI + MujicaUI 写的 —— 三栏工作台、虚拟化目录树、语法高亮、真实
+git diff、模态框、⌘K 命令面板、主题走语义令牌，而且**它的截图是无窗口渲染测试离线产出的**
+（`MYGO_UI_SHOTS`），与本项目"纯逻辑可测"的口径一致。它按 `internal/{store,engine,app}` 分三层，
+UI 层与逻辑层解耦 —— 与本项目"渲染全留在守护进程、应用是薄客户端"的分层是同一种口味。
+
+**新增的已知缺口：没有视频组件**
+
+**mygo 自带的组件表与上述四个库，都没有视频播放**（逐一核实：uix ~110 个组件里没有；
+Onevra 的"复杂组件"四类里没有；MujicaUI、8bitMyGoUI 也没有），所以视频壁纸的**预览播放**
+不能直接做。两条出路，都仍在"无 webview 分发"之内：
+
+1. **抽帧**：`ffmpeg` 抽一帧当缩略图 / 静帧预览 —— Noctalia 插件时代已经这么干过，手法现成；
+2. **局部 `ui.WebView`**：mygo 明确支持"原生 UI 之上叠一个 web 页"（文档 `Web view`：
+   "a web page in the window, under the native UI painted after it"）—— 只在要播放的那一块嵌
+   一个 `<video>`，其余仍是原生。缺口是**局部的**，不是全局的。
+
+**因此作废 / 待清理**
+
+| 东西 | 处置 |
+| --- | --- |
+| `tasks/prototype/`（Rust + GPUI 原型） | 技术栈作废。界面上的发现已单独记在 `tasks/ui-prototype-findings.md`，那份**与框架无关**，保留 |
+| `.omp/skills/gpui-kit{,-design-guides}`（本地技能，29 个文件，未入库） | gpui API 部分作废；**design-guides 里的设计规范与框架无关**，值得原样留用 |
+| 本文档三里的"托盘怎么用 `zbus` 接" | 作废（mygo 内置托盘） |
+| 本文档四里的 `niripaper-app/ UI（gpui-kit / GPUI）`、849 crate 的 CI 说明 | 改成 Go 模块；CI 顾虑消失 |
 
 ---
 
@@ -17,10 +70,10 @@
 | 形态 | **Wallpaper Engine 式桌面应用**：库网格 + 应用壁纸 + 属性面板 + 设置页 | 借用的是"应用的组织形式"，不是 WE 的文件格式与效果系统 |
 | 交互性 | **静止优先，不做交互壁纸** | niri 上 `place-within-backdrop`（静止、总览整屏）与指针输入**互斥**——backdrop 内的层忽略全部输入。两者不能共存，选了静止 |
 | 渲染位置 | **全部留在守护进程**；应用是控制 socket 上的薄客户端 | 守护进程已按 dmabuf feedback 的 `main_device` 开好 GBM/EGL 并钉好 EGL vendor；而"一个进程只能钉一个 vendor"（[ADR 0003](../docs/adr/0003-bare-ffi-no-egl-crates.md)）。应用再建一套渲染栈＝把踩平的坑重挖 |
-| 工具包 | **`gpui-kit`**（Rust，基于 GPUI，75+ 组件） | 已在 niri + Wayland + NVIDIA 实测可跑；组件集够用（Slider/Select/Input/Dialog/DataTable/虚拟列表…）。**已知缺口：没有托盘组件**（见三） |
+| 工具包 | **`mygo`**（Go，`github.com/egoist/mygo`，原生 `ui` 包） | 2026-10-16 从 `gpui-kit` 改回，理由与实测依据见 **〇**。一句话：托盘/菜单/对话框/通知/全局快捷键**内置**（正好补掉 gpui-kit 唯一那条已知缺口），组件表覆盖本应用要用的全部，且已在本机 niri + Wayland + NVIDIA 实测开窗渲染成功。**新缺口：没有视频组件**（见 〇） |
 | 前端画布 | **原生控件**（不是 webview） | 保持"单二进制、无 WebKitGTK"的分发哲学 |
 | Noctalia 插件 | **废弃，不复活** | 见 [docs/SPEC.md](../docs/SPEC.md)「非目标」 |
-| 视觉 | 现代、密度适中、信息优先；规范见项目本地 `.omp/skills/gpui-kit-design-guides` | 该 guide 是要求不是灵感 |
+| 视觉 | 现代、密度适中、信息优先；规范见 `tasks/ui-design-research.md` 与 `.omp/skills/gpui-kit-design-guides/references/design-guides.md` | 该 guide 是要求不是灵感。**它是设计规范、与框架无关**，所以换框架后仍然有效（那个技能目录的名字带着 gpui，但规范部分可以原样留用；技能里的 gpui API 部分随框架作废） |
 
 ---
 
@@ -177,6 +230,9 @@ PRD 的"只有 `list` + `thumbnail` 两个新动词"这条约定保持不变。�
 
 ### 4.3 托盘怎么实现 —— **已定**（2026-10-12）
 
+> ⚠ **2026-10-16 作废，见 〇**：工具包换成 mygo 之后，托盘是**框架内置能力**，不必自己接
+> `zbus`。以下保留为当时的推理记录。
+
 **自写 StatusNotifierItem + `zbus`。**
 
 实测：`zbus` **已经在 gpui-kit 的依赖树里**（`cargo generate-lockfile` 验过），所以是纯 Rust、
@@ -220,8 +276,11 @@ niripaper-proto/   纯逻辑，零 IO 依赖（serde/serde_json/toml）
                    ├─ schema()            ← 守护进程「生成」它，UI 也用它
                    └─ per_output 路由规则  ← UI 与守护进程共用同一条，写不错
 niripaper/         守护进程（wayland / EGL / libmpv）—— 现状不变
-niripaper-app/     UI（gpui-kit / GPUI）
+niripaper-app/     UI（mygo / Go）          ← 2026-10-16 改，见 〇
 ```
+
+> ⚠ **2026-10-16 作废（见 〇）**：应用改用 Go 之后，这条 cargo workspace 的顾虑整个不存在了
+> （`niripaper-app` 是 Go 模块，根本不进 cargo）。下面的推理保留为当时的记录。
 
 **CI 是硬约束，而它正好被解掉**：`.github/workflows/ci.yml` 用的是 `cargo test --locked`
 （**没有** `--workspace`），所以加了 workspace 之后**根包仍是 `niripaper`，测试与 release

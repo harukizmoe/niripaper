@@ -22,5 +22,9 @@ niripaper 依赖或借鉴的外部资料，以及项目内部的约定入口。�
 
 ## 项目内部
 
-- **GPUI Kit**（计划中的 GUI）：https://github.com/longbridge/gpui-kit —— 组件库（`gpui-kit` crate）；项目级 skills 在 `.omp/skills/`（`gpui-kit`、`gpui-kit-design-guides`），**只在本地、被 `.gitignore` 忽略**，动 UI 之前先读它们的 `SKILL.md`。
+- **mygo**（计划中的 GUI 框架，2026-10-16 定）：https://github.com/egoist/mygo —— Go 写桌面应用，两条路：原生 `ui` 包（GPU 自绘、无 webview）或 web 前端（系统 webview + 从 Go 生成的 TypeScript 客户端）。**本项目走原生**。文档：https://mygo.egoist.dev
+  - 组件库四个（都已核实，见 [`../tasks/decisions.md`](../tasks/decisions.md) 〇）：[`smallnest/uix`](https://github.com/smallnest/uix)（shadcn/ui 风格，~110 组件，MIT）、[`oneo-me/onevra`](https://github.com/oneo-me/onevra)（窗口 Shell + 托盘起步模板 + Packer，MIT）、[`HycJack/MujicaUI`](https://github.com/HycJack/MujicaUI)（按类别组织，许可证待确认）、[8bitMyGoUI](https://8bitui.zacharyzhang.com/)（16-bit 像素风，风格不合）。
+  - 同栈参考实现：https://github.com/HycJack/MujicaUI-agent-demo（**Crux Agent**，Codex 风格编码 Agent）—— mygo 原生 UI + MujicaUI，按 `internal/{store,engine,app}` 分层，截图由**无窗口渲染测试**离线产出。
+  - **已知缺口：四个库与 mygo 自带组件表都没有视频播放**；出路见 decisions 〇（`ffmpeg` 抽帧，或局部嵌 `webview`）。
+- **（已作废）GPUI Kit**：https://github.com/longbridge/gpui-kit —— 原定的 GUI 组件库（Rust/GPUI），2026-10-16 改回 mygo。项目级 skills 仍在 `.omp/skills/`（`gpui-kit`、`gpui-kit-design-guides`，**只在本地、被 `.gitignore` 忽略**）：其中 **gpui API 部分随框架作废，但 design-guides 里的设计规范与框架无关，仍然有效**。
 - **规格工作流 skills**（本机 agent 环境提供，不进仓库）：`/prd` → `/prd-to-spec` → `/to-issues`（PRD / SPEC 落在 `tasks/`，issue 落在 GitHub Issues，agent 配置见 [`agents/`](./agents/)）；实现收尾走 `/review-it` → `/note-it` → `/ship-it`，批量实现用 `/loop-it`，术语与 ADR 由 `/domain-modeling` 维护。
