@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use crate::media::{self, Media};
 use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
-use crate::render::anim::{Animator, Curve};
+use crate::render::anim::Animator;
 use crate::render::egl::{Egl, EglVendor};
 use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
@@ -954,12 +954,6 @@ fn run_output(
     Ok(())
 }
 
-/// One line of JSON. The protocol is one line in, one line out, so the compact
-/// form is the only one that fits.
-fn json_line(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|e| format!("error serializing: {e}"))
-}
-
 /// What `state` reports, gathered by the caller because only it has these.
 struct Snapshot<'a> {
     options: &'a Options,
@@ -969,128 +963,50 @@ struct Snapshot<'a> {
     zoom: f64,
 }
 
-/// The daemon's state, for `state` over the control socket.
-///
-/// Values are keyed by the same dotted names `schema` lists, so a client can zip
-/// the two together without knowing anything about either. `config.values` is
-/// what the configuration says; `wallpaper.path` is what is *actually* on
-/// screen — `set` swaps the media without touching the configuration, so the two
-/// can legitimately differ.
+/// The daemon's state, for `state` over the control socket. Delegates to
+/// `niripaper-proto::state` — the desktop app zips the same dotted keys against
+/// `schema`, so the shape has one definition.
 fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
-    use serde_json::{json, Map, Value};
-
     let options = state.options;
-    let mut values = Map::new();
-    let mut put = |name: &str, value: Value| values.insert(name.to_owned(), value);
-    put(
-        "wallpaper",
-        json!(options
-            .wallpaper
+    let values = niripaper_proto::state::config_values(
+        options
+            .config
             .as_ref()
-            .map(|path| path.display().to_string())),
+            .unwrap_or(&crate::config::Config::default()),
+        options.wallpaper.as_deref(),
+        options.video_fps,
+        options.fit,
+        &options.namespace,
     );
-    put("video_fps", json!(options.video_fps));
-    put("scale", json!(options.scale));
-    put("column_span", json!(options.column_span));
-    put("workspace_span", json!(options.workspace_span));
-    put("namespace", json!(options.namespace));
-    put("fit", json!(options.fit.name()));
-    let animations = &options.animations;
-    put("animations.follow_niri", json!(animations.follow_niri));
-    put("animations.off", json!(animations.off));
-    put("animations.slowdown", json!(animations.slowdown));
-    put(
-        "animations.parallax",
-        crate::schema::animation_value(&animations.parallax),
-    );
-    put(
-        "animations.overview-open-close.zoom",
-        json!(animations.overview_open_close.zoom),
-    );
-    put(
-        "animations.overview-open-close",
-        crate::schema::animation_value(&animations.overview_open_close.animation),
-    );
-    let transition = &options.transition;
-    put("transition.selection", json!(transition.selection.name()));
-    put("transition.effect", json!(transition.effect.name()));
-    put(
-        "transition.effects",
-        json!(transition
-            .effects
-            .iter()
-            .map(|effect| effect.name())
-            .collect::<Vec<_>>()),
-    );
-    put(
-        "transition.duration_ms",
-        json!(transition.duration.as_millis() as u64),
-    );
-    put("transition.curve", json!(transition.curve.name()));
-    put(
-        "transition.cubic_bezier",
-        match transition.curve {
-            Curve::CubicBezier(points) => json!(points),
-            _ => Value::Null,
-        },
-    );
-    put(
-        "transition.allow_overshoot",
-        json!(transition.allow_overshoot),
-    );
-    put("transition.softness", json!(transition.softness));
-    put(
-        "transition.center",
-        json!([transition.center.0, transition.center.1]),
-    );
-    put("transition.direction", json!(transition.direction.name()));
-    put("transition.stripes", json!(transition.stripes));
-    put("transition.push", json!(transition.push));
-    put("transition.start_radius", json!(transition.start_radius));
-    put(
-        "transition.hold_ms",
-        json!(transition.hold.as_millis() as u64),
-    );
-    put("transition.on_start", json!(transition.on_start));
-
-    // Which file this configuration came from. A UI showing "where does this
-    // value come from" needs exactly this list.
-    let files: Vec<String> = options
+    let wallpaper = state
+        .media
+        .map(|media| niripaper_proto::state::WallpaperState {
+            path: media.path().to_path_buf(),
+            kind: media.kind(),
+            hwdec: media.hwdec(),
+            fit: media.fit().name(),
+        });
+    let config_files = options
         .config_path
         .as_deref()
         .and_then(|path| crate::config::Config::config_files(path).ok())
-        .unwrap_or_default()
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect();
-
-    json!({
-        "output": options.output,
-        "namespace": options.namespace,
-        "canvas": { "width": state.canvas.0, "height": state.canvas.1 },
-        "config": {
-            "source": crate::config::describe_source(options.config_path.as_deref()),
-            "files": files,
-            "values": values,
-            "from_niri": animations.from_niri,
-        },
-        "wallpaper": match state.media {
-            Some(media) => json!({
-                "path": media.path().display().to_string(),
-                "kind": media.kind(),
-                "hwdec": media.hwdec(),
-                // The *effective* fit: a video cannot be tiled, so `tile` shows
-                // up here as `fill` even when the configuration says otherwise.
-                "fit": media.fit().name(),
-            }),
-            None => Value::Null,
-        },
-        "position": {
-            "horizontal": state.position.0,
-            "vertical": state.position.1,
-        },
-        "zoom": state.zoom,
+        .unwrap_or_default();
+    niripaper_proto::state::state_json(&niripaper_proto::state::Snapshot {
+        output: options.output.clone(),
+        namespace: options.namespace.clone(),
+        config_values: values,
+        config_path: options.config_path.clone(),
+        from_niri: !options.animations.from_niri.is_empty(),
+        config_files,
+        canvas: state.canvas,
+        wallpaper,
+        position: state.position,
+        zoom: state.zoom,
     })
+}
+
+fn json_line(value: &serde_json::Value) -> String {
+    niripaper_proto::state::json_line(value)
 }
 
 /// The canvas: the output enlarged by `scale` (§4.1). A wallpaper is fitted to

@@ -9,7 +9,82 @@
 
 ---
 
-## 〇、2026-10-16：工具包改回 mygo（Rust/GPUI → Go）
+## 〇之二、2026-10-16（深夜）：前端栈定稿 —— React + Tailwind v4 + MUI v7；仓库重构为 workspace
+
+**决定**：原型升级为真实应用结构时，前端用 **Vite + React 19 + TypeScript + Tailwind CSS v4 +
+MUI v7**（`@mui/material` + `@emotion`），组件库选型记录如下。
+
+**为什么是 MUI（事实核查，2026-10-16）**
+
+| 候选 | 状态 | 结论 |
+| --- | --- | --- |
+| **MUI v7** | 活跃维护，React MD 实现的事实标准，官方提供 Tailwind v4 共存文档 | **采用**。成熟度、TS 支持、可维护性最稳；代价是引入 Emotion 运行时样式，与 Tailwind 并存 |
+| Material Tailwind | 活跃但节奏慢；**无官方 Tailwind v4 兼容确认**（文档只到 v3 时代措辞） | 备选，风险在 v4 兼容性，未采用 |
+| `@material/web`（Google 官方） | **2024-06 起维护模式**，Google 官方公告"no updates are currently being made" | 新项目不可依赖，排除 |
+| shadcn/ui | 活跃，非 Material 风格 | 与"要 Material 观感"的前提不符，排除 |
+
+**观感对齐**：`tasks/prototype-ui.html` 的 M3 Expressive 令牌（`--m3-*`，30+ 变量）整体移植进
+`app/ui/src/index.css`，`app/ui/src/theme/mui.ts` 把同一套令牌映射进 MUI palette —— 令牌一处定义，
+两个体系（Tailwind 原子类与 MUI 组件）都读它。原型 HTML 保留在 `tasks/` 作设计参照。
+
+**同时落地（本次重构，全部已在 dev 提交前实机验证）**
+
+| 项 | 决定 |
+| --- | --- |
+| 仓库形态 | Cargo workspace（§4.6 的三 crate 落地）：根包 `niripaper`（守护进程）+ `crates/proto`（`niripaper-proto`，共享纯逻辑）+ `app`（`niripaper-app`，Tauri 壳） |
+| `default-members = [".", "crates/proto"]` | 裸 `cargo test/clippy/build` 仍只覆盖守护进程 —— CI 的 GPU-free runner 语义不变；app 用 `-p niripaper-app` 显式构建 |
+| proto 的内容 | `config.rs`、`schema.rs` 原样搬入；`anim`/`transition` 拆分——**值类型**（Curve/Spring/Animation/Effect/Selection/Direction/Settings/Fit/Progress/常量）进 proto，**状态机**（Animator/Transition）留守护进程；`ipc.rs` 拆为 `protocol.rs`（文法+客户端）与守护进程侧 `Server`；niri KDL 读取器随迁（config 依赖它）；新增 `state.rs`（`state_json` 纯函数 + `config_values`）与 `client.rs`（渲染请求行） |
+| 守护进程不动的部分 | `render/` 全部、`motion` 状态机、`niri.rs`、`watch.rs`、`scene.rs`、`media.rs`、`gpu.rs`、`daemon.rs` 事件循环；模块路径靠 re-export（`src/config.rs`/`src/schema.rs` 是 shim，`render::Fit` re-export）保持原拼写 |
+| 对外契约 | `niripaper schema` 输出与重构前**逐字节一致**（实机 diff 为空）；`set`/`query`/`state`/`kill` 实机冒烟通过 |
+| 清理 | `tasks/prototype-native/`（mygo 手绘线已作废）、`tasks/prototype-webui/`、`tasks/prototype-tauri/`（已迁入 `app/`）删除；守护进程侧 `kdl`/`toml` 依赖随迁走而移除 |
+| 托盘 | Tauri v2 内置（US-014）：「打开主窗口 / 退出」，不碰守护进程（§4.2 不变） |
+
+**app job 的 CI**：webkit2gtk-4.1 + Node 24 单独一个 job（`npm ci` → `npm run build` →
+`cargo clippy -p niripaper-app -D warnings` → `cargo build -p niripaper-app`）。
+
+---
+
+## 〇、2026-10-16（当晚）：改用 Tauri（webui）
+
+**这一节取代上一节。** 决定：桌面管理端改用 **Tauri v2**，界面走 **web 前端**（系统 webview，
+Linux 上是 WebKitGTK），前端直接复用已完成的 `tasks/prototype-ui.html`。
+
+**为什么改**
+
+| 依据 | 事实 |
+| --- | --- |
+| 观感 | 网页版原型（`tasks/prototype-ui.html`，92 KB）的观感是维护者要的那一版。mygo **原生** 模式要用它的画笔手工重造浏览器级效果 —— 景深模糊、径向渐变、z-index 置顶、平滑动画，全部得自己实现；本机实测里 `Draw` / 混合 / 变换有多处与预期不符，耗掉大量往返。webui 模式下这些**由 WebKit 直接提供**，前端一行不改 |
+| 前端已存在 | 同一份 HTML 在 mygo **webui** 模式下已验证可用：窗口标题取自页面的 `<title>`，证明页面被加载并渲染 |
+| 语言 | niripaper 的**引擎本来就是 Rust**。GUI 也用 Rust，整个仓库一套工具链；mygo 是 Go，等于引入第二种 |
+| 依赖规模 | Tauri v2 实测（本机）：`Cargo.lock` **408 个包**、依赖树 826 行（去重 251）、lock 104 KB —— 比本仓库记过的 gpui-kit **849 个 crate** 少一半 |
+| 系统依赖 | 本机已全部具备（`webkit2gtk-4.1` 2.54.1、`javascriptcoregtk-4.1` 2.54.1、`gtk+-3.0` 3.24.52、`libsoup-3.0` 3.8.0；Rust 1.98.1）—— 无需额外安装即可编、可跑 |
+
+**两种模式的实测代价**（同一台机器、同一时刻、同一份设计）
+
+| | mygo native（手绘） | webui（同一份 HTML） |
+| --- | --- | --- |
+| 渲染者 | mygo 自己在 GPU 上画 | **WebKitGTK** |
+| 进程数 | 1 | **3**（`WebKitWebProcess` + `WebKitNetworkProcess`） |
+| RSS | 430 MiB | 538 MiB |
+
+结论：**webview 的地板 ≈ +2 个进程、+100 MiB 量级**（另一次空壳页实测为 +2 进程 / ≈440 MiB）。
+对一个配置器可以接受。
+
+**因此作废的东西**
+
+| 项 | 状态 |
+| --- | --- |
+| 上一节的 `mygo` 决定，以及它列的四个社区组件库（`uix` / `onevra` / `MujicaUI` / `8bitMyGoUI`） | **对本应用作废**（webui 模式下原生控件库用不上）。维护者在 mygo 生态里的组件库工作（mayui）与本应用不再是同一条线 |
+| `tasks/prototype-native/`（Go 手绘原型） | 保留作对照，不再是主线 |
+| 「托盘 / 静默启动」的实现方式 | 改由 Tauri v2 内置托盘承担（PRD 的 US-014 不变） |
+
+**新缺口（记下，见 prd「能力边界」）**：视频播放仍不在 GUI 内 —— 壁纸的视频解码归守护进程（libmpv），
+GUI 只显示封面帧与状态，这与语言/框架无关。
+
+**构建约定**：Cargo 依赖树大，`CARGO_TARGET_DIR` **必须指到 `/home` 下**（本机 `/tmp` 是 7.8 GB 的
+tmpfs，撑爆过 —— 见本文档四与 `AGENTS.md`）。原型放在 `tasks/prototype-tauri/`（未入库）。
+
+## 〇之一、2026-10-16（上午）：工具包改回 mygo（Rust/GPUI → Go）—— **已被下一节取代**
 
 原来定的是 `gpui-kit`（Rust，GPUI）。改成 **mygo**（Go，`github.com/egoist/mygo`，MIT，
 文档称 v0.5.1）。**界面方式不变** —— 仍是原生控件、无 webview（上表"前端画布"一行不动）。

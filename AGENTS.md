@@ -45,6 +45,23 @@ CI 里要装系统依赖 ✓，因为本项目**手写 FFI** 直接链接这些�
 观察逐帧的 `h` / `v` / `zoom` 与目标值，而不是只看编译通过。改动配置项时，用**非默认值**验证
 它真的生效（历史上出现过"配置键写了但从未接上线"）。
 
+## 仓库结构（Cargo workspace）
+
+根 `Cargo.toml` 是 workspace 根，三个成员：
+
+| 成员 | 是什么 | 构建命令 |
+| --- | --- | --- |
+| `.`（根包 `niripaper`） | 守护进程 + `src/bin/` 探针 | 默认命令就覆盖它 |
+| `crates/proto`（`niripaper-proto`） | 与桌面应用共享的纯逻辑：config、schema、控制协议文法+客户端、动画/过渡**值类型**、niri KDL 读取。改这里的类型，守护进程与 app 同时受影响 | 默认命令就覆盖它 |
+| `app`（`niripaper-app`） | Tauri v2 桌面壳 + `app/ui/`（Vite + React + TS + Tailwind v4 + MUI v7，M3 令牌在 `app/ui/src/index.css`） | **必须显式** `cargo build -p niripaper-app`（要 webkit2gtk）；前端 `cd app/ui && npm run build` |
+
+`default-members = [".", "crates/proto"]`：裸 `cargo fmt/clippy/test/build` **不含 app** ——
+CI 的守护进程 job 装不到 webkit2gtk，这是故意的。改了 `app/` 或 `crates/proto` 之后：
+`cargo clippy --all-targets -p niripaper-app -- -D warnings`，加上 `npm run build`。
+`crates/proto` 的内容变了，`niripaper schema` 的输出必须与改动前逐字节一致（那是 app 与
+守护进程的契约；验证方法：重构前的 `./target/release/niripaper schema > /tmp/before.json`，
+改完再 dump 一次 diff）。
+
 ## 工作流（git）
 
 - `main` = 发布线，`dev` = 开发线。**绝不在 `main` 上开发**；`dev` 保留不删。

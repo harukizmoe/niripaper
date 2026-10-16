@@ -1,0 +1,92 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   NiriPaper UI — Material 3 Expressive tokens, ported verbatim from
+   tasks/prototype-ui.html (the design the maintainer signed off on).
+   The theme/ bridge maps these into MUI's palette; components consume them
+   either through the MUI theme or these variables directly.
+   ========================================================================== */
+
+:root {
+  /* M3 Expressive light (温润丁香紫基底 + 高对比深紫侧栏 + 鲜活柠绿点睛) */
+  --m3-bg: #ece8f6;
+  --m3-canvas: #f4f2fb;
+  --m3-surface: #ffffff;
+  --m3-surface-subtle: #eae6f7;
+  --m3-surface-container: #e3deff;
+  --m3-surface-high: #fbfaff;
+
+  --m3-rail-bg: #221c35;
+  --m3-rail-item-hover: rgba(255, 255, 255, 0.08);
+  --m3-rail-text: #cbc4de;
+  --m3-rail-text-active: #1c192b;
+
+  --m3-accent-lime: #d6f858;
+  --m3-accent-purple: #624b89;
+  --m3-accent-lavender: #dcd4fa;
+  --m3-accent-mint: #cbeada;
+  --m3-accent-coral: #f7a8a2;
+
+  --m3-fg: #1d192b;
+  --m3-fg-muted: #6e6783;
+  --m3-outline: #ccc6de;
+  --m3-outline-variant: rgba(0, 0, 0, 0.06);
+
+  --m3-radius-xs: 6px;
+  --m3-radius-sm: 10px;
+  --m3-radius-md: 16px;
+  --m3-radius-lg: 22px;
+  --m3-radius-xl: 32px;
+  --m3-radius-full: 9999px;
+
+  --m3-shadow-sm: 0 2px 8px rgba(34, 28, 53, 0.06);
+  --m3-shadow-md: 0 8px 24px -4px rgba(34, 28, 53, 0.1);
+  --m3-shadow-float: 0 20px 40px -10px rgba(34, 28, 53, 0.22);
+
+  --font-m3: 'Plus Jakarta Sans', 'Roboto', -apple-system, sans-serif;
+  --font-mono: 'Roboto Mono', monospace;
+}
+
+html.dark {
+  --m3-bg: #0f0c18;
+  --m3-canvas: #161222;
+  --m3-surface: #221c33;
+  --m3-surface-subtle: #2d2542;
+  --m3-surface-container: #392f54;
+  --m3-surface-high: #463b65;
+
+  --m3-rail-bg: #1a1529;
+  --m3-rail-item-hover: rgba(255, 255, 255, 0.08);
+  --m3-rail-text: #a89fc0;
+  --m3-rail-text-active: #0f0c18;
+
+  --m3-accent-lime: #c8ed45;
+  --m3-accent-purple: #d1b8fc;
+  --m3-accent-lavender: #4c3d69;
+  --m3-accent-mint: #9ad7b2;
+  --m3-accent-coral: #ffb4ab;
+
+  --m3-fg: #f4effa;
+  --m3-fg-muted: #aca3c5;
+  --m3-outline: #463c5e;
+  --m3-outline-variant: rgba(255, 255, 255, 0.08);
+
+  --m3-shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --m3-shadow-md: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --m3-shadow-float: 0 24px 50px -10px rgba(0, 0, 0, 0.75);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-m3);
+  background: var(--m3-bg);
+  color: var(--m3-fg);
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
