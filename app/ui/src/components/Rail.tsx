@@ -1,103 +1,86 @@
-import Box from '@mui/material/Box'
-import Drawer from '@mui/material/Drawer'
-import IconButton from '@mui/material/IconButton'
-import ListItemButton from '@mui/material/ListItemButton'
-import ListItemIcon from '@mui/material/ListItemIcon'
-import ListItemText from '@mui/material/ListItemText'
-import Typography from '@mui/material/Typography'
-import DarkModeIcon from '@mui/icons-material/DarkMode'
-import LightModeIcon from '@mui/icons-material/LightMode'
-import DashboardIcon from '@mui/icons-material/Dashboard'
-import TuneIcon from '@mui/icons-material/Tune'
-import MonitorIcon from '@mui/icons-material/Monitor'
-import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary'
+import React from 'react'
 
-export type Section = 'dashboard' | 'settings' | 'state' | 'library'
+export type NavTab = 'wallpapers' | 'transitions' | 'settings'
 
-const SECTIONS: { id: Section; label: string; icon: React.ReactNode }[] = [
-  { id: 'dashboard', label: '总览', icon: <DashboardIcon /> },
-  { id: 'settings', label: '设置', icon: <TuneIcon /> },
-  { id: 'state', label: '状态', icon: <MonitorIcon /> },
-  { id: 'library', label: '库', icon: <PhotoLibraryIcon /> },
-]
+interface RailProps {
+  currentTab: NavTab
+  onTabChange: (tab: NavTab) => void
+  followWallpaper: boolean
+  onToggleFollowWallpaper: () => void
+  seedColor: string
+}
 
-// The prototype's dark-purple navigation rail (tasks/prototype-ui.html:
-// --m3-rail-*), with the daemon-reachability dot the shell gets from useDaemon.
-export function Rail({
-  value,
-  onChange,
-  daemonReachable,
-  dark,
-  onToggleDark,
-}: {
-  value: Section
-  onChange: (section: Section) => void
-  daemonReachable: boolean
-  dark: boolean
-  onToggleDark: () => void
-}) {
+export const Rail: React.FC<RailProps> = ({
+  currentTab,
+  onTabChange,
+  followWallpaper,
+  onToggleFollowWallpaper,
+  seedColor,
+}) => {
   return (
-    <Drawer
-      variant="permanent"
-      sx={{
-        width: 220,
-        flexShrink: 0,
-        '& .MuiDrawer-paper': {
-          width: 220,
-          background: 'var(--m3-rail-bg)',
-          color: 'var(--m3-rail-text)',
-          borderRight: 'none',
-          display: 'flex',
-          flexDirection: 'column',
-          padding: 2,
-        },
-      }}
-    >
-      <Typography sx={{ padding: 2, color: '#fff', fontWeight: 700, fontSize: 18 }}>
-        NiriPaper
-      </Typography>
-      {SECTIONS.map((section) => {
-        const active = section.id === value
-        return (
-          <ListItemButton
-            key={section.id}
-            selected={active}
-            onClick={() => onChange(section.id)}
-            sx={{
-              borderRadius: 'var(--m3-radius-md)',
-              marginBottom: 0.5,
-              color: 'var(--m3-rail-text)',
-              '&.Mui-selected': {
-                background: 'var(--m3-accent-lime)',
-                color: 'var(--m3-rail-text-active)',
-                '&:hover': { background: 'var(--m3-accent-lime)' },
-              },
-              '&:hover': { background: 'var(--m3-rail-item-hover)' },
-            }}
-          >
-            <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}>{section.icon}</ListItemIcon>
-            <ListItemText primary={section.label} />
-          </ListItemButton>
-        )
-      })}
-      <Box sx={{ flex: 1 }} />
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, padding: 1 }}>
-        <Box
-          aria-label={daemonReachable ? '守护进程运行中' : '守护进程未连接'}
-          sx={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: daemonReachable ? 'var(--m3-accent-mint)' : 'var(--m3-accent-coral)',
-          }}
-        />
-        <Typography variant="caption" sx={{ color: 'var(--m3-rail-text)' }}>
-          {daemonReachable ? '守护进程运行中' : '未连接'}
-        </Typography>
-        <IconButton size="small" onClick={onToggleDark} sx={{ marginLeft: 'auto', color: 'var(--m3-rail-text)' }}>
-          {dark ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
-        </IconButton>
-      </Box>
-    </Drawer>
+    <aside className="m3-rail">
+      <div className="rail-brand">
+        <div className="logo-diamond">NIRI</div>
+        <span className="brand-title">niripaper</span>
+      </div>
+
+      <nav className="rail-menu">
+        <button
+          className={`rail-pill ${currentTab === 'wallpapers' ? 'active' : ''}`}
+          onClick={() => onTabChange('wallpapers')}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z" />
+          </svg>
+          <span>壁纸库</span>
+        </button>
+
+        <button
+          className={`rail-pill ${currentTab === 'transitions' ? 'active' : ''}`}
+          onClick={() => onTabChange('transitions')}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z" />
+          </svg>
+          <span>过渡动画</span>
+        </button>
+
+        <button
+          className={`rail-pill ${currentTab === 'settings' ? 'active' : ''}`}
+          onClick={() => onTabChange('settings')}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+          </svg>
+          <span>系统设置</span>
+        </button>
+      </nav>
+
+      <div className="rail-bottom-card">
+        <div className="daemon-indicator">
+          <div className="pulse-dot"></div>
+          <span>daemon 53023</span>
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--m3-rail-text)' }}>
+          NVIDIA · DP-1 渲染中
+        </div>
+
+        <button
+          className={`rail-theme-btn ${followWallpaper ? 'active' : ''}`}
+          onClick={onToggleFollowWallpaper}
+        >
+          {followWallpaper ? '🎨 跟随壁纸取色' : '🎨 固定默认配色'}
+        </button>
+
+        <div className="rail-theme-seed">
+          <span
+            className="rail-theme-dot"
+            style={{ background: seedColor }}
+          ></span>
+          <span>{seedColor.toUpperCase()}</span>
+          <span style={{ opacity: 0.7 }}>取色种子</span>
+        </div>
+      </div>
+    </aside>
   )
 }
