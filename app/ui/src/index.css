@@ -244,7 +244,7 @@
 
     /* 主题换色时的平滑过渡（Material You 的配色是"流动"的） */
     body, .app-layout, .m3-rail, .wallpaper-top-bar,
-    .wallhaven-control-box, .wallpaper-card, .m3-slider-tile,
+    .wallhaven-control-box, .m3-slider-tile,
     .source-segmented-switch, .m3-display-capsule, .drawer-footer {
       transition: background-color 0.45s cubic-bezier(0.2, 0, 0, 1),
                   color 0.35s ease,
@@ -545,29 +545,6 @@
       gap: 18px;
       align-items: start;
     }
-    @media (max-width: 1200px) {
-      .gallery-grid-layout {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }
-    }
-    @media (max-width: 800px) {
-      .gallery-grid-layout {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-    }
-
-    .gallery-column {
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }
-
-    /* 悬停聚焦：平滑轻微降透明度，不使用高开销的动态高斯模糊以杜绝 WebKitGTK 撕裂闪烁 */
-    .gallery-grid-layout:hover .wallpaper-card:not(:hover) {
-      opacity: 0.85;
-      transition: opacity 0.25s ease;
-    }
-
     .wallpaper-card {
       border-radius: var(--m3-radius-lg);
       overflow: hidden;
@@ -575,13 +552,15 @@
       position: relative;
       background: var(--m3-surface);
       box-shadow: var(--m3-shadow-sm);
-      transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.22s ease, opacity 0.2s ease;
+      transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.25s ease;
       will-change: transform, box-shadow;
+      transform: translateY(0);
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
     }
     .wallpaper-card:hover {
-      box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.55), 0 0 20px rgba(168, 199, 250, 0.2);
+      transform: translateY(-5px);
+      box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.45), 0 0 16px rgba(168, 199, 250, 0.2);
       z-index: 10;
     }
     .wallpaper-card:active {
@@ -619,8 +598,7 @@
       border-radius: inherit;
       pointer-events: none;
       opacity: 0;
-      background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.3) 0%, transparent 60%);
-      mix-blend-mode: overlay;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, transparent 60%);
       transition: opacity 0.25s ease;
       z-index: 5;
     }

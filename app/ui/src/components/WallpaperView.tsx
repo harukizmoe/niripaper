@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import type { WallpaperItem } from '../data/wallpapers'
 import { WallhavenControls } from './WallhavenControls'
 import { LocalControls, type LocalFilter } from './LocalControls'
@@ -43,6 +43,24 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
 
   // Local filter
   const [localFilter, setLocalFilter] = useState<LocalFilter>('all')
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [colCount, setColCount] = useState(4)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const updateCols = () => {
+      const w = el.clientWidth
+      if (w < 720) setColCount(2)
+      else if (w < 1120) setColCount(3)
+      else setColCount(4)
+    }
+    updateCols()
+    const observer = new ResizeObserver(updateCols)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   // Local filtering calculation
   const getFilteredLocal = () => {
@@ -130,12 +148,12 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
     currentSource === 'wallhaven' ? getFilteredWh() : getFilteredLocal()
 
   const columns = useMemo(() => {
-    const cols: WallpaperItem[][] = [[], [], [], []]
+    const cols: WallpaperItem[][] = Array.from({ length: colCount }, () => [])
     displayList.forEach((item, index) => {
-      cols[index % 4].push(item)
+      cols[index % colCount].push(item)
     })
     return cols
-  }, [displayList])
+  }, [displayList, colCount])
   return (
     <div className="view-page active" id="view-wallpapers">
       {/* 顶栏：壁纸来源切换 [本地壁纸 | 🌐 Wallhaven 公共源] + 显示器下拉 */}
@@ -203,8 +221,17 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
       )}
 
       {/* 纯视觉大瀑布流 */}
-      <div className="gallery-viewport">
-        <div className="gallery-grid-layout" id="wallpaper-grid">
+      <div className="gallery-viewport" ref={containerRef}>
+        <div
+          className="gallery-grid-layout"
+          id="wallpaper-grid"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${colCount}, minmax(0, 1fr))`,
+            gap: 18,
+            alignItems: 'start',
+          }}
+        >
           {columns.map((col, colIdx) => (
             <div key={colIdx} className="gallery-column">
               {col.map((wp) => (
