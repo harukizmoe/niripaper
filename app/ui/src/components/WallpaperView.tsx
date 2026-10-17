@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import type { WallpaperItem } from '../data/wallpapers'
 import { WallhavenControls } from './WallhavenControls'
 import { LocalControls, type LocalFilter } from './LocalControls'
@@ -129,6 +129,13 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
   const displayList =
     currentSource === 'wallhaven' ? getFilteredWh() : getFilteredLocal()
 
+  const columns = useMemo(() => {
+    const cols: WallpaperItem[][] = [[], [], [], []]
+    displayList.forEach((item, index) => {
+      cols[index % 4].push(item)
+    })
+    return cols
+  }, [displayList])
   return (
     <div className="view-page active" id="view-wallpapers">
       {/* 顶栏：壁纸来源切换 [本地壁纸 | 🌐 Wallhaven 公共源] + 显示器下拉 */}
@@ -197,13 +204,17 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
 
       {/* 纯视觉大瀑布流 */}
       <div className="gallery-viewport">
-        <div className="gallery-masonry" id="wallpaper-grid">
-          {displayList.map((wp) => (
-            <WallpaperCard
-              key={wp.id}
-              wallpaper={wp}
-              onClick={() => onSelectWallpaper(wp, currentSource)}
-            />
+        <div className="gallery-grid-layout" id="wallpaper-grid">
+          {columns.map((col, colIdx) => (
+            <div key={colIdx} className="gallery-column">
+              {col.map((wp) => (
+                <WallpaperCard
+                  key={wp.id}
+                  wallpaper={wp}
+                  onClick={() => onSelectWallpaper(wp, currentSource)}
+                />
+              ))}
+            </div>
           ))}
         </div>
 

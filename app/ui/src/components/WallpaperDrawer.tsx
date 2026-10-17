@@ -32,16 +32,19 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
   const [preset, setPreset] = useState<PresetKey>('none')
   const [filters, setFilters] = useState<FilterValues>(PRESETS.none)
 
+  const [activeWp, setActiveWp] = useState<WallpaperItem | null>(wallpaper)
+
   useEffect(() => {
     if (wallpaper) {
+      setActiveWp(wallpaper)
       setPreset('none')
       setFilters(PRESETS.none)
       setScale(1.2)
     }
-  }, [wallpaper])
+  }, [wallpaper?.id])
 
-  if (!wallpaper) return null
-
+  if (!activeWp) return null
+  const displayWp = activeWp
   const handlePresetChange = (p: PresetKey) => {
     setPreset(p)
     setFilters(PRESETS[p])
@@ -66,7 +69,6 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
 
   const imgFilterStyle = {
     filter: `brightness(${filters.b}%) contrast(${filters.c}%) saturate(${filters.s}%) hue-rotate(${filters.h}deg)`,
-    transition: 'filter 0.1s ease',
   }
 
   return (
@@ -92,7 +94,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
               }}
             >
               {source === 'wallhaven'
-                ? `Wallhaven #${wallpaper.id}`
+                ? `Wallhaven #${displayWp.id}`
                 : '本地壁纸'}
             </span>
           </div>
@@ -123,45 +125,46 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
           <div className="drawer-media-box">
             <img
               id="drawer-img"
-              src={wallpaper.thumb}
-              alt={wallpaper.name}
+              src={displayWp.thumb}
+              alt={displayWp.name}
               style={imgFilterStyle}
             />
-            <div
-              id="drawer-vignette-overlay"
-              style={{
-                position: 'absolute',
-                inset: 0,
-                pointerEvents: 'none',
-                opacity: filters.v / 100,
-                background:
-                  'radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.92) 100%)',
-                transition: 'opacity 0.15s ease',
-              }}
-            />
-            <div
-              id="drawer-grain-overlay"
-              style={{
-                position: 'absolute',
-                inset: 0,
-                pointerEvents: 'none',
-                opacity: filters.g / 100,
-                mixBlendMode: 'overlay',
-                backgroundImage:
-                  'radial-gradient(rgba(255,255,255,0.4) 1px, transparent 0)',
-                backgroundSize: '3px 3px',
-                transition: 'opacity 0.15s ease',
-              }}
-            />
+            {filters.v > 0 && (
+              <div
+                id="drawer-vignette-overlay"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  opacity: filters.v / 100,
+                  background:
+                    'radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.92) 100%)',
+                }}
+              />
+            )}
+            {filters.g > 0 && (
+              <div
+                id="drawer-grain-overlay"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  opacity: filters.g / 100,
+                  backgroundImage:
+                    'radial-gradient(rgba(255,255,255,0.4) 1px, transparent 0)',
+                  backgroundSize: '3px 3px',
+                }}
+              />
+            )}
             <span className="drawer-media-tag">
-              {wallpaper.res || '2560×1440'} · {wallpaper.aspect || '16:9'}
+              {displayWp.res || '2560×1440'} · {displayWp.aspect || '16:9'}
             </span>
           </div>
 
           {/* 标题与信息 */}
           <div>
             <h3 style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.3 }}>
-              {wallpaper.name}
+              {displayWp.name}
             </h3>
             <div
               style={{
@@ -172,9 +175,9 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
               }}
             >
               {source === 'wallhaven'
-                ? `${wallpaper.res} · ${wallpaper.ratio} · ❤️ ${wallpaper.favs} 收藏 · ${wallpaper.category} · ${wallpaper.purity}`
-                : `${wallpaper.res} · ${
-                    wallpaper.kind === 'video'
+                ? `${displayWp.res} · ${displayWp.ratio} · ❤️ ${displayWp.favs} 收藏 · ${displayWp.category} · ${displayWp.purity}`
+                : `${displayWp.res} · ${
+                    displayWp.kind === 'video'
                       ? '动态视频壁纸'
                       : '静态图像壁纸'
                   }`}
@@ -182,7 +185,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
           </div>
 
           {/* Wallhaven 5 色主色调 */}
-          {source === 'wallhaven' && wallpaper.colors && (
+          {source === 'wallhaven' && displayWp.colors && (
             <div>
               <div
                 style={{
@@ -196,7 +199,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
                 Wallhaven 5 色主色调:
               </div>
               <div className="palette-swatches">
-                {wallpaper.colors.map((c, i) => (
+                {displayWp.colors.map((c, i) => (
                   <div
                     key={i}
                     className="swatch"
@@ -213,7 +216,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
           )}
 
           {/* 标签云 */}
-          {source === 'wallhaven' && wallpaper.tags && (
+          {source === 'wallhaven' && displayWp.tags && (
             <div>
               <div
                 style={{
@@ -227,7 +230,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
                 题材标签:
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {wallpaper.tags.map((t, i) => (
+                {displayWp.tags.map((t, i) => (
                   <button
                     key={i}
                     className="wh-quick-tag"
@@ -268,11 +271,10 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
                   wordBreak: 'break-all',
                 }}
               >
-                {wallpaper.path || `~/Pictures/Wallpapers/${wallpaper.name}`}
+                {displayWp.path || `~/Pictures/Wallpapers/${displayWp.name}`}
               </div>
             </div>
           )}
-
           <hr
             style={{
               border: 'none',
@@ -674,7 +676,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
                   fontWeight: 700,
                   border: '1.5px solid var(--m3-outline-variant)',
                 }}
-                onClick={() => onSaveToLocal(wallpaper)}
+                onClick={() => onSaveToLocal(displayWp)}
               >
                 💾 保存到本地库
               </button>
@@ -689,7 +691,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
                 fontWeight: 700,
                 border: '1.5px solid var(--m3-outline-variant)',
               }}
-              onClick={() => onAddToPlaylist(wallpaper)}
+              onClick={() => onAddToPlaylist(displayWp)}
             >
               ➕ 加入轮播列表
             </button>
