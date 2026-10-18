@@ -228,12 +228,16 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
           style={{
             display: 'grid',
             gridTemplateColumns: `repeat(${colCount}, minmax(0, 1fr))`,
-            gap: 18,
+            gap: 20,
             alignItems: 'start',
           }}
         >
           {columns.map((col, colIdx) => (
-            <div key={colIdx} className="gallery-column">
+            <div
+              key={colIdx}
+              className="gallery-column"
+              style={{ display: 'flex', flexDirection: 'column', gap: 20 }}
+            >
               {col.map((wp) => (
                 <WallpaperCard
                   key={wp.id}

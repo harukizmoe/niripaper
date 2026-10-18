@@ -541,10 +541,23 @@
 
     .gallery-grid-layout {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 18px;
+      gap: 20px;
       align-items: start;
     }
+
+    .gallery-column {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* 悬停景深微模糊聚焦 */
+    .gallery-grid-layout:hover .wallpaper-card:not(:hover) {
+      filter: blur(2px) brightness(0.88);
+      opacity: 0.82;
+      transition: filter 0.32s cubic-bezier(0.2, 0, 0, 1), opacity 0.32s ease;
+    }
+
     .wallpaper-card {
       border-radius: var(--m3-radius-lg);
       overflow: hidden;
@@ -552,19 +565,19 @@
       position: relative;
       background: var(--m3-surface);
       box-shadow: var(--m3-shadow-sm);
-      transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.25s ease;
+      transform: perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg);
+      transition: transform 0.12s ease-out, box-shadow 0.25s ease, filter 0.3s ease, opacity 0.3s ease;
       will-change: transform, box-shadow;
-      transform: translateY(0);
+      transform-style: preserve-3d;
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
     }
     .wallpaper-card:hover {
-      transform: translateY(-5px);
-      box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.45), 0 0 16px rgba(168, 199, 250, 0.2);
-      z-index: 10;
+      box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.75), 0 0 24px rgba(168, 199, 250, 0.25);
+      z-index: 40;
     }
     .wallpaper-card:active {
-      transform: translateY(-2px);
+      transform: perspective(1000px) scale(1.02) translateY(-4px) !important;
     }
     .wallpaper-card.active-target {
       box-shadow: 0 0 0 4px var(--m3-accent-lime), var(--m3-shadow-md);
@@ -598,7 +611,7 @@
       border-radius: inherit;
       pointer-events: none;
       opacity: 0;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, transparent 60%);
+      background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.35) 0%, transparent 60%);
       transition: opacity 0.25s ease;
       z-index: 5;
     }
