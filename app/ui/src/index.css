@@ -551,13 +551,6 @@
       gap: 20px;
     }
 
-    /* 悬停景深微模糊聚焦 */
-    .gallery-grid-layout:hover .wallpaper-card:not(:hover) {
-      filter: blur(2px) brightness(0.88);
-      opacity: 0.82;
-      transition: filter 0.32s cubic-bezier(0.2, 0, 0, 1), opacity 0.32s ease;
-    }
-
     .wallpaper-card {
       border-radius: var(--m3-radius-lg);
       overflow: hidden;
@@ -566,7 +559,7 @@
       background: var(--m3-surface);
       box-shadow: var(--m3-shadow-sm);
       transform: perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg);
-      transition: transform 0.12s ease-out, box-shadow 0.25s ease, filter 0.3s ease, opacity 0.3s ease;
+      transition: transform 0.15s ease-out, box-shadow 0.25s ease;
       will-change: transform, box-shadow;
       transform-style: preserve-3d;
       backface-visibility: hidden;
