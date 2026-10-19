@@ -11,6 +11,8 @@ export interface WallpaperItem {
   aspect: string;
   colors?: string[];
   thumb: string;
+  full_url?: string;
+  file_type?: string;
   tags?: string[];
   kind?: "static" | "video";
   fps?: string;

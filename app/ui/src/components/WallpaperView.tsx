@@ -4,6 +4,7 @@ import { WallhavenControls } from './WallhavenControls'
 import { LocalControls, type LocalFilter } from './LocalControls'
 import { WallpaperCard } from './WallpaperCard'
 import { hexToRgb } from '../theme/materialYou'
+
 interface WallpaperViewProps {
   wallhavenList: WallpaperItem[]
   localList: WallpaperItem[]
@@ -13,6 +14,19 @@ interface WallpaperViewProps {
   onCycleDisplay: () => void
   onSelectWallpaper: (wp: WallpaperItem, source: 'wallhaven' | 'local') => void
   onNotify: (msg: string) => void
+  onSearchWallhaven: (params: {
+    q?: string
+    categories?: string
+    purity?: string
+    sorting?: string
+    order?: string
+    page?: number
+    ratios?: string
+    atleast?: string
+  }) => void
+  onRefreshLocal: () => void
+  whLoading?: boolean
+  whTotal?: number
 }
 
 export const WallpaperView: React.FC<WallpaperViewProps> = ({
@@ -24,8 +38,13 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
   onCycleDisplay,
   onSelectWallpaper,
   onNotify,
+  onSearchWallhaven,
+  onRefreshLocal,
+  whLoading = false,
+  whTotal = 26116,
 }) => {
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null)
+
   // Wallhaven filters & search
   const [whQuery, setWhQuery] = useState('')
   const [whPage, setWhPage] = useState(1)
@@ -82,65 +101,136 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
     return localList
   }
 
-  // Wallhaven search calculation
-  const getFilteredWh = () => {
-    let list = wallhavenList
-    const q = whQuery.trim().toLowerCase()
-    if (q) {
-      list = list.filter(
-        (w) =>
-          w.name.toLowerCase().includes(q) ||
-          (w.tags && w.tags.some((t) => t.toLowerCase().includes(q))) ||
-          (w.category && w.category.toLowerCase().includes(q))
-      )
-    }
-    return list
+  const buildCategories = (
+    gen = catGeneral,
+    ani = catAnime,
+    peo = catPeople
+  ) => {
+    const cat = `${gen ? '1' : '0'}${ani ? '1' : '0'}${peo ? '1' : '0'}`
+    return cat === '000' ? '100' : cat
+  }
+
+  const buildPurity = (sfw = puritySfw, sk = puritySketchy) => {
+    const p = `${sfw ? '1' : '0'}${sk ? '1' : '0'}0`
+    return p === '000' ? '100' : p
+  }
+
+  // 触发实时 Wallhaven API 查询
+  const executeSearch = (
+    queryText?: string,
+    pageVal?: number,
+    ratiosVal?: string,
+    atleastVal?: string,
+    sortVal?: string,
+    genVal?: boolean,
+    aniVal?: boolean,
+    peoVal?: boolean,
+    sfwVal?: boolean,
+    skVal?: boolean
+  ) => {
+    const q = queryText !== undefined ? queryText : whQuery
+    const p = pageVal !== undefined ? pageVal : whPage
+    const s = sortVal !== undefined ? sortVal : sortOption
+    const categories = buildCategories(genVal, aniVal, peoVal)
+    const purity = buildPurity(sfwVal, skVal)
+
+    onSearchWallhaven({
+      q: q.trim(),
+      categories,
+      purity,
+      sorting: s,
+      page: p,
+      ratios: ratiosVal,
+      atleast: atleastVal,
+    })
   }
 
   const handleWhSearchSubmit = () => {
-    const q = whQuery.trim().toLowerCase()
-    if (!q) {
-      onNotify('重置为 Wallhaven 热门壁纸')
-      return
-    }
-    const filtered = getFilteredWh()
-    onNotify(`搜索「${q}」：找到 ${filtered.length} 张壁纸`)
+    setWhPage(1)
+    executeSearch(whQuery, 1)
+    onNotify(`🌐 正在从 Wallhaven 检索：「${whQuery || '热门 Toplist'}」`)
   }
 
   const handleQuickTag = (tag: string) => {
     setWhQuery(tag)
-    onNotify(`搜索标签「${tag}」`)
+    setWhPage(1)
+    executeSearch(tag, 1)
+    onNotify(`🌐 按灵感标签「${tag}」检索 Wallhaven`)
   }
 
   const handleMatchScreen = () => {
     setWhQuery('')
-    onNotify('已开启屏幕专属过滤：16:9 比例 · ≥2K 分辨率 (完美适配 DP-1)')
+    setWhPage(1)
+    executeSearch('', 1, '16x9', '2560x1440')
+    onNotify('🌐 已开启屏幕匹配检索：16:9 比例 · ≥2K 分辨率')
   }
 
   const handleResetWhFilters = () => {
     setWhQuery('')
+    setWhPage(1)
     setCatGeneral(true)
     setCatAnime(true)
     setCatPeople(false)
     setPuritySfw(true)
     setPuritySketchy(false)
-    onNotify('已重置所有 Wallhaven 过滤条件')
+    setSortOption('toplist')
+    executeSearch('', 1, undefined, undefined, 'toplist', true, true, false, true, false)
+    onNotify('已重置所有 Wallhaven 过滤条件并刷新')
+  }
+
+  const handleSortChange = (newSort: string) => {
+    setSortOption(newSort)
+    setWhPage(1)
+    executeSearch(undefined, 1, undefined, undefined, newSort)
+    onNotify(`切换排序方式为：${newSort}`)
+  }
+
+  const handleToggleCatGeneral = () => {
+    const next = !catGeneral
+    setCatGeneral(next)
+    executeSearch(undefined, 1, undefined, undefined, undefined, next)
+  }
+
+  const handleToggleCatAnime = () => {
+    const next = !catAnime
+    setCatAnime(next)
+    executeSearch(undefined, 1, undefined, undefined, undefined, undefined, next)
+  }
+
+  const handleToggleCatPeople = () => {
+    const next = !catPeople
+    setCatPeople(next)
+    executeSearch(undefined, 1, undefined, undefined, undefined, undefined, undefined, next)
+  }
+
+  const handleTogglePuritySfw = () => {
+    const next = !puritySfw
+    setPuritySfw(next)
+    executeSearch(undefined, 1, undefined, undefined, undefined, undefined, undefined, undefined, next)
+  }
+
+  const handleTogglePuritySketchy = () => {
+    const next = !puritySketchy
+    setPuritySketchy(next)
+    executeSearch(undefined, 1, undefined, undefined, undefined, undefined, undefined, undefined, undefined, next)
   }
 
   const handleLocalFilterChange = (filter: LocalFilter) => {
     setLocalFilter(filter)
-    const filtered = getFilteredLocal()
-    onNotify(`筛选本地壁纸：找到 ${filtered.length} 张`)
+    onNotify(`筛选本地壁纸：${filter}`)
   }
 
   const handlePageChange = (delta: number) => {
-    const next = Math.max(1, whPage + delta)
+    const totalPages = Math.max(1, Math.ceil(whTotal / 24))
+    const next = Math.max(1, Math.min(totalPages, whPage + delta))
+    if (next === whPage) return
     setWhPage(next)
+    executeSearch(undefined, next)
     onNotify(`加载 Wallhaven 第 ${next} 页`)
   }
 
   const displayList =
-    currentSource === 'wallhaven' ? getFilteredWh() : getFilteredLocal()
+    currentSource === 'wallhaven' ? wallhavenList : getFilteredLocal()
 
   const columns = useMemo(() => {
     const cols: WallpaperItem[][] = Array.from({ length: colCount }, () => [])
@@ -149,6 +239,9 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
     })
     return cols
   }, [displayList, colCount])
+
+  const totalPages = Math.max(1, Math.ceil(whTotal / 24))
+
   return (
     <div className="view-page active" id="view-wallpapers">
       {/* 顶栏：壁纸来源切换 [本地壁纸 | 🌐 Wallhaven 公共源] + 显示器下拉 */}
@@ -189,17 +282,18 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
           onMatchScreen={handleMatchScreen}
           onResetFilters={handleResetWhFilters}
           categoryGeneral={catGeneral}
-          onToggleCategoryGeneral={() => setCatGeneral((v) => !v)}
+          onToggleCategoryGeneral={handleToggleCatGeneral}
           categoryAnime={catAnime}
-          onToggleCategoryAnime={() => setCatAnime((v) => !v)}
+          onToggleCategoryAnime={handleToggleCatAnime}
           categoryPeople={catPeople}
-          onToggleCategoryPeople={() => setCatPeople((v) => !v)}
+          onToggleCategoryPeople={handleToggleCatPeople}
           puritySfw={puritySfw}
-          onTogglePuritySfw={() => setPuritySfw((v) => !v)}
+          onTogglePuritySfw={handleTogglePuritySfw}
           puritySketchy={puritySketchy}
-          onTogglePuritySketchy={() => setPuritySketchy((v) => !v)}
+          onTogglePuritySketchy={handleTogglePuritySketchy}
           sortOption={sortOption}
-          onSortChange={setSortOption}
+          onSortChange={handleSortChange}
+          loading={whLoading}
         />
       )}
 
@@ -207,13 +301,28 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
       {currentSource === 'local' && (
         <LocalControls
           currentFilter={localFilter}
-          count={localList.length}
+          count={getFilteredLocal().length}
           onFilterChange={handleLocalFilterChange}
+          onRefresh={onRefreshLocal}
         />
       )}
 
       {/* 纯视觉大瀑布流 */}
       <div className="gallery-viewport" ref={containerRef}>
+        {whLoading && currentSource === 'wallhaven' && (
+          <div
+            style={{
+              padding: '16px 0',
+              textAlign: 'center',
+              color: 'var(--m3-accent-purple)',
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            ⏳ 正在从 Wallhaven 服务器获取高清壁纸…
+          </div>
+        )}
+
         <div
           className="gallery-grid-layout"
           id="wallpaper-grid"
@@ -252,6 +361,7 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
               <button
                 className="wh-page-nav-btn"
                 onClick={() => handlePageChange(-1)}
+                disabled={whPage <= 1}
               >
                 ◀
               </button>
@@ -263,11 +373,12 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
                 >
                   {whPage}
                 </strong>{' '}
-                页 / 共 26,116 页
+                页 / 共 {totalPages.toLocaleString()} 页
               </span>
               <button
                 className="wh-page-nav-btn"
                 onClick={() => handlePageChange(1)}
+                disabled={whPage >= totalPages}
               >
                 ▶
               </button>
@@ -275,7 +386,12 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
             <button
               className="wh-toggle-pill"
               style={{ height: 40, padding: '0 18px' }}
-              onClick={() => handlePageChange(1)}
+              onClick={() => {
+                const randomPage = Math.floor(Math.random() * Math.min(100, totalPages)) + 1
+                setWhPage(randomPage)
+                executeSearch(undefined, randomPage)
+                onNotify(`🎲 随机跳转至 Wallhaven 第 ${randomPage} 页`)
+              }}
             >
               🎲 换一批随机
             </button>

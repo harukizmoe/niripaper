@@ -1,7 +1,23 @@
 import React, { useState, useEffect } from 'react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import type { WallpaperItem } from '../data/wallpapers'
 import { PRESETS, type PresetKey, type FilterValues } from '../data/presets'
 
+function toMediaSrc(pathOrUrl: string): string {
+  if (!pathOrUrl) return ''
+  if (
+    pathOrUrl.startsWith('http://') ||
+    pathOrUrl.startsWith('https://') ||
+    pathOrUrl.startsWith('data:')
+  ) {
+    return pathOrUrl
+  }
+  try {
+    return convertFileSrc(pathOrUrl)
+  } catch {
+    return pathOrUrl
+  }
+}
 interface WallpaperDrawerProps {
   isOpen: boolean
   wallpaper: WallpaperItem | null
@@ -123,12 +139,31 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
         <div className="drawer-body">
           {/* 大图预览 */}
           <div className="drawer-media-box">
-            <img
-              id="drawer-img"
-              src={displayWp.thumb}
-              alt={displayWp.name}
-              style={imgFilterStyle}
-            />
+            {displayWp.kind === 'video' ? (
+              <video
+                src={toMediaSrc(displayWp.path || displayWp.thumb)}
+                controls
+                autoPlay
+                muted
+                loop
+                playsInline
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: 'block',
+                }}
+              />
+            ) : (
+              <img
+                id="drawer-img"
+                src={toMediaSrc(
+                  displayWp.full_url || displayWp.path || displayWp.thumb
+                )}
+                alt={displayWp.name}
+                style={imgFilterStyle}
+              />
+            )}
             {filters.v > 0 && (
               <div
                 id="drawer-vignette-overlay"

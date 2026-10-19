@@ -6,17 +6,20 @@ interface LocalControlsProps {
   currentFilter: LocalFilter
   count: number
   onFilterChange: (filter: LocalFilter) => void
+  onRefresh?: () => void
 }
 
 export const LocalControls: React.FC<LocalControlsProps> = ({
   currentFilter,
   count,
   onFilterChange,
+  onRefresh,
 }) => {
   return (
     <div
       style={{
         display: 'flex',
+        alignItems: 'center',
         padding: '0 28px 12px 28px',
         gap: 8,
         userSelect: 'none',
@@ -52,6 +55,21 @@ export const LocalControls: React.FC<LocalControlsProps> = ({
       >
         亮色系
       </button>
+
+      {onRefresh && (
+        <button
+          className="wh-toggle-pill"
+          style={{
+            marginLeft: 'auto',
+            background: 'var(--m3-surface)',
+            border: '1px solid var(--m3-outline-variant)',
+          }}
+          onClick={onRefresh}
+          title="重新扫描 ~/Pictures/Wallpapers"
+        >
+          🔄 重新扫描本地库
+        </button>
+      )}
     </div>
   )
 }

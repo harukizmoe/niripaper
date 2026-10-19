@@ -19,6 +19,7 @@ interface WallhavenControlsProps {
   onTogglePuritySketchy: () => void
   sortOption: string
   onSortChange: (sort: string) => void
+  loading?: boolean
 }
 
 export const WallhavenControls: React.FC<WallhavenControlsProps> = ({
@@ -40,6 +41,7 @@ export const WallhavenControls: React.FC<WallhavenControlsProps> = ({
   onTogglePuritySketchy,
   sortOption,
   onSortChange,
+  loading = false,
 }) => {
   const quickTags = [
     'Cyberpunk',
@@ -79,8 +81,13 @@ export const WallhavenControls: React.FC<WallhavenControlsProps> = ({
             </span>
           )}
         </div>
-        <button className="wh-search-btn" onClick={onSearchSubmit}>
-          <span>搜 索</span>
+        <button
+          className="wh-search-btn"
+          onClick={onSearchSubmit}
+          disabled={loading}
+          style={{ opacity: loading ? 0.7 : 1 }}
+        >
+          <span>{loading ? '⏳ 检索中…' : '搜 索'}</span>
         </button>
       </div>
 
@@ -169,9 +176,11 @@ export const WallhavenControls: React.FC<WallhavenControlsProps> = ({
             }}
           >
             <option value="toplist">🔥 热门 Toplist</option>
+            <option value="hot">⚡ 最火爆 Hot</option>
             <option value="random">🎲 随机探索</option>
-            <option value="favs">⭐ 收藏最多</option>
-            <option value="latest">⏱️ 最新发布</option>
+            <option value="favorites">⭐ 收藏最多</option>
+            <option value="views">👀 浏览最多</option>
+            <option value="date_added">⏱️ 最新发布</option>
           </select>
         </div>
 

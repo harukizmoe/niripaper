@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import type { WallpaperItem } from '../data/wallpapers'
 
 interface WallpaperCardProps {
@@ -13,6 +14,22 @@ interface WallpaperCardProps {
 const FALLBACK_THUMB =
   'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80'
 
+function toMediaSrc(pathOrUrl: string): string {
+  if (!pathOrUrl) return ''
+  if (
+    pathOrUrl.startsWith('http://') ||
+    pathOrUrl.startsWith('https://') ||
+    pathOrUrl.startsWith('data:')
+  ) {
+    return pathOrUrl
+  }
+  try {
+    return convertFileSrc(pathOrUrl)
+  } catch {
+    return pathOrUrl
+  }
+}
+
 export const WallpaperCard: React.FC<WallpaperCardProps> = ({
   wallpaper,
   isAnyHovered,
@@ -25,13 +42,14 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
   const glareRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef<number | null>(null)
 
-  const [imgSrc, setImgSrc] = useState(wallpaper.thumb)
+  const mediaSource = toMediaSrc(wallpaper.path || wallpaper.thumb)
+  const [imgSrc, setImgSrc] = useState(mediaSource)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    setImgSrc(wallpaper.thumb)
+    setImgSrc(toMediaSrc(wallpaper.path || wallpaper.thumb))
     setLoaded(false)
-  }, [wallpaper.thumb])
+  }, [wallpaper.path, wallpaper.thumb])
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!cardRef.current) return
@@ -91,9 +109,6 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
     }
   }
 
-  // 景深模糊逻辑：
-  // 1. 无任何卡片被悬停时：filter 为 none，opacity 为 1，所有卡片绝对高清锐利！
-  // 2. 有卡片被悬停时：被悬停卡片保持高清 (filter: none)，其余所有卡片施加景深模糊！
   const isBlurred = isAnyHovered && !isHovered
   const cardFilter = isBlurred ? 'blur(3.5px) brightness(0.82)' : 'none'
   const cardOpacity = isBlurred ? 0.78 : 1
@@ -117,27 +132,72 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
       <div
         className="card-media"
         style={{
-          aspectRatio: wallpaper.aspect,
+          aspectRatio: wallpaper.aspect || '16 / 9',
           background: 'var(--m3-surface-subtle)',
         }}
       >
-        <img
-          src={imgSrc}
-          alt={wallpaper.name}
-          loading="lazy"
-          decoding="async"
-          onLoad={() => setLoaded(true)}
-          onError={() => {
-            setImgSrc(FALLBACK_THUMB)
-            setLoaded(true)
-          }}
-          style={{
-            opacity: loaded ? 1 : 0.4,
-            transition:
-              'opacity 0.25s ease, transform 0.4s cubic-bezier(0.2, 0, 0, 1)',
-          }}
-        />
+        {wallpaper.kind === 'video' ? (
+          <video
+            src={mediaSource}
+            muted
+            loop
+            autoPlay
+            playsInline
+            onLoadedData={() => setLoaded(true)}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              borderRadius: 'inherit',
+              opacity: loaded ? 1 : 0.6,
+              transition: 'opacity 0.25s ease',
+            }}
+          />
+        ) : (
+          <img
+            src={imgSrc}
+            alt={wallpaper.name}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            onError={() => {
+              setImgSrc(FALLBACK_THUMB)
+              setLoaded(true)
+            }}
+            style={{
+              opacity: loaded ? 1 : 0.4,
+              transition:
+                'opacity 0.25s ease, transform 0.4s cubic-bezier(0.2, 0, 0, 1)',
+            }}
+          />
+        )}
         <div ref={glareRef} className="card-glare"></div>
+
+        {/* 动态视频标记 */}
+        {wallpaper.kind === 'video' && (
+          <span
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              left: 8,
+              background: 'rgba(0, 0, 0, 0.75)',
+              color: '#fff',
+              fontSize: 10,
+              fontWeight: 800,
+              padding: '2px 8px',
+              borderRadius: 'var(--m3-radius-full)',
+              zIndex: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            ▶ 动态视频 {wallpaper.fps || ''}
+          </span>
+        )}
+
+        {/* 生效中指示器 */}
         {wallpaper.activeOn && (
           <span className="badge-active">✓ {wallpaper.activeOn}</span>
         )}

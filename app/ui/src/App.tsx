@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { invoke } from './hooks/useDaemon'
 import { Rail, type NavTab } from './components/Rail'
 import { WallpaperView } from './components/WallpaperView'
 import { TransitionsView } from './components/TransitionsView'
@@ -27,19 +28,21 @@ export default function App() {
   const [followWallpaper, setFollowWallpaper] = useState(true)
 
   const [localList, setLocalList] = useState<WallpaperItem[]>(initialLocalWallpapers)
-  const [wallhavenList] = useState<WallpaperItem[]>(whWallpapers)
+  const [wallhavenList, setWallhavenList] = useState<WallpaperItem[]>(whWallpapers)
+  const [whLoading, setWhLoading] = useState(false)
+  const [whTotal, setWhTotal] = useState(1800)
 
-  // Drawer state
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [selectedWp, setSelectedWp] = useState<WallpaperItem | null>(null)
-  const [selectedSource, setSelectedSource] = useState<'wallhaven' | 'local'>('wallhaven')
-  const [drawerTargetDisplay, setDrawerTargetDisplay] = useState('DP-1')
-
-  // Theme seed
-  const [themeSeed, setThemeSeed] = useState<string>(() => {
-    const active = initialLocalWallpapers.find((w) => w.activeOn) || whWallpapers[0]
-    return pickSeedColor(active.colors)
-  })
+  // 1. 扫描并加载本地真实壁纸 (~/Pictures/Wallpapers)
+  const refreshLocalWallpapers = useCallback(async () => {
+    try {
+      const items = await invoke<WallpaperItem[]>('load_local_wallpapers')
+      if (items && items.length > 0) {
+        setLocalList(items)
+      }
+    } catch (e) {
+      console.warn('读取本地壁纸库失败:', e)
+    }
+  }, [])
 
   // Toast / Snackbar
   const [snackbarMessage, setSnackbarMessage] = useState('')
@@ -54,6 +57,63 @@ export default function App() {
       setSnackbarVisible(false)
     }, 2200)
   }, [])
+  // 2. 真实调用 Wallhaven API v1 检索壁纸
+  const handleSearchWallhaven = useCallback(
+    async (params: {
+      q?: string
+      categories?: string
+      purity?: string
+      sorting?: string
+      order?: string
+      page?: number
+      ratios?: string
+      atleast?: string
+    }) => {
+      setWhLoading(true)
+      try {
+        const res = await invoke<{
+          wallpapers: WallpaperItem[]
+          total: number
+          last_page: number
+          current_page: number
+        }>('search_wallhaven', { params })
+        if (res && res.wallpapers && res.wallpapers.length > 0) {
+          setWallhavenList(res.wallpapers)
+          setWhTotal(res.total)
+        }
+      } catch (e) {
+        console.warn('检索 Wallhaven 失败:', e)
+        showSnackbar(`Wallhaven 检索失败: ${e}`)
+      } finally {
+        setWhLoading(false)
+      }
+    },
+    [showSnackbar]
+  )
+
+  // 启动时同时拉取本地库与在线热门源
+  useEffect(() => {
+    void refreshLocalWallpapers()
+    void handleSearchWallhaven({
+      sorting: 'toplist',
+      page: 1,
+      categories: '110',
+      purity: '100',
+    })
+  }, [refreshLocalWallpapers, handleSearchWallhaven])
+
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [selectedWp, setSelectedWp] = useState<WallpaperItem | null>(null)
+  const [selectedSource, setSelectedSource] = useState<'wallhaven' | 'local'>('wallhaven')
+  const [drawerTargetDisplay, setDrawerTargetDisplay] = useState('DP-1')
+
+  // Theme seed
+  const [themeSeed, setThemeSeed] = useState<string>(() => {
+    const active = initialLocalWallpapers.find((w) => w.activeOn) || whWallpapers[0]
+    return pickSeedColor(active.colors)
+  })
+
 
   // Apply theme tokens whenever themeSeed or isDark changes
   useEffect(() => {
@@ -108,8 +168,47 @@ export default function App() {
     setDrawerOpen(true)
   }
 
-  const handleApplyWallpaper = (params: { fit: string; scale: number; filterPreset: string }) => {
+  const handleApplyWallpaper = async (params: {
+    fit: string
+    scale: number
+    filterPreset: string
+  }) => {
     if (!selectedWp) return
+
+    let finalPath = selectedWp.path
+
+    if (selectedSource === 'wallhaven') {
+      showSnackbar(`⏳ 正在下载并应用 Wallhaven 壁纸「${selectedWp.name}」...`)
+      try {
+        const ext =
+          selectedWp.file_type === 'image/png' ? '.png' : '.jpg'
+        const filename =
+          selectedWp.name.endsWith('.png') ||
+          selectedWp.name.endsWith('.jpg') ||
+          selectedWp.name.endsWith('.webp')
+            ? selectedWp.name
+            : `${selectedWp.name}${ext}`
+        finalPath = await invoke<string>('download_wallhaven_wallpaper', {
+          fullUrl: selectedWp.full_url || selectedWp.thumb,
+          filename,
+        })
+        await refreshLocalWallpapers()
+      } catch (e) {
+        showSnackbar(`下载失败: ${e}`)
+        return
+      }
+    }
+
+    if (finalPath) {
+      try {
+        await invoke('daemon_set', {
+          output: drawerTargetDisplay,
+          path: finalPath,
+        })
+      } catch (e) {
+        // daemon 可能未启动，容错静默
+      }
+    }
 
     if (selectedSource === 'local') {
       setLocalList((prev) =>
@@ -126,9 +225,9 @@ export default function App() {
     }
 
     showSnackbar(
-      `⚡ [${drawerTargetDisplay}] 已设为当前壁纸：${selectedWp.name} (${params.fit}, ${params.scale.toFixed(
-        2
-      )}x, 滤镜: ${params.filterPreset})`
+      `⚡ [${drawerTargetDisplay}] 已设为当前壁纸：${selectedWp.name} (${
+        params.fit
+      }, ${params.scale.toFixed(2)}x, 滤镜: ${params.filterPreset})`
     )
 
     if (followWallpaper) {
@@ -139,8 +238,25 @@ export default function App() {
     setDrawerOpen(false)
   }
 
-  const handleSaveToLocal = (wp: WallpaperItem) => {
-    showSnackbar(`💾 已成功保存到本地：~/Pictures/Wallpapers/${wp.name}`)
+  const handleSaveToLocal = async (wp: WallpaperItem) => {
+    showSnackbar(`⏳ 正在下载 Wallhaven 4K 原图「${wp.name}」...`)
+    try {
+      const ext = wp.file_type === 'image/png' ? '.png' : '.jpg'
+      const filename =
+        wp.name.endsWith('.png') ||
+        wp.name.endsWith('.jpg') ||
+        wp.name.endsWith('.webp')
+          ? wp.name
+          : `${wp.name}${ext}`
+      const savedPath = await invoke<string>('download_wallhaven_wallpaper', {
+        fullUrl: wp.full_url || wp.thumb,
+        filename,
+      })
+      showSnackbar(`💾 已成功保存到本地库：${savedPath}`)
+      await refreshLocalWallpapers()
+    } catch (e) {
+      showSnackbar(`保存到本地失败: ${e}`)
+    }
     setDrawerOpen(false)
   }
 
@@ -195,6 +311,10 @@ export default function App() {
             onCycleDisplay={handleCycleDisplay}
             onSelectWallpaper={handleSelectWallpaper}
             onNotify={showSnackbar}
+            onSearchWallhaven={handleSearchWallhaven}
+            onRefreshLocal={refreshLocalWallpapers}
+            whLoading={whLoading}
+            whTotal={whTotal}
           />
         )}
 
