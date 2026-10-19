@@ -3,6 +3,7 @@ import { Rail, type NavTab } from './components/Rail'
 import { WallpaperView } from './components/WallpaperView'
 import { TransitionsView } from './components/TransitionsView'
 import { SettingsView } from './components/SettingsView'
+import { ParallaxView } from './components/ParallaxView'
 import { WallpaperDrawer } from './components/WallpaperDrawer'
 import { Snackbar } from './components/Snackbar'
 import {
@@ -152,7 +153,13 @@ export default function App() {
     setCurrentTab(tab)
     showSnackbar(
       `切换至：${
-        tab === 'wallpapers' ? '壁纸库' : tab === 'transitions' ? '过渡动画' : '系统设置'
+        tab === 'wallpapers'
+          ? '壁纸库'
+          : tab === 'transitions'
+          ? '过渡动画'
+          : tab === 'parallax'
+          ? '视差动画'
+          : '系统设置'
       }`
     )
   }
@@ -193,6 +200,10 @@ export default function App() {
 
         {currentTab === 'transitions' && (
           <TransitionsView onNotify={showSnackbar} />
+        )}
+
+        {currentTab === 'parallax' && (
+          <ParallaxView onNotify={showSnackbar} />
         )}
 
         {currentTab === 'settings' && (

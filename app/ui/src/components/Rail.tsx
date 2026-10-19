@@ -1,6 +1,6 @@
 import React from 'react'
 
-export type NavTab = 'wallpapers' | 'transitions' | 'settings'
+export type NavTab = 'wallpapers' | 'transitions' | 'parallax' | 'settings'
 
 interface RailProps {
   currentTab: NavTab
@@ -41,6 +41,16 @@ export const Rail: React.FC<RailProps> = ({
             <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z" />
           </svg>
           <span>过渡动画</span>
+        </button>
+
+        <button
+          className={`rail-pill ${currentTab === 'parallax' ? 'active' : ''}`}
+          onClick={() => onTabChange('parallax')}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.26-7.38 5.73zM12 16l7.36-5.73L21 9.01l-9-7-9 7 1.64 1.26L12 16z" />
+          </svg>
+          <span>视差动画</span>
         </button>
 
         <button
