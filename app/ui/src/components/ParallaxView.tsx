@@ -4,6 +4,13 @@ interface ParallaxViewProps {
   onNotify: (msg: string) => void
 }
 
+const SIMULATED_WORKSPACES = [
+  { id: 1, name: '工作区 1 · 主屏', tag: '主任务', defaultCol: 0 },
+  { id: 2, name: '工作区 2 · 开发', tag: 'Rust 编译', defaultCol: 2 },
+  { id: 3, name: '工作区 3 · 监控', tag: '系统监控', defaultCol: 1 },
+  { id: 4, name: '工作区 4 · 媒体', tag: '媒体影音', defaultCol: 0 },
+]
+
 export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   // Parallax specification parameters (§4)
   const [scale, setScale] = useState(1.1)
@@ -16,46 +23,110 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   const [slowdown, setSlowdown] = useState(1.0)
   const [isOff, setIsOff] = useState(false)
 
-  // Interactive Sandbox State
-  const [activeCol, setActiveCol] = useState(2) // 0 .. columnSpan - 1
+  // 2D 布局交互仿真状态
+  // 1. 竖向工作区索引 (§4.4: 垂直工作区堆叠)
+  const [activeWs, setActiveWs] = useState(0) // 0 .. SIMULATED_WORKSPACES.length - 1
+  // 2. 每个工作区各自独立记忆焦点列 (§4.2.2)
+  const [wsFocusedCols, setWsFocusedCols] = useState<Record<number, number>>({
+    0: 0,
+    1: 2,
+    2: 1,
+    3: 0,
+  })
+  // 3. 总览开合状态 (§2.19)
   const [isOverviewOpen, setIsOverviewOpen] = useState(false)
 
-  // Mathematical parallax progress calculation (§4.1 / §4.2.1):
-  // progress = activeCol / (columnSpan - 1)
-  const progress = activeCol / Math.max(1, columnSpan - 1)
-  // §4.3: x = overflow * (0.5 - progress), where overflow = screen * (scale - 1)
-  // For a 2560px screen: overflow = 256px at scale 1.10
-  const screenWidth = 2560
-  const overflow = screenWidth * (scale - 1)
-  const offsetPx = overflow * (0.5 - progress)
+  const activeCol = wsFocusedCols[activeWs] ?? 0
 
-  // Current visual scale in sandbox
+  // --------------------------------------------------------------------------
+  // 数学计算：横向与纵向双轴视差位移与几何尺寸 (§4.1 / §4.2.1 / §4.4)
+  // --------------------------------------------------------------------------
+  // 横向进度 (§4.2.1: progress = activeCol / (column_span - 1))
+  const hProgress = activeCol / Math.max(1, columnSpan - 1)
+  const screenWidth = 2560
+  const overflowX = screenWidth * (scale - 1)
+  // §4.3: x = overflow * (0.5 - progress)
+  const offsetPxX = overflowX * (0.5 - hProgress)
+
+  // 纵向进度 (§4.4: v_progress = activeIndex / (workspace_span - 1))
+  const vProgress = activeWs / Math.max(1, workspaceSpan - 1)
+  const screenHeight = 1440
+  const overflowY = screenHeight * (scale - 1)
+  // §4.3: y = overflow * (0.5 - progress)
+  const offsetPxY = overflowY * (0.5 - vProgress)
+
+  // 总览倍率与总放大倍数
   const currentZoom = isOverviewOpen ? overviewZoom : 1.0
   const totalScale = scale * currentZoom
 
-  // Background transform offset in sandbox (percentage of container width)
-  // When activeCol shifts from 0 to columnSpan-1, background shifts smoothly
-  const bgTranslateX = (0.5 - progress) * ((scale - 1) / scale) * 100
+  // 壁纸背景 2D 平移百分比
+  const bgTranslateX = (0.5 - hProgress) * ((scale - 1) / scale) * 100
+  const bgTranslateY = (0.5 - vProgress) * ((scale - 1) / scale) * 100
 
-  const handleTestParallax = () => {
-    // Animate across columns
-    const nextCol = (activeCol + 1) % columnSpan
-    setActiveCol(nextCol)
+  // 切换窗口列（横向视差）
+  const handleColSelect = (colIdx: number) => {
+    setWsFocusedCols((prev) => ({ ...prev, [activeWs]: colIdx }))
     onNotify(
-      `⚡ 模拟切换至平铺列 ${nextCol + 1} / ${columnSpan}，触发视差平移`
+      `↔ 聚焦工作区 ${activeWs + 1} 的平铺列 ${colIdx + 1} / ${columnSpan} (横向位移 ${
+        offsetPxX >= 0 ? `+${offsetPxX.toFixed(1)}` : offsetPxX.toFixed(1)
+      } px)`
     )
   }
 
+  // 切换工作区（纵向视差 · 上下切换）
+  const handleWorkspaceSelect = (wsIdx: number) => {
+    const targetWs = Math.max(0, Math.min(SIMULATED_WORKSPACES.length - 1, wsIdx))
+    setActiveWs(targetWs)
+    onNotify(
+      `↕ 垂直切换至工作区 ${targetWs + 1}「${
+        SIMULATED_WORKSPACES[targetWs].name
+      }」（纵向视差位移 ${
+        offsetPxY >= 0 ? `+${offsetPxY.toFixed(1)}` : offsetPxY.toFixed(1)
+      } px）`
+    )
+  }
+
+  // 上切工作区
+  const handleWorkspaceUp = () => {
+    if (activeWs > 0) {
+      handleWorkspaceSelect(activeWs - 1)
+    } else {
+      onNotify('已位于最顶部工作区')
+    }
+  }
+
+  // 下切工作区
+  const handleWorkspaceDown = () => {
+    if (activeWs < SIMULATED_WORKSPACES.length - 1) {
+      handleWorkspaceSelect(activeWs + 1)
+    } else {
+      onNotify('已位于最底部工作区')
+    }
+  }
+
+  // 总览切换
   const handleToggleOverview = () => {
     setIsOverviewOpen((prev) => {
       const next = !prev
       onNotify(
         next
-          ? '🔭 模拟打开 Niri 工作区总览（触发画布 0.96 景深后撤）'
-          : '🔭 模拟关闭 Niri 总览（画布平滑回弹复原）'
+          ? '🔭 打开 Niri 工作区总览（触发画布 0.96 景深后撤）'
+          : '🔭 关闭 Niri 总览（画布平滑回弹复原）'
       )
       return next
     })
+  }
+
+  // 综合视差动效试演：自动轮播横向切列 + 纵向切工作区
+  const handleTestParallax = () => {
+    // 轮流演示：切列 -> 切工作区 -> 总览
+    const nextCol = (activeCol + 1) % columnSpan
+    if (nextCol === 0) {
+      const nextWs = (activeWs + 1) % SIMULATED_WORKSPACES.length
+      handleWorkspaceSelect(nextWs)
+    } else {
+      handleColSelect(nextCol)
+    }
   }
 
   return (
@@ -120,7 +191,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
         }}
       >
         {/* ================================================================
-            模块一：交互式 Niri 平铺视差沙盒演示区 (Interactive Sandbox)
+            模块一：交互式 Niri 平铺视差沙盒演示区（支持横向切列 + 垂直切工作区）
             ================================================================ */}
         <div
           className="wallhaven-control-box"
@@ -132,12 +203,15 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
             padding: 24,
           }}
         >
+          {/* 沙盒顶栏控制 */}
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               marginBottom: 16,
+              flexWrap: 'wrap',
+              gap: 12,
             }}
           >
             <div>
@@ -151,26 +225,47 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   marginTop: 2,
                 }}
               >
-                点击下方列胶囊切换窗口焦点，或点击“总览”观察画布拉远与弹性回弹。
+                左右点击列胶囊触发<strong>横向平移</strong>；使用垂直工作区条或「上/下切」按键触发<strong>垂直视差</strong>。
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {/* 上切工作区 */}
+              <button
+                className="wh-toggle-pill"
+                style={{ height: 36, padding: '0 14px', fontWeight: 800 }}
+                onClick={handleWorkspaceUp}
+                disabled={activeWs === 0}
+              >
+                ▲ 上切工作区
+              </button>
+
+              {/* 下切工作区 */}
+              <button
+                className="wh-toggle-pill"
+                style={{ height: 36, padding: '0 14px', fontWeight: 800 }}
+                onClick={handleWorkspaceDown}
+                disabled={activeWs === SIMULATED_WORKSPACES.length - 1}
+              >
+                ▼ 下切工作区
+              </button>
+
+              {/* 总览开关 */}
               <button
                 className={`wh-toggle-pill ${isOverviewOpen ? 'active' : ''}`}
                 style={{ height: 36, padding: '0 16px', fontWeight: 800 }}
                 onClick={handleToggleOverview}
               >
-                {isOverviewOpen ? '🔭 总览已展开 (Zoom 0.96)' : '🔭 打开工作区总览'}
+                {isOverviewOpen ? '🔭 总览已开 (0.96x)' : '🔭 打开工作区总览'}
               </button>
             </div>
           </div>
 
-          {/* 仿真屏幕视口 */}
+          {/* 仿真屏幕视口 (2D 双轴视差容器) */}
           <div
             style={{
               width: '100%',
-              height: 260,
+              height: 290,
               borderRadius: 'var(--m3-radius-lg)',
               overflow: 'hidden',
               position: 'relative',
@@ -181,38 +276,40 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
               justifyContent: 'center',
             }}
           >
-            {/* 底层：超额放大并随视差位移的壁纸 */}
+            {/* 底层：超额放大并随横向 + 纵向 2D 双轴视差平移的壁纸 */}
             <div
               style={{
                 position: 'absolute',
-                inset: '-20%',
+                inset: '-25%',
                 backgroundImage:
                   'url("https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1600&auto=format&fit=crop&q=80")',
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
-                transform: `translateX(${bgTranslateX.toFixed(
+                transform: `translate(${bgTranslateX.toFixed(
                   2
-                )}%) scale(${totalScale.toFixed(3)})`,
+                )}%, ${bgTranslateY.toFixed(2)}%) scale(${totalScale.toFixed(3)})`,
                 transition: isOff
                   ? 'none'
                   : `transform ${
                       (duration * slowdown) / 1000
                     }s cubic-bezier(0.2, 0, 0, 1)`,
                 willChange: 'transform',
-                filter: isOverviewOpen ? 'brightness(0.75)' : 'none',
+                filter: isOverviewOpen ? 'brightness(0.7)' : 'none',
               }}
             />
 
-            {/* 顶层：模拟 Niri 的平铺窗口列 */}
+            {/* 中间层：模拟当前工作区的平铺窗口列 (随工作区上下滑动过渡) */}
             <div
               style={{
                 position: 'relative',
                 zIndex: 10,
-                width: '88%',
-                height: '75%',
+                width: '82%',
+                height: '76%',
                 display: 'flex',
                 gap: 12,
-                transform: isOverviewOpen ? 'scale(0.85)' : 'scale(1)',
+                transform: `translateY(${
+                  isOverviewOpen ? -6 : 0
+                }px) scale(${isOverviewOpen ? 0.84 : 1})`,
                 transition: `transform ${
                   (duration * slowdown) / 1000
                 }s cubic-bezier(0.2, 0, 0, 1)`,
@@ -222,13 +319,13 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 const isActive = idx === activeCol
                 return (
                   <div
-                    key={idx}
-                    onClick={() => setActiveCol(idx)}
+                    key={`${activeWs}-${idx}`}
+                    onClick={() => handleColSelect(idx)}
                     style={{
                       flex: 1,
                       borderRadius: 'var(--m3-radius-md)',
                       background: isActive
-                        ? 'rgba(255, 255, 255, 0.22)'
+                        ? 'rgba(255, 255, 255, 0.24)'
                         : 'rgba(255, 255, 255, 0.08)',
                       backdropFilter: 'blur(12px)',
                       border: isActive
@@ -241,7 +338,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                       display: 'flex',
                       flexDirection: 'column',
                       padding: 12,
-                      transition: 'all 0.2s ease',
+                      transition: 'all 0.25s ease',
                       userSelect: 'none',
                     }}
                   >
@@ -258,7 +355,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                           fontWeight: 800,
                           color: isActive
                             ? 'var(--m3-accent-lime)'
-                            : 'rgba(255, 255, 255, 0.6)',
+                            : 'rgba(255, 255, 255, 0.65)',
                         }}
                       >
                         列 {idx + 1}
@@ -278,12 +375,97 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                         </span>
                       )}
                     </div>
+
+                    <div
+                      style={{
+                        marginTop: 'auto',
+                        fontSize: 10,
+                        color: 'rgba(255, 255, 255, 0.45)',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      {activeWs === 0 && (idx === 0 ? 'Terminal' : idx === 1 ? 'Browser' : 'Files')}
+                      {activeWs === 1 && (idx === 0 ? 'VS Code' : idx === 1 ? 'Cargo' : 'Git')}
+                      {activeWs === 2 && (idx === 0 ? 'btop' : idx === 1 ? 'niri log' : 'systemd')}
+                      {activeWs === 3 && (idx === 0 ? 'Music' : idx === 1 ? 'Discord' : 'Player')}
+                    </div>
                   </div>
                 )
               })}
             </div>
 
-            {/* 悬浮遥测指示器 */}
+            {/* 右侧悬浮：Niri 风格垂直工作区导航条 (Vertical Workspace Strip) */}
+            <div
+              style={{
+                position: 'absolute',
+                right: 14,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                zIndex: 20,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                background: 'rgba(0, 0, 0, 0.65)',
+                backdropFilter: 'blur(12px)',
+                padding: '10px 8px',
+                borderRadius: 'var(--m3-radius-lg)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 800,
+                  color: 'rgba(255, 255, 255, 0.5)',
+                  textAlign: 'center',
+                  marginBottom: 2,
+                  letterSpacing: 0.5,
+                }}
+              >
+                工作区
+              </div>
+              {SIMULATED_WORKSPACES.map((ws, idx) => {
+                const isWsActive = idx === activeWs
+                return (
+                  <button
+                    key={ws.id}
+                    onClick={() => handleWorkspaceSelect(idx)}
+                    style={{
+                      height: 32,
+                      padding: '0 10px',
+                      borderRadius: 'var(--m3-radius-md)',
+                      border: isWsActive
+                        ? '1.5px solid var(--m3-accent-lime)'
+                        : '1px solid transparent',
+                      background: isWsActive
+                        ? 'rgba(214, 248, 88, 0.25)'
+                        : 'rgba(255, 255, 255, 0.06)',
+                      color: isWsActive ? 'var(--m3-accent-lime)' : '#fff',
+                      fontSize: 11,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'all 0.18s ease',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: isWsActive ? 'var(--m3-accent-lime)' : 'rgba(255,255,255,0.4)',
+                      }}
+                    />
+                    <span>WS {ws.id}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* 底部悬浮双轴遥测数据 */}
             <div
               style={{
                 position: 'absolute',
@@ -292,8 +474,10 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 display: 'flex',
                 gap: 8,
                 zIndex: 20,
+                flexWrap: 'wrap',
               }}
             >
+              {/* 横向视差参数 */}
               <span
                 style={{
                   fontFamily: 'var(--font-mono)',
@@ -303,12 +487,15 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   color: '#fff',
                   padding: '4px 10px',
                   borderRadius: 'var(--m3-radius-full)',
+                  border: '1px solid rgba(255,255,255,0.1)',
                 }}
               >
-                progress: <strong>{progress.toFixed(2)}</strong> (
-                {offsetPx > 0 ? `+${offsetPx.toFixed(1)}` : offsetPx.toFixed(1)}{' '}
-                px)
+                ↔ 横向: <strong>h={hProgress.toFixed(2)}</strong> (
+                {offsetPxX >= 0 ? `+${offsetPxX.toFixed(1)}` : offsetPxX.toFixed(1)} px) · 列{' '}
+                {activeCol + 1}/{columnSpan}
               </span>
+
+              {/* 纵向视差参数 */}
               <span
                 style={{
                   fontFamily: 'var(--font-mono)',
@@ -318,9 +505,28 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   color: 'var(--m3-accent-lime)',
                   padding: '4px 10px',
                   borderRadius: 'var(--m3-radius-full)',
+                  border: '1px solid rgba(214, 248, 88, 0.3)',
                 }}
               >
-                scale: <strong>{scale.toFixed(2)}x</strong> · zoom:{' '}
+                ↕ 纵向: <strong>v={vProgress.toFixed(2)}</strong> (
+                {offsetPxY >= 0 ? `+${offsetPxY.toFixed(1)}` : offsetPxY.toFixed(1)} px) · 工作区{' '}
+                {activeWs + 1}/{workspaceSpan}
+              </span>
+
+              {/* 缩放参数 */}
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 11,
+                  background: 'rgba(0, 0, 0, 0.65)',
+                  backdropFilter: 'blur(8px)',
+                  color: 'var(--m3-accent-lavender)',
+                  padding: '4px 10px',
+                  borderRadius: 'var(--m3-radius-full)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              >
+                🔍 scale: <strong>{scale.toFixed(2)}x</strong> · zoom:{' '}
                 <strong>{currentZoom.toFixed(2)}x</strong>
               </span>
             </div>
@@ -335,7 +541,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
           style={{ margin: 0, padding: 22 }}
         >
           <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>
-            视差跨度与画布放大 (§4.1 / §4.2.1)
+            视差跨度与画布放大 (§4.1 / §4.2.1 / §4.4)
           </div>
           <div
             style={{
