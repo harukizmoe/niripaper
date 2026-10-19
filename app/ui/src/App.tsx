@@ -331,6 +331,7 @@ export default function App() {
             followWallpaper={followWallpaper}
             onToggleFollowWallpaper={handleToggleFollowWallpaper}
             seedColor={themeSeed}
+            onNotify={showSnackbar}
           />
         )}
       </main>

@@ -53,11 +53,15 @@ fn main() {
             commands::daemon_query,
             commands::daemon_set,
             commands::daemon_kill,
+            commands::daemon_start,
+            commands::daemon_status_info,
             commands::daemon_socket,
             commands::config_path,
             commands::load_local_wallpapers,
             commands::search_wallhaven,
             commands::download_wallhaven_wallpaper,
+            commands::get_autostart_status,
+            commands::set_autostart_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NiriPaper 失败");

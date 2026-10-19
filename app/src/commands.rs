@@ -51,10 +51,70 @@ pub fn daemon_set(
     })
 }
 
-/// Shut the daemon down. Returns the daemon's reply.
+/// Shut the daemon down. Returns the daemon's reply. When stopped, the Wayland
+/// layer surface is destroyed and the desktop immediately reveals Noctalia.
 #[tauri::command]
 pub fn daemon_kill(connection: State<'_, Connection>) -> Result<String, String> {
     connection.send(&Request::Kill)
+}
+
+/// Start the niripaper daemon in the background as an independent detached process.
+#[tauri::command]
+pub fn daemon_start(connection: State<'_, Connection>) -> Result<String, String> {
+    if connection.socket().is_ok() {
+        return Ok("守护进程已在运行中".to_owned());
+    }
+
+    let bin = find_daemon_binary();
+    let _child = std::process::Command::new(bin)
+        .arg("daemon")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("启动守护进程失败: {e}"))?;
+
+    // Wait briefly for socket to become available (up to 1.5s)
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_millis(1500) {
+        if connection.socket().is_ok() {
+            return Ok("壁纸引擎已成功启动并在后台独立运行".to_owned());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    Ok("守护进程指令已发出".to_owned())
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct DaemonStatusInfo {
+    pub running: bool,
+    pub socket_path: String,
+    pub output_info: Option<String>,
+}
+
+/// Query current daemon connectivity and socket status.
+#[tauri::command]
+pub fn daemon_status_info(connection: State<'_, Connection>) -> DaemonStatusInfo {
+    let socket = connection.socket();
+    let running = socket.is_ok();
+    let socket_path = match socket {
+        Ok(p) => p.display().to_string(),
+        Err(_) => niripaper_proto::protocol::default_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "未知".to_owned()),
+    };
+    let output_info = if running {
+        connection.send(&Request::Query { output: None }).ok()
+    } else {
+        None
+    };
+
+    DaemonStatusInfo {
+        running,
+        socket_path,
+        output_info,
+    }
 }
 
 /// Point the app at a non-standard daemon socket (mirrors the daemon's own
@@ -73,6 +133,85 @@ pub fn daemon_socket(
 #[tauri::command]
 pub fn config_path() -> Option<String> {
     niripaper_proto::config::default_path().map(|path| path.display().to_string())
+}
+
+/// Check whether autostart (systemd user service or XDG autostart) is configured.
+#[tauri::command]
+pub fn get_autostart_status() -> bool {
+    let home = match std::env::var_os("HOME") {
+        Some(h) => std::path::PathBuf::from(h),
+        None => return false,
+    };
+
+    let desktop_file = home.join(".config/autostart/niripaper.desktop");
+    let service_file = home.join(".config/systemd/user/niripaper.service");
+
+    desktop_file.exists() || service_file.exists()
+}
+
+/// Configure or disable autostart via systemd user service and XDG desktop entry.
+#[tauri::command]
+pub fn set_autostart_enabled(enabled: bool) -> Result<String, String> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "无法获取 $HOME 目录".to_owned())?;
+
+    let autostart_dir = home.join(".config/autostart");
+    let systemd_dir = home.join(".config/systemd/user");
+    let desktop_file = autostart_dir.join("niripaper.desktop");
+    let service_file = systemd_dir.join("niripaper.service");
+
+    if enabled {
+        let _ = std::fs::create_dir_all(&autostart_dir);
+        let _ = std::fs::create_dir_all(&systemd_dir);
+
+        let desktop_content = "[Desktop Entry]\nType=Application\nName=NiriPaper Daemon\nComment=Parallax wallpaper daemon for Niri\nExec=niripaper daemon\nTerminal=false\nCategories=Utility;\n";
+        let _ = std::fs::write(&desktop_file, desktop_content);
+
+        let service_content = "[Unit]\nDescription=niripaper wallpaper daemon\nDocumentation=https://github.com/harukizmoe/niripaper\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=niripaper daemon\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=graphical-session.target\n";
+        let _ = std::fs::write(&service_file, service_content);
+
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "enable", "niripaper.service"])
+            .output();
+
+        Ok("已开启开机自启动（已配置 systemd 用户服务与 XDG autostart）".to_owned())
+    } else {
+        let _ = std::fs::remove_file(&desktop_file);
+        let _ = std::fs::remove_file(&service_file);
+
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "disable", "niripaper.service"])
+            .output();
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
+
+        Ok("已关闭开机自启动".to_owned())
+    }
+}
+
+fn find_daemon_binary() -> std::path::PathBuf {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let candidate = parent.join("niripaper");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    if let Some(home) = std::env::var_os("HOME") {
+        let cargo_bin = std::path::PathBuf::from(home).join(".cargo/bin/niripaper");
+        if cargo_bin.exists() {
+            return cargo_bin;
+        }
+    }
+
+    std::path::PathBuf::from("niripaper")
 }
 
 /// A real wallpaper file discovered on the local filesystem.
