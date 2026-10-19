@@ -4,11 +4,60 @@ interface ParallaxViewProps {
   onNotify: (msg: string) => void
 }
 
+// 模拟 4 个独立的垂直工作区（§4.4），每个工作区均包含横向平铺列以及列内垂直平铺窗口（tiles）
 const SIMULATED_WORKSPACES = [
-  { id: 1, name: '工作区 1 · 主屏', tag: '主任务', defaultCol: 0 },
-  { id: 2, name: '工作区 2 · 开发', tag: 'Rust 编译', defaultCol: 2 },
-  { id: 3, name: '工作区 3 · 监控', tag: '系统监控', defaultCol: 1 },
-  { id: 4, name: '工作区 4 · 媒体', tag: '媒体影音', defaultCol: 0 },
+  {
+    id: 1,
+    name: '工作区 1 · 日常开发',
+    tag: '主屏任务',
+    columns: [
+      { id: 1, windows: ['Kitty Terminal'] },
+      { id: 2, windows: ['Zen Browser', 'DevTools 检查器'] }, // 2 扇垂直平铺窗口！
+      { id: 3, windows: ['VS Code: niripaper'] },
+      { id: 4, windows: ['Dolphin 文件管理', '图片预览'] }, // 2 扇垂直平铺窗口！
+      { id: 5, windows: ['Matrix / 聊天'] },
+      { id: 6, windows: ['git status'] },
+    ],
+  },
+  {
+    id: 2,
+    name: '工作区 2 · 系统编译',
+    tag: '编译监控',
+    columns: [
+      { id: 1, windows: ['btop++ 资源监控', 'journalctl -f 日志'] }, // 2 扇垂直平铺窗口！
+      { id: 2, windows: ['Cargo Watch 实时编译'] },
+      { id: 3, windows: ['niri msg 事件流', 'glxgears 测试'] }, // 2 扇垂直平铺窗口！
+      { id: 4, windows: ['Rust Analyzer 诊断'] },
+      { id: 5, windows: ['Git Graph 提交树'] },
+      { id: 6, windows: ['GDB / DAP 调试器'] },
+    ],
+  },
+  {
+    id: 3,
+    name: '工作区 3 · 影音媒体',
+    tag: '媒体娱乐',
+    columns: [
+      { id: 1, windows: ['Spotify 播放器'] },
+      { id: 2, windows: ['mpv 4K 原画', '动态歌词滚动'] }, // 2 扇垂直平铺窗口！
+      { id: 3, windows: ['Discord 社区'] },
+      { id: 4, windows: ['OBS Studio', '混音台'] }, // 2 扇垂直平铺窗口！
+      { id: 5, windows: ['Steam'] },
+      { id: 6, windows: ['Web Radio'] },
+    ],
+  },
+  {
+    id: 4,
+    name: '工作区 4 · 知识文献',
+    tag: '学术笔记',
+    columns: [
+      { id: 1, windows: ['Zathura PDF 论文'] },
+      { id: 2, windows: ['Obsidian 笔记', '双链图谱'] }, // 2 扇垂直平铺窗口！
+      { id: 3, windows: ['Rust 文档 (cargo doc)'] },
+      { id: 4, windows: ['Niri 官方 Wiki'] },
+      { id: 5, windows: ['LaTeX 渲染器', '公式速查'] }, // 2 扇垂直平铺窗口！
+      { id: 6, windows: ['待办清单'] },
+    ],
+  },
 ]
 
 export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
@@ -24,19 +73,13 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   const [isOff, setIsOff] = useState(false)
 
   // 2D 布局交互仿真状态
-  // 1. 竖向工作区索引 (§4.4: 垂直工作区堆叠)
-  const [activeWs, setActiveWs] = useState(0) // 0 .. SIMULATED_WORKSPACES.length - 1
-  // 2. 每个工作区各自独立记忆焦点列 (§4.2.2)
-  const [wsFocusedCols, setWsFocusedCols] = useState<Record<number, number>>({
-    0: 0,
-    1: 2,
-    2: 1,
-    3: 0,
-  })
+  // 1. 垂直工作区索引 (0 .. 3)
+  const [activeWs, setActiveWs] = useState(0)
+  // 2. 当前横向焦点列 (0 .. columnSpan - 1)
+  // 核心约束 (§4.4 规则 8)：垂直切换工作区时，横向焦点与位移必须严格保持冻结锁定（纯轴向运动），绝对不能发生横向抖动或斜向漂移！
+  const [activeCol, setActiveCol] = useState(1)
   // 3. 总览开合状态 (§2.19)
   const [isOverviewOpen, setIsOverviewOpen] = useState(false)
-
-  const activeCol = wsFocusedCols[activeWs] ?? 0
 
   // --------------------------------------------------------------------------
   // 数学计算：横向与纵向双轴视差位移与几何尺寸 (§4.1 / §4.2.1 / §4.4)
@@ -60,29 +103,31 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   const totalScale = scale * currentZoom
 
   // 壁纸背景 2D 平移百分比
+  // 垂直切换工作区时，hProgress 保持原值，因此 bgTranslateX 绝对静止，仅 bgTranslateY 移动（纯垂直轴运动）！
   const bgTranslateX = (0.5 - hProgress) * ((scale - 1) / scale) * 100
   const bgTranslateY = (0.5 - vProgress) * ((scale - 1) / scale) * 100
 
   // 切换窗口列（横向视差）
   const handleColSelect = (colIdx: number) => {
-    setWsFocusedCols((prev) => ({ ...prev, [activeWs]: colIdx }))
+    setActiveCol(colIdx)
     onNotify(
-      `↔ 聚焦工作区 ${activeWs + 1} 的平铺列 ${colIdx + 1} / ${columnSpan} (横向位移 ${
+      `↔ 聚焦平铺列 ${colIdx + 1} / ${columnSpan}（横向视差位移 ${
         offsetPxX >= 0 ? `+${offsetPxX.toFixed(1)}` : offsetPxX.toFixed(1)
-      } px)`
+      } px，纵向保持锁定）`
     )
   }
 
   // 切换工作区（纵向视差 · 上下切换）
+  // 注意：此处不改变 activeCol，严格执行 §4.4 规则 8 的纯轴向运动原则
   const handleWorkspaceSelect = (wsIdx: number) => {
     const targetWs = Math.max(0, Math.min(SIMULATED_WORKSPACES.length - 1, wsIdx))
     setActiveWs(targetWs)
     onNotify(
       `↕ 垂直切换至工作区 ${targetWs + 1}「${
         SIMULATED_WORKSPACES[targetWs].name
-      }」（纵向视差位移 ${
+      }」（纵向位移 ${
         offsetPxY >= 0 ? `+${offsetPxY.toFixed(1)}` : offsetPxY.toFixed(1)
-      } px）`
+      } px，横向严格锁定不动）`
     )
   }
 
@@ -117,9 +162,8 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
     })
   }
 
-  // 综合视差动效试演：自动轮播横向切列 + 纵向切工作区
+  // 综合视差动效试演：自动轮播横向切列 + 垂直切工作区
   const handleTestParallax = () => {
-    // 轮流演示：切列 -> 切工作区 -> 总览
     const nextCol = (activeCol + 1) % columnSpan
     if (nextCol === 0) {
       const nextWs = (activeWs + 1) % SIMULATED_WORKSPACES.length
@@ -191,7 +235,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
         }}
       >
         {/* ================================================================
-            模块一：交互式 Niri 平铺视差沙盒演示区（支持横向切列 + 垂直切工作区）
+            模块一：交互式 Niri 平铺视差沙盒（支持 2D 垂直多工作区堆叠滚动 + 列内垂直平铺窗口）
             ================================================================ */}
         <div
           className="wallhaven-control-box"
@@ -216,7 +260,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
           >
             <div>
               <div style={{ fontWeight: 800, fontSize: 15 }}>
-                实时视差与总览仿真沙盒
+                实时视差与多工作区纵横仿真沙盒
               </div>
               <div
                 style={{
@@ -225,7 +269,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   marginTop: 2,
                 }}
               >
-                左右点击列胶囊触发<strong>横向平移</strong>；使用垂直工作区条或「上/下切」按键触发<strong>垂直视差</strong>。
+                工作区在垂直方向堆叠成轴；列内支持多窗口上下垂直平铺。切工作区时横向严格锁定，纯纵向平移。
               </div>
             </div>
 
@@ -261,11 +305,11 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
             </div>
           </div>
 
-          {/* 仿真屏幕视口 (2D 双轴视差容器) */}
+          {/* 仿真屏幕视口 (扩大至 340px，充分展现垂直多工作区层级) */}
           <div
             style={{
               width: '100%',
-              height: 290,
+              height: 340,
               borderRadius: 'var(--m3-radius-lg)',
               overflow: 'hidden',
               position: 'relative',
@@ -280,7 +324,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
             <div
               style={{
                 position: 'absolute',
-                inset: '-25%',
+                inset: '-30%',
                 backgroundImage:
                   'url("https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1600&auto=format&fit=crop&q=80")',
                 backgroundSize: 'cover',
@@ -298,103 +342,146 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
               }}
             />
 
-            {/* 中间层：模拟当前工作区的平铺窗口列 (随工作区上下滑动过渡) */}
+            {/* 中间层：垂直多工作区滚动卷轴容器 (Workspace Reel) */}
             <div
               style={{
                 position: 'relative',
                 zIndex: 10,
-                width: '82%',
-                height: '76%',
-                display: 'flex',
-                gap: 12,
-                transform: `translateY(${
-                  isOverviewOpen ? -6 : 0
-                }px) scale(${isOverviewOpen ? 0.84 : 1})`,
-                transition: `transform ${
-                  (duration * slowdown) / 1000
-                }s cubic-bezier(0.2, 0, 0, 1)`,
+                width: '84%',
+                height: '82%',
+                overflow: 'hidden',
+                borderRadius: 'var(--m3-radius-md)',
               }}
             >
-              {Array.from({ length: columnSpan }).map((_, idx) => {
-                const isActive = idx === activeCol
-                return (
-                  <div
-                    key={`${activeWs}-${idx}`}
-                    onClick={() => handleColSelect(idx)}
-                    style={{
-                      flex: 1,
-                      borderRadius: 'var(--m3-radius-md)',
-                      background: isActive
-                        ? 'rgba(255, 255, 255, 0.24)'
-                        : 'rgba(255, 255, 255, 0.08)',
-                      backdropFilter: 'blur(12px)',
-                      border: isActive
-                        ? '2px solid var(--m3-accent-lime)'
-                        : '1px solid rgba(255, 255, 255, 0.15)',
-                      boxShadow: isActive
-                        ? '0 8px 24px rgba(0, 0, 0, 0.45)'
-                        : 'none',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      padding: 12,
-                      transition: 'all 0.25s ease',
-                      userSelect: 'none',
-                    }}
-                  >
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  transform: `translateY(-${activeWs * 100}%) scale(${
+                    isOverviewOpen ? 0.88 : 1
+                  })`,
+                  transition: isOff
+                    ? 'none'
+                    : `transform ${
+                        (duration * slowdown) / 1000
+                      }s cubic-bezier(0.2, 0, 0, 1)`,
+                }}
+              >
+                {SIMULATED_WORKSPACES.map((ws, wsIdx) => {
+                  const isCurrentWs = wsIdx === activeWs
+                  return (
                     <div
+                      key={ws.id}
                       style={{
+                        width: '100%',
+                        height: '100%',
+                        flexShrink: 0,
                         display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
+                        gap: 12,
+                        padding: '6px 4px',
+                        boxSizing: 'border-box',
                       }}
                     >
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 800,
-                          color: isActive
-                            ? 'var(--m3-accent-lime)'
-                            : 'rgba(255, 255, 255, 0.65)',
-                        }}
-                      >
-                        列 {idx + 1}
-                      </span>
-                      {isActive && (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            padding: '1px 6px',
-                            borderRadius: 9999,
-                            background: 'var(--m3-accent-lime)',
-                            color: '#1c192b',
-                            fontWeight: 900,
-                          }}
-                        >
-                          焦点
-                        </span>
-                      )}
-                    </div>
+                      {ws.columns.slice(0, columnSpan).map((col, colIdx) => {
+                        const isColActive = isCurrentWs && colIdx === activeCol
+                        return (
+                          <div
+                            key={col.id}
+                            onClick={() => handleColSelect(colIdx)}
+                            style={{
+                              flex: 1,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6, // 列内垂直平铺窗口之间的间距
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {/* 列内窗口 (支持 1 扇全高窗口，或 2 扇上下垂直平铺窗口) */}
+                            {col.windows.map((winName, winIdx) => (
+                              <div
+                                key={winIdx}
+                                style={{
+                                  flex: 1,
+                                  borderRadius: 'var(--m3-radius-md)',
+                                  background: isColActive
+                                    ? 'rgba(45, 38, 65, 0.85)'
+                                    : 'rgba(25, 20, 38, 0.75)',
+                                  border: isColActive
+                                    ? '2px solid var(--m3-accent-lime)'
+                                    : '1px solid rgba(255, 255, 255, 0.15)',
+                                  boxShadow: isColActive
+                                    ? '0 8px 20px rgba(0, 0, 0, 0.45)'
+                                    : 'none',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  padding: '8px 10px',
+                                  transition: 'all 0.2s ease',
+                                  userSelect: 'none',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 800,
+                                      color: isColActive
+                                        ? 'var(--m3-accent-lime)'
+                                        : 'rgba(255, 255, 255, 0.7)',
+                                    }}
+                                  >
+                                    列 {colIdx + 1}
+                                    {col.windows.length > 1 &&
+                                      ` · 窗 ${winIdx + 1}`}
+                                  </span>
+                                  {isColActive && winIdx === 0 && (
+                                    <span
+                                      style={{
+                                        fontSize: 9,
+                                        padding: '1px 5px',
+                                        borderRadius: 9999,
+                                        background: 'var(--m3-accent-lime)',
+                                        color: '#1c192b',
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      焦点
+                                    </span>
+                                  )}
+                                </div>
 
-                    <div
-                      style={{
-                        marginTop: 'auto',
-                        fontSize: 10,
-                        color: 'rgba(255, 255, 255, 0.45)',
-                        fontFamily: 'var(--font-mono)',
-                      }}
-                    >
-                      {activeWs === 0 && (idx === 0 ? 'Terminal' : idx === 1 ? 'Browser' : 'Files')}
-                      {activeWs === 1 && (idx === 0 ? 'VS Code' : idx === 1 ? 'Cargo' : 'Git')}
-                      {activeWs === 2 && (idx === 0 ? 'btop' : idx === 1 ? 'niri log' : 'systemd')}
-                      {activeWs === 3 && (idx === 0 ? 'Music' : idx === 1 ? 'Discord' : 'Player')}
+                                <div
+                                  style={{
+                                    marginTop: 'auto',
+                                    fontSize: 10,
+                                    color: 'rgba(255, 255, 255, 0.55)',
+                                    fontFamily: 'var(--font-mono)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {winName}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
 
-            {/* 右侧悬浮：Niri 风格垂直工作区导航条 (Vertical Workspace Strip) */}
+            {/* 右侧悬浮：Niri 风格垂直工作区切换条 (Vertical Workspace Strip) */}
             <div
               style={{
                 position: 'absolute',
@@ -405,8 +492,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 8,
-                background: 'rgba(0, 0, 0, 0.65)',
-                backdropFilter: 'blur(12px)',
+                background: 'rgba(18, 14, 28, 0.92)',
                 padding: '10px 8px',
                 borderRadius: 'var(--m3-radius-lg)',
                 border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -456,7 +542,9 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                         width: 6,
                         height: 6,
                         borderRadius: '50%',
-                        background: isWsActive ? 'var(--m3-accent-lime)' : 'rgba(255,255,255,0.4)',
+                        background: isWsActive
+                          ? 'var(--m3-accent-lime)'
+                          : 'rgba(255,255,255,0.4)',
                       }}
                     />
                     <span>WS {ws.id}</span>
@@ -482,8 +570,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 style={{
                   fontFamily: 'var(--font-mono)',
                   fontSize: 11,
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  backdropFilter: 'blur(8px)',
+                  background: 'rgba(18, 14, 28, 0.88)',
                   color: '#fff',
                   padding: '4px 10px',
                   borderRadius: 'var(--m3-radius-full)',
@@ -491,8 +578,10 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 }}
               >
                 ↔ 横向: <strong>h={hProgress.toFixed(2)}</strong> (
-                {offsetPxX >= 0 ? `+${offsetPxX.toFixed(1)}` : offsetPxX.toFixed(1)} px) · 列{' '}
-                {activeCol + 1}/{columnSpan}
+                {offsetPxX >= 0
+                  ? `+${offsetPxX.toFixed(1)}`
+                  : offsetPxX.toFixed(1)}{' '}
+                px) · 列 {activeCol + 1}/{columnSpan}
               </span>
 
               {/* 纵向视差参数 */}
@@ -500,8 +589,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 style={{
                   fontFamily: 'var(--font-mono)',
                   fontSize: 11,
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  backdropFilter: 'blur(8px)',
+                  background: 'rgba(18, 14, 28, 0.88)',
                   color: 'var(--m3-accent-lime)',
                   padding: '4px 10px',
                   borderRadius: 'var(--m3-radius-full)',
@@ -509,8 +597,10 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 }}
               >
                 ↕ 纵向: <strong>v={vProgress.toFixed(2)}</strong> (
-                {offsetPxY >= 0 ? `+${offsetPxY.toFixed(1)}` : offsetPxY.toFixed(1)} px) · 工作区{' '}
-                {activeWs + 1}/{workspaceSpan}
+                {offsetPxY >= 0
+                  ? `+${offsetPxY.toFixed(1)}`
+                  : offsetPxY.toFixed(1)}{' '}
+                px) · 工作区 {activeWs + 1}/{workspaceSpan}
               </span>
 
               {/* 缩放参数 */}
@@ -518,8 +608,7 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                 style={{
                   fontFamily: 'var(--font-mono)',
                   fontSize: 11,
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  backdropFilter: 'blur(8px)',
+                  background: 'rgba(18, 14, 28, 0.88)',
                   color: 'var(--m3-accent-lavender)',
                   padding: '4px 10px',
                   borderRadius: 'var(--m3-radius-full)',

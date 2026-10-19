@@ -20,7 +20,7 @@ import {
 const DISPLAYS = ['DP-1 (主屏)', 'eDP-1 (内屏)', '全部显示器 (*)']
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
+  const [currentTab, setCurrentTab] = useState<NavTab>('parallax')
   const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('wallhaven')
   const [displayIdx, setDisplayIdx] = useState(0)
   const [isDark, setIsDark] = useState(false)

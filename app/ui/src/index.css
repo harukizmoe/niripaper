@@ -947,8 +947,7 @@
       position: absolute;
       bottom: 10px;
       left: 10px;
-      background: rgba(18, 14, 28, 0.85);
-      backdrop-filter: blur(10px);
+      background: rgba(18, 14, 28, 0.92);
       color: #fff;
       font-size: 11px;
       font-weight: 700;
