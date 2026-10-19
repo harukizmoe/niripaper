@@ -1,18 +1,11 @@
 import React, { useState } from 'react'
 import { transitions, type TransitionItem } from '../data/wallpapers'
-import { ThemeToggle } from './ThemeToggle'
 
 interface TransitionsViewProps {
-  isDark: boolean
-  onToggleTheme: () => void
   onNotify: (msg: string) => void
 }
 
-export const TransitionsView: React.FC<TransitionsViewProps> = ({
-  isDark,
-  onToggleTheme,
-  onNotify,
-}) => {
+export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) => {
   const [selectedId, setSelectedId] = useState<string>('portal')
 
   const handleSelect = (tr: TransitionItem) => {
@@ -69,7 +62,6 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({
           >
             ▶ 预览过渡
           </button>
-          <ThemeToggle isDark={isDark} onToggle={onToggleTheme} />
         </div>
       </header>
 

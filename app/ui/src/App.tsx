@@ -172,9 +172,8 @@ export default function App() {
       <Rail
         currentTab={currentTab}
         onTabChange={handleTabChange}
-        followWallpaper={followWallpaper}
-        onToggleFollowWallpaper={handleToggleFollowWallpaper}
-        seedColor={themeSeed}
+        isDark={isDark}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* 右侧工作区 */}
@@ -185,8 +184,6 @@ export default function App() {
             localList={localList}
             currentSource={currentSource}
             currentDisplay={DISPLAYS[displayIdx]}
-            isDark={isDark}
-            onToggleTheme={handleToggleTheme}
             onSourceChange={handleSourceChange}
             onCycleDisplay={handleCycleDisplay}
             onSelectWallpaper={handleSelectWallpaper}
@@ -195,15 +192,15 @@ export default function App() {
         )}
 
         {currentTab === 'transitions' && (
-          <TransitionsView
-            isDark={isDark}
-            onToggleTheme={handleToggleTheme}
-            onNotify={showSnackbar}
-          />
+          <TransitionsView onNotify={showSnackbar} />
         )}
 
         {currentTab === 'settings' && (
-          <SettingsView isDark={isDark} onToggleTheme={handleToggleTheme} />
+          <SettingsView
+            followWallpaper={followWallpaper}
+            onToggleFollowWallpaper={handleToggleFollowWallpaper}
+            seedColor={themeSeed}
+          />
         )}
       </main>
 

@@ -4,15 +4,11 @@ import { WallhavenControls } from './WallhavenControls'
 import { LocalControls, type LocalFilter } from './LocalControls'
 import { WallpaperCard } from './WallpaperCard'
 import { hexToRgb } from '../theme/materialYou'
-import { ThemeToggle } from './ThemeToggle'
-
 interface WallpaperViewProps {
   wallhavenList: WallpaperItem[]
   localList: WallpaperItem[]
   currentSource: 'wallhaven' | 'local'
   currentDisplay: string
-  isDark: boolean
-  onToggleTheme: () => void
   onSourceChange: (source: 'wallhaven' | 'local') => void
   onCycleDisplay: () => void
   onSelectWallpaper: (wp: WallpaperItem, source: 'wallhaven' | 'local') => void
@@ -24,13 +20,12 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
   localList,
   currentSource,
   currentDisplay,
-  isDark,
-  onToggleTheme,
   onSourceChange,
   onCycleDisplay,
   onSelectWallpaper,
   onNotify,
 }) => {
+  const [hoveredCardId, setHoveredCardId] = useState<string | null>(null)
   // Wallhaven filters & search
   const [whQuery, setWhQuery] = useState('')
   const [whPage, setWhPage] = useState(1)
@@ -177,14 +172,11 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button className="m3-display-capsule" onClick={onCycleDisplay}>
-            <span>🖥️</span>
-            <span>{currentDisplay}</span>
-            <span style={{ fontSize: 11, opacity: 0.6 }}>▼</span>
-          </button>
-          <ThemeToggle isDark={isDark} onToggle={onToggleTheme} />
-        </div>
+        <button className="m3-display-capsule" onClick={onCycleDisplay}>
+          <span>🖥️</span>
+          <span>{currentDisplay}</span>
+          <span style={{ fontSize: 11, opacity: 0.6 }}>▼</span>
+        </button>
       </header>
 
       {/* 模式 A：Wallhaven 在线控制区 */}
@@ -242,6 +234,10 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
                 <WallpaperCard
                   key={wp.id}
                   wallpaper={wp}
+                  isAnyHovered={hoveredCardId !== null}
+                  isHovered={hoveredCardId === wp.id}
+                  onMouseEnter={() => setHoveredCardId(wp.id)}
+                  onMouseLeave={() => setHoveredCardId(null)}
                   onClick={() => onSelectWallpaper(wp, currentSource)}
                 />
               ))}

@@ -5,17 +5,15 @@ export type NavTab = 'wallpapers' | 'transitions' | 'settings'
 interface RailProps {
   currentTab: NavTab
   onTabChange: (tab: NavTab) => void
-  followWallpaper: boolean
-  onToggleFollowWallpaper: () => void
-  seedColor: string
+  isDark: boolean
+  onToggleTheme: () => void
 }
 
 export const Rail: React.FC<RailProps> = ({
   currentTab,
   onTabChange,
-  followWallpaper,
-  onToggleFollowWallpaper,
-  seedColor,
+  isDark,
+  onToggleTheme,
 }) => {
   return (
     <aside className="m3-rail">
@@ -56,30 +54,22 @@ export const Rail: React.FC<RailProps> = ({
         </button>
       </nav>
 
-      <div className="rail-bottom-card">
-        <div className="daemon-indicator">
-          <div className="pulse-dot"></div>
-          <span>daemon 53023</span>
-        </div>
-        <div style={{ fontSize: 10, color: 'var(--m3-rail-text)' }}>
-          NVIDIA · DP-1 渲染中
-        </div>
-
+      {/* 底部：主题日夜间切换按钮 */}
+      <div style={{ marginTop: 'auto' }}>
         <button
-          className={`rail-theme-btn ${followWallpaper ? 'active' : ''}`}
-          onClick={onToggleFollowWallpaper}
+          className="rail-pill"
+          style={{
+            width: '100%',
+            justifyContent: 'center',
+            background: 'rgba(255, 255, 255, 0.08)',
+            color: '#fff',
+            gap: 8,
+          }}
+          onClick={onToggleTheme}
         >
-          {followWallpaper ? '🎨 跟随壁纸取色' : '🎨 固定默认配色'}
+          <span style={{ fontSize: 15 }}>{isDark ? '☀️' : '🌙'}</span>
+          <span>{isDark ? '浅色模式' : '夜间深色'}</span>
         </button>
-
-        <div className="rail-theme-seed">
-          <span
-            className="rail-theme-dot"
-            style={{ background: seedColor }}
-          ></span>
-          <span>{seedColor.toUpperCase()}</span>
-          <span style={{ opacity: 0.7 }}>取色种子</span>
-        </div>
       </div>
     </aside>
   )

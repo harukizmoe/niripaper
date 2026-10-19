@@ -3,6 +3,10 @@ import type { WallpaperItem } from '../data/wallpapers'
 
 interface WallpaperCardProps {
   wallpaper: WallpaperItem
+  isAnyHovered: boolean
+  isHovered: boolean
+  onMouseEnter: () => void
+  onMouseLeave: () => void
   onClick: () => void
 }
 
@@ -11,6 +15,10 @@ const FALLBACK_THUMB =
 
 export const WallpaperCard: React.FC<WallpaperCardProps> = ({
   wallpaper,
+  isAnyHovered,
+  isHovered,
+  onMouseEnter,
+  onMouseLeave,
   onClick,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null)
@@ -42,7 +50,6 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
       const px = mouseX / (rect.width / 2)
       const py = mouseY / (rect.height / 2)
 
-      // 3D 悬浮视差与随鼠标四向微翘（完全对齐 prototype-ui.html 的 attach3DParallax）
       const maxTilt = 12
       const rotateY = px * maxTilt
       const rotateX = -py * maxTilt
@@ -62,18 +69,20 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
     })
   }
 
-  const handleMouseEnter = () => {
+  const handleMouseEnterCard = () => {
+    onMouseEnter()
     if (cardRef.current) {
       cardRef.current.style.transition =
-        'transform 0.12s ease-out, box-shadow 0.25s ease'
+        'transform 0.12s ease-out, box-shadow 0.25s ease, filter 0.3s ease, opacity 0.3s ease'
     }
   }
 
-  const handleMouseLeave = () => {
+  const handleMouseLeaveCard = () => {
+    onMouseLeave()
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     if (cardRef.current) {
       cardRef.current.style.transition =
-        'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease'
+        'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, filter 0.3s ease, opacity 0.3s ease'
       cardRef.current.style.transform =
         'perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg)'
     }
@@ -82,13 +91,27 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
     }
   }
 
+  // 景深模糊逻辑：
+  // 1. 无任何卡片被悬停时：filter 为 none，opacity 为 1，所有卡片绝对高清锐利！
+  // 2. 有卡片被悬停时：被悬停卡片保持高清 (filter: none)，其余所有卡片施加景深模糊！
+  const isBlurred = isAnyHovered && !isHovered
+  const cardFilter = isBlurred ? 'blur(3.5px) brightness(0.82)' : 'none'
+  const cardOpacity = isBlurred ? 0.78 : 1
+
   return (
     <div
       ref={cardRef}
       className={`wallpaper-card ${wallpaper.activeOn ? 'active-target' : ''}`}
+      style={{
+        filter: cardFilter,
+        opacity: cardOpacity,
+        zIndex: isHovered ? 25 : 1,
+        transition:
+          'transform 0.15s ease-out, box-shadow 0.25s ease, filter 0.3s cubic-bezier(0.2, 0, 0, 1), opacity 0.3s ease',
+      }}
       onMouseMove={handleMouseMove}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={handleMouseEnterCard}
+      onMouseLeave={handleMouseLeaveCard}
       onClick={onClick}
     >
       <div
