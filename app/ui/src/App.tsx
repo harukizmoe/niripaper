@@ -13,7 +13,6 @@ import {
   type WallpaperItem,
 } from './data/wallpapers'
 import {
-  applyThemeTokens,
   buildM3Scheme,
   pickSeedColor,
   schemeFromPalette,
@@ -77,6 +76,11 @@ export default function App() {
     return localStorage.getItem('niripaper_adapt_noctalia') === 'true'
   })
   const [externalPalette, setExternalPalette] = useState<Record<string, string> | null>(null)
+  // Push the computed palette to the system daemon, so the whole desktop
+  // follows niripaper's wallpaper. Separate from `adaptNoctalia`, which reads.
+  const [syncSystemTheme, setSyncSystemTheme] = useState<boolean>(() => {
+    return localStorage.getItem('niripaper_sync_system_theme') === 'true'
+  })
 
 
   // 1. 扫描并加载本地真实壁纸 (~/Pictures/Wallpapers)
@@ -218,12 +222,11 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
     const external = adaptNoctalia && externalPalette ? schemeFromPalette(externalPalette) : null
-    if (external) {
-      const root = document.documentElement.style
-      for (const [k, v] of Object.entries(external)) root.setProperty(k, v)
-    } else {
-      applyThemeTokens(themeSeed, isDark, colorScheme)
-    }
+    // The token map actually in force, so the push below sends the same
+    // colours this window is painting rather than a second derivation.
+    const s = external ?? buildM3Scheme(themeSeed, isDark, colorScheme)
+    const root = document.documentElement.style
+    for (const [k, v] of Object.entries(s)) root.setProperty(k, v)
 
     // Export the same palette so other tools can follow it. Best effort: a
     // failure here must not affect the app's own colours, and nothing in this
@@ -243,7 +246,50 @@ export default function App() {
       console.error('导出调色板失败（不影响本应用配色）:', e)
       setPaletteError(String(e))
     })
+
+    // Push the same palette to the desktop's theme daemon. `s` is the token
+    // map we just applied, so what the rest of the desktop gets matches what
+    // this window shows. Failure is reported, not fatal: the app keeps its own
+    // colours either way.
+    if (syncSystemTheme && s) {
+      const pick = (k: string, fallback: string) => s[k] ?? fallback
+      void invoke<string>('apply_system_palette', {
+        palette: {
+          primary: pick('--m3-accent-purple', '#624b89'),
+          on_primary: pick('--m3-rail-text-active', '#ffffff'),
+          secondary: pick('--m3-accent-mint', '#8ed6ac'),
+          on_secondary: pick('--m3-rail-text-active', '#ffffff'),
+          tertiary: pick('--m3-accent-lime', '#cacc58'),
+          on_tertiary: pick('--m3-rail-text-active', '#ffffff'),
+          error: pick('--m3-accent-coral', '#ffb4ab'),
+          on_error: pick('--m3-rail-text-active', '#ffffff'),
+          surface: pick('--m3-surface', '#ffffff'),
+          on_surface: pick('--m3-fg', '#211d2f'),
+          surface_variant: pick('--m3-surface-subtle', '#eae6f7'),
+          on_surface_variant: pick('--m3-fg-muted', '#69657e'),
+          outline: pick('--m3-outline', '#bbb8cb'),
+        },
+      })
+        .then(() => setPaletteError(null))
+        .catch((e) => {
+          console.error('同步系统主题失败:', e)
+          setPaletteError(String(e))
+        })
+    }
   }, [themeSeed, isDark, colorScheme, externalPalette, adaptNoctalia])
+
+  const handleToggleSyncSystemTheme = () => {
+    setSyncSystemTheme((prev) => {
+      const next = !prev
+      localStorage.setItem('niripaper_sync_system_theme', String(next))
+      showSnackbar(
+        next
+          ? '🌗 已开启：换壁纸会同步整个系统的主题配色'
+          : '🌗 已关闭：系统主题不再跟随本应用'
+      )
+      return next
+    })
+  }
 
   const handleToggleAdaptNoctalia = () => {
     setAdaptNoctalia((prev) => {
@@ -525,6 +571,8 @@ export default function App() {
             adaptNoctalia={adaptNoctalia}
             onToggleAdaptNoctalia={handleToggleAdaptNoctalia}
             externalPalette={externalPalette}
+            syncSystemTheme={syncSystemTheme}
+            onToggleSyncSystemTheme={handleToggleSyncSystemTheme}
             onNotify={showSnackbar}
           />
         )}

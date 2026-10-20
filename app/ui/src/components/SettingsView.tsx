@@ -21,6 +21,8 @@ interface SettingsViewProps {
   adaptNoctalia?: boolean
   onToggleAdaptNoctalia?: () => void
   externalPalette?: Record<string, string> | null
+  syncSystemTheme?: boolean
+  onToggleSyncSystemTheme?: () => void
   onNotify: (msg: string) => void
 }
 
@@ -44,6 +46,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   adaptNoctalia = false,
   onToggleAdaptNoctalia,
   externalPalette,
+  syncSystemTheme = false,
+  onToggleSyncSystemTheme,
   onNotify,
 }) => {
   const [daemonRunning, setDaemonRunning] = useState(false)
@@ -464,6 +468,58 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="m3-select-arrow">▼</div>
             </div>
           </div>
+
+          {/* 推送：换壁纸时把配色交给系统，整个桌面一起变 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: '1px solid var(--m3-outline-variant)',
+            }}
+          >
+            <div style={{ maxWidth: 470 }}>
+              <div style={{ fontSize: 13, fontWeight: 800 }}>
+                换壁纸时同步整个系统主题
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                  lineHeight: 1.5,
+                }}
+              >
+                开启后，本应用根据当前壁纸算出的配色会写成系统调色板并切换过去，
+                GTK、Qt、终端等跟随主题的应用一起变色。<strong>不改变壁纸</strong>，
+                壁纸仍由本应用绘制，两者互不干扰。
+              </div>
+            </div>
+            <button
+              className={`wh-toggle-pill ${syncSystemTheme ? 'active' : ''}`}
+              style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+              onClick={onToggleSyncSystemTheme}
+            >
+              {syncSystemTheme ? '🌗 系统跟随本应用' : '🌗 系统主题不受影响'}
+            </button>
+          </div>
+
+          {syncSystemTheme && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--m3-fg-muted)',
+              }}
+            >
+              系统调色板来源会被切换为 community / NiriPaper（在 Noctalia 设置里可改回）
+            </div>
+          )}
 
           {/* 跟随系统调色板：只读，不改他人配置 */}
           <div

@@ -60,6 +60,7 @@ fn main() {
             commands::config_path,
             commands::export_palette,
             commands::read_external_palette,
+            commands::apply_system_palette,
             commands::load_local_wallpapers,
             commands::search_wallhaven,
             commands::download_wallhaven_wallpaper,
