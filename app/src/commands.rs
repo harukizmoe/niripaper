@@ -782,6 +782,12 @@ pub fn set_parallax_enabled(enabled: bool) -> Result<ParallaxConfig, String> {
         {
             if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
                 parallax.remove("off");
+                if !parallax.contains_key("duration_ms") {
+                    parallax.insert("duration_ms", toml_edit::value(600));
+                }
+                if !parallax.contains_key("curve") {
+                    parallax.insert("curve", toml_edit::value("ease-out-cubic"));
+                }
             }
             if anim.get("off").and_then(|v| v.as_bool()) == Some(true) {
                 anim.remove("off");
@@ -801,6 +807,11 @@ pub fn set_parallax_enabled(enabled: bool) -> Result<ParallaxConfig, String> {
                 anim.insert("parallax", Item::Table(toml_edit::Table::new()));
             }
             if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
+                // §2.17: `off` 不能与 duration_ms / curve 共存，写 off 前必须移除
+                parallax.remove("duration_ms");
+                parallax.remove("curve");
+                parallax.remove("spring");
+                parallax.remove("cubic_bezier");
                 parallax.insert("off", toml_edit::value(true));
             }
         }
@@ -842,6 +853,10 @@ pub fn save_parallax_config(cfg: ParallaxConfig) -> Result<String, String> {
                 parallax.insert("duration_ms", toml_edit::value(cfg.duration_ms as i64));
                 parallax.insert("curve", toml_edit::value(cfg.curve));
             } else {
+                parallax.remove("duration_ms");
+                parallax.remove("curve");
+                parallax.remove("spring");
+                parallax.remove("cubic_bezier");
                 parallax.insert("off", toml_edit::value(true));
             }
         }
