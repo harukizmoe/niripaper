@@ -244,10 +244,9 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
         className="card-media"
         style={{
           aspectRatio: wallpaper.aspect || '16 / 9',
-          // Transparent until there is something to show. An opaque fill here
-          // is what made a page of unloaded cards read as one white flash
-          // against dark wallpapers.
-          background: lazyLoad && !placed ? 'transparent' : 'var(--m3-surface-subtle)',
+          // Never a fill of its own: the card surface is pale in the light
+          // theme, and any gap between it and the image reads as a flash.
+          background: 'transparent',
         }}
       >
         {/* 骨架占位：图片解码完成前铺满卡片。它与图片的显隐由同一个 `placed`
@@ -268,16 +267,13 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           onError={() => {
             setImgSrc(FALLBACK_THUMB)
           }}
-          // A keyframes animation, not a transition on toggled inline styles:
-          // the transition form ran from a start value that was yanked in the
-          // same frame it ended, so the last step jumped.
-          className={lazyLoad && placed ? 'card-enter' : undefined}
+          // The entrance is scale only. `opacity` is used here purely as an
+          // on/off gate for "decoded yet" — it is 0 or 1, never animated, so
+          // the image is never shown blended with the card behind it.
+          className={
+            lazyLoad && placed ? 'card-enter' : undefined
+          }
           style={{
-            // Hidden until decoded, so it cannot paint a blank or partially
-            // decoded frame of its own over the skeleton.
-            // Hidden until decoded so it cannot paint a blank frame, and
-            // painted above the skeleton once it may show.
-            visibility: lazyLoad && !placed ? 'hidden' : undefined,
             position: 'relative',
             zIndex: 1,
             width: '100%',
@@ -285,8 +281,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
             objectFit: 'cover',
             display: 'block',
             borderRadius: 'inherit',
-            // Locked to the animation's start frame during the stagger delay,
-            // so the card cannot flash at full opacity first.
+            opacity: lazyLoad && !placed ? 0 : 1,
             animationDelay: lazyLoad ? `${staggerMs}ms` : undefined,
           }}
         />

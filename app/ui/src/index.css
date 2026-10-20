@@ -558,7 +558,10 @@
       overflow: hidden;
       cursor: pointer;
       position: relative;
-      background: var(--m3-surface);
+      /* No fill of its own: `--m3-surface` is pure #ffffff in the light theme,
+         so an opaque card painted a whole grid of unloaded cards white — the
+         flash. The image supplies its own colour once it is there. */
+      background: transparent;
       box-shadow: var(--m3-shadow-sm);
       transform: perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg);
       transition: transform 0.15s ease-out, box-shadow 0.25s ease;
@@ -621,28 +624,24 @@
        these wallpapers a light block reads as a white flash; an unloaded card
        is now simply empty. */
 
-    /* The entrance, as keyframes rather than a transition.
-       `backwards` is the load-bearing part: without it the delay window shows
-       the element's own (fully opaque) style, so every staggered card flashes
-       at full opacity and then jumps to 0 to start its fade. */
+    /* The entrance is motion only — it never touches opacity.
+       A fade starts at 0, so for its first frames the image is mixed with
+       whatever is behind it: a pale lavender card, in the light theme. That
+       translucent state is exactly what a screenshot of the "flash" showed.
+       Scaling a fully opaque image has nothing to show through. */
     @keyframes card-enter {
       from {
-        opacity: 0;
-        transform: scale(1.045) translateY(10px);
+        transform: scale(1.035);
       }
       to {
-        opacity: 1;
         transform: none;
       }
     }
     .card-media img.card-enter {
-      animation: card-enter 0.55s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+      animation: card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
     }
 
     @media (prefers-reduced-motion: reduce) {
-      /* The placeholder stops sweeping, and cards appear without motion: the
-         keyframes are replaced by nothing, so `animationend` never fires and
-         the component's timer drops the class instead. */
       .card-media img.card-enter {
         animation: none;
       }
