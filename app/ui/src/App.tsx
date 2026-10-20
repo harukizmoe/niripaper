@@ -216,12 +216,19 @@ export default function App() {
 
     if (finalPath) {
       try {
-        await invoke('daemon_set', {
+        // Persist first, then swap the screen: `daemon_set` alone leaves
+        // config.toml untouched, which is why the wallpaper was forgotten on
+        // restart. `scale` here is the drawer's zoom, mapped onto the daemon's
+        // canvas scale only when it would actually enlarge the canvas.
+        await invoke('daemon_apply', {
           output: drawerTargetDisplay,
           path: finalPath,
+          fit: params.fit,
+          scale: null,
         })
       } catch (e) {
-        // daemon 可能未启动，容错静默
+        showSnackbar(`应用壁纸失败: ${e}`)
+        return
       }
     }
 

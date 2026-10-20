@@ -772,6 +772,12 @@ fn run_output(
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
                     options.transition = reloaded.transition.clone();
+                    // `state` reports `config.values` straight out of this, so
+                    // a reload that does not store it leaves the panel showing
+                    // the values the daemon had at startup — the settings look
+                    // like they were ignored even though the renderer already
+                    // uses the new ones.
+                    options.config = Some(reloaded.clone());
                     // The transition owns its own settings, so a reload has to
                     // rebuild it — the same way the animators above are rebuilt
                     // rather than poked. Without this, editing `[transition]`

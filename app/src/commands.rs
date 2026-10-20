@@ -717,6 +717,23 @@ fn url_encode(s: &str) -> String {
 
 use toml_edit::{DocumentMut, Item};
 
+/// Set `key` in `table` **keeping the comments attached to it**.
+///
+/// `TableLike::insert` replaces the whole item, and the item owns its leading
+/// comments — so a plain `insert` silently deletes the documentation above a
+/// key. Verified: inserting over `# comment ON b\nb = 2` leaves `b = 20` with
+/// the comment gone. Assigning through the index form (`table[key] = value`)
+/// edits the value in place and keeps the decoration, so every write here goes
+/// through this helper. The shipped `config.toml` is heavily commented and the
+/// project promises those comments survive a write.
+fn set_keep_comments(table: &mut dyn toml_edit::TableLike, key: &str, value: toml_edit::Item) {
+    if let Some(existing) = table.get_mut(key) {
+        *existing = value;
+    } else {
+        table.insert(key, value);
+    }
+}
+
 /// Parallax and layout-reactive motion configuration parameters (§4).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ParallaxConfig {
@@ -838,10 +855,10 @@ pub fn set_parallax_enabled(enabled: bool) -> Result<ParallaxConfig, String> {
             if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
                 parallax.remove("off");
                 if !parallax.contains_key("duration_ms") {
-                    parallax.insert("duration_ms", toml_edit::value(600));
+                    set_keep_comments(parallax, "duration_ms", toml_edit::value(600));
                 }
                 if !parallax.contains_key("curve") {
-                    parallax.insert("curve", toml_edit::value("ease-out-cubic"));
+                    set_keep_comments(parallax, "curve", toml_edit::value("ease-out-cubic"));
                 }
             }
             if anim.get("off").and_then(|v| v.as_bool()) == Some(true) {
@@ -859,7 +876,7 @@ pub fn set_parallax_enabled(enabled: bool) -> Result<ParallaxConfig, String> {
             .and_then(|i| i.as_table_like_mut())
         {
             if !anim.contains_key("parallax") {
-                anim.insert("parallax", Item::Table(toml_edit::Table::new()));
+                set_keep_comments(anim, "parallax", Item::Table(toml_edit::Table::new()));
             }
             if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
                 // §2.17: `off` 不能与 duration_ms / curve 共存，写 off 前必须移除
@@ -867,7 +884,7 @@ pub fn set_parallax_enabled(enabled: bool) -> Result<ParallaxConfig, String> {
                 parallax.remove("curve");
                 parallax.remove("spring");
                 parallax.remove("cubic_bezier");
-                parallax.insert("off", toml_edit::value(true));
+                set_keep_comments(parallax, "off", toml_edit::value(true));
             }
         }
     }
@@ -897,33 +914,45 @@ pub fn save_parallax_config(cfg: ParallaxConfig) -> Result<String, String> {
         .get_mut("animations")
         .and_then(|i| i.as_table_like_mut())
     {
-        anim.insert("follow_niri", toml_edit::value(cfg.follow_niri));
+        set_keep_comments(anim, "follow_niri", toml_edit::value(cfg.follow_niri));
 
         if !anim.contains_key("parallax") {
-            anim.insert("parallax", Item::Table(toml_edit::Table::new()));
+            set_keep_comments(anim, "parallax", Item::Table(toml_edit::Table::new()));
         }
         if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
             if cfg.enabled {
                 parallax.remove("off");
-                parallax.insert("duration_ms", toml_edit::value(cfg.duration_ms as i64));
-                parallax.insert("curve", toml_edit::value(cfg.curve));
+                set_keep_comments(
+                    parallax,
+                    "duration_ms",
+                    toml_edit::value(cfg.duration_ms as i64),
+                );
+                set_keep_comments(parallax, "curve", toml_edit::value(cfg.curve));
             } else {
                 parallax.remove("duration_ms");
                 parallax.remove("curve");
                 parallax.remove("spring");
                 parallax.remove("cubic_bezier");
-                parallax.insert("off", toml_edit::value(true));
+                set_keep_comments(parallax, "off", toml_edit::value(true));
             }
         }
 
         if !anim.contains_key("overview-open-close") {
-            anim.insert("overview-open-close", Item::Table(toml_edit::Table::new()));
+            set_keep_comments(
+                anim,
+                "overview-open-close",
+                Item::Table(toml_edit::Table::new()),
+            );
         }
         if let Some(overview) = anim
             .get_mut("overview-open-close")
             .and_then(|i| i.as_table_like_mut())
         {
-            overview.insert("zoom", toml_edit::value(cfg.overview_zoom.clamp(0.5, 1.0)));
+            set_keep_comments(
+                overview,
+                "zoom",
+                toml_edit::value(cfg.overview_zoom.clamp(0.5, 1.0)),
+            );
         }
     }
 
@@ -1076,63 +1105,89 @@ pub fn get_transition_config() -> Result<TransitionConfig, String> {
     })
 }
 
-#[tauri::command]
-pub fn save_transition_config(cfg: TransitionConfig) -> Result<String, String> {
-    let (path, mut doc) = read_config_doc()?;
-
+/// The write half of [`save_transition_config`], as a pure function of the
+/// document, so it can be tested against the real `config.toml` shape.
+fn write_transition_to_doc(doc: &mut DocumentMut, cfg: &TransitionConfig) -> Result<(), String> {
     if !doc.contains_key("transition") {
         doc["transition"] = Item::Table(toml_edit::Table::new());
     }
-
-    if let Some(tr) = doc
+    let tr = doc
         .get_mut("transition")
         .and_then(|i| i.as_table_like_mut())
-    {
-        tr.insert("selection", toml_edit::value(cfg.selection));
-        tr.insert("effect", toml_edit::value(cfg.effect));
+        .ok_or("config.toml 的 transition 不是表")?;
 
-        let mut arr = toml_edit::Array::new();
-        for e in &cfg.effects {
-            arr.push(e.as_str());
-        }
-        tr.insert("effects", toml_edit::value(arr));
-
-        tr.insert(
-            "duration_ms",
-            toml_edit::value(cfg.duration_ms.max(50) as i64),
-        );
-        tr.insert("curve", toml_edit::value(cfg.curve.clone()));
-
-        if cfg.curve == "cubic-bezier" {
-            let cb = cfg.cubic_bezier.unwrap_or([0.42, 0.0, 0.58, 1.0]);
-            let mut cb_arr = toml_edit::Array::new();
-            for val in cb {
-                cb_arr.push(val);
-            }
-            tr.insert("cubic_bezier", toml_edit::value(cb_arr));
-        } else {
-            tr.remove("cubic_bezier");
-        }
-
-        tr.insert("allow_overshoot", toml_edit::value(cfg.allow_overshoot));
-        tr.insert("softness", toml_edit::value(cfg.softness.clamp(0.0, 1.0)));
-
-        let mut center_arr = toml_edit::Array::new();
-        center_arr.push(cfg.center_x.clamp(0.0, 1.0));
-        center_arr.push(cfg.center_y.clamp(0.0, 1.0));
-        tr.insert("center", toml_edit::value(center_arr));
-
-        tr.insert(
-            "start_radius",
-            toml_edit::value(cfg.start_radius.clamp(0.0, 1.0)),
-        );
-        tr.insert("hold_ms", toml_edit::value(cfg.hold_ms as i64));
-        tr.insert("stripes", toml_edit::value(cfg.stripes.clamp(2, 64) as i64));
-        tr.insert("push", toml_edit::value(cfg.push.clamp(0.0, 1.5)));
-        tr.insert("direction", toml_edit::value(cfg.direction));
-        tr.insert("on_start", toml_edit::value(cfg.on_start));
+    // An empty pool is not a valid configuration for `rotate`/`random`: the
+    // daemon rejects it and the reload silently keeps the old settings, which
+    // looks exactly like "my choice was ignored". Refuse it here instead, where
+    // the caller can show it.
+    if cfg.effects.is_empty() {
+        return Err("过渡候选池不能为空：至少保留 1 款效果".to_owned());
     }
 
+    set_keep_comments(tr, "selection", toml_edit::value(cfg.selection.clone()));
+    set_keep_comments(tr, "effect", toml_edit::value(cfg.effect.clone()));
+
+    let mut arr = toml_edit::Array::new();
+    for e in &cfg.effects {
+        arr.push(e.as_str());
+    }
+    set_keep_comments(tr, "effects", toml_edit::value(arr));
+
+    set_keep_comments(
+        tr,
+        "duration_ms",
+        toml_edit::value(cfg.duration_ms.max(50) as i64),
+    );
+    set_keep_comments(tr, "curve", toml_edit::value(cfg.curve.clone()));
+
+    if cfg.curve == "cubic-bezier" {
+        let cb = cfg.cubic_bezier.unwrap_or([0.42, 0.0, 0.58, 1.0]);
+        let mut cb_arr = toml_edit::Array::new();
+        for val in cb {
+            cb_arr.push(val);
+        }
+        set_keep_comments(tr, "cubic_bezier", toml_edit::value(cb_arr));
+    } else {
+        tr.remove("cubic_bezier");
+    }
+
+    set_keep_comments(tr, "allow_overshoot", toml_edit::value(cfg.allow_overshoot));
+    set_keep_comments(
+        tr,
+        "softness",
+        toml_edit::value(cfg.softness.clamp(0.0, 1.0)),
+    );
+
+    let mut center_arr = toml_edit::Array::new();
+    center_arr.push(cfg.center_x.clamp(0.0, 1.0));
+    center_arr.push(cfg.center_y.clamp(0.0, 1.0));
+    set_keep_comments(tr, "center", toml_edit::value(center_arr));
+
+    // `hold_ms` has to stay strictly shorter than `duration_ms`, or the daemon
+    // refuses the whole file (§2.17-style cross-key check).
+    let duration = cfg.duration_ms.max(50);
+    let hold = cfg.hold_ms.min(duration.saturating_sub(1));
+    set_keep_comments(
+        tr,
+        "start_radius",
+        toml_edit::value(cfg.start_radius.clamp(0.0, 1.0)),
+    );
+    set_keep_comments(tr, "hold_ms", toml_edit::value(hold as i64));
+    set_keep_comments(
+        tr,
+        "stripes",
+        toml_edit::value(cfg.stripes.clamp(2, 64) as i64),
+    );
+    set_keep_comments(tr, "push", toml_edit::value(cfg.push.clamp(0.0, 1.5)));
+    set_keep_comments(tr, "direction", toml_edit::value(cfg.direction.clone()));
+    set_keep_comments(tr, "on_start", toml_edit::value(cfg.on_start));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn save_transition_config(cfg: TransitionConfig) -> Result<String, String> {
+    let (path, mut doc) = read_config_doc()?;
+    write_transition_to_doc(&mut doc, &cfg)?;
     write_config_atomic(&path, &doc)?;
     Ok("过渡效果参数已写入 config.toml 并即时热重载".to_owned())
 }
@@ -1161,4 +1216,299 @@ pub fn trigger_test_transition(
         output: None,
         path: path.into(),
     })
+}
+
+/// The write half of [`daemon_apply`], as a pure function of the document, so
+/// it can be tested without a daemon or a real config file.
+///
+/// `*` writes the global keys; a name writes that output's table. Both are the
+/// same two keys, which is why one helper serves both.
+fn apply_wallpaper_to_doc(
+    doc: &mut DocumentMut,
+    output: &str,
+    path: &str,
+    fit: Option<&str>,
+    scale: Option<f64>,
+) -> Result<(), String> {
+    let write = |table: &mut dyn toml_edit::TableLike| {
+        set_keep_comments(table, "wallpaper", toml_edit::value(path));
+        if let Some(fit) = fit {
+            set_keep_comments(table, "fit", toml_edit::value(fit));
+        }
+    };
+
+    if output == EVERY_OUTPUT {
+        write(doc.as_table_mut());
+    } else {
+        if !doc.contains_key("outputs") {
+            doc["outputs"] = Item::Table(toml_edit::Table::new());
+        }
+        let outputs = doc
+            .get_mut("outputs")
+            .and_then(|i| i.as_table_like_mut())
+            .ok_or("config.toml 的 outputs 不是表")?;
+        if !outputs.contains_key(output) {
+            outputs.insert(output, Item::Table(toml_edit::Table::new()));
+        }
+        let table = outputs
+            .get_mut(output)
+            .and_then(|i| i.as_table_like_mut())
+            .ok_or_else(|| format!("outputs.{output} 不是表"))?;
+        write(table);
+    }
+
+    // `scale` is global only (the parallax operates on one shared canvas).
+    if let Some(scale) = scale {
+        doc["scale"] = toml_edit::value(scale.clamp(1.0, 1.35));
+    }
+    Ok(())
+}
+
+/// Apply a wallpaper *and* write it to `config.toml`, so a restart comes back
+/// to the same wallpaper and fit. `set` alone only swaps what is on screen (§2:
+/// it deliberately does not touch the configuration) — that is why the choice
+/// used to be forgotten on restart.
+#[tauri::command]
+pub fn daemon_apply(
+    connection: State<'_, Connection>,
+    output: String,
+    path: String,
+    fit: Option<String>,
+    scale: Option<f64>,
+) -> Result<String, String> {
+    // Write first: if the configuration cannot be saved, say so before the
+    // screen changes, so what is on screen and what is on disk never diverge.
+    let (config_path, mut doc) = read_config_doc()?;
+    apply_wallpaper_to_doc(&mut doc, &output, &path, fit.as_deref(), scale)?;
+    write_config_atomic(&config_path, &doc)?;
+
+    // Then swap what is on screen, through the same path `set` uses.
+    let target = (output != EVERY_OUTPUT).then_some(output);
+    connection.send(&Request::Set {
+        output: target,
+        path: path.into(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The drawer used to offer `cover`, which is not one of the daemon's fits
+    /// (`fill` is). Writing it straight through made the daemon reject the
+    /// whole configuration on reload — so the wallpaper looked applied and then
+    /// vanished on the next restart. This pins the names the panel may send.
+    #[test]
+    fn every_drawer_fit_name_is_a_real_fit() {
+        for name in ["fill", "fit", "stretch", "center", "tile"] {
+            assert!(
+                niripaper_proto::domain::Fit::parse(name).is_ok(),
+                "{name} must be a daemon fit"
+            );
+        }
+        assert!(niripaper_proto::domain::Fit::parse("cover").is_err());
+    }
+
+    /// Applying a wallpaper has to survive a restart, which means it has to be
+    /// in the document — not only on screen.
+    #[test]
+    fn applying_writes_the_global_keys() {
+        let mut doc = DocumentMut::new();
+        apply_wallpaper_to_doc(&mut doc, EVERY_OUTPUT, "/w/a.png", Some("fit"), None).unwrap();
+        assert_eq!(doc["wallpaper"].as_str(), Some("/w/a.png"));
+        assert_eq!(doc["fit"].as_str(), Some("fit"));
+    }
+
+    /// A named output goes into its own table, and the global keys are left
+    /// alone: applying to one monitor must not repaint the others on restart.
+    #[test]
+    fn applying_to_one_output_does_not_touch_the_globals() {
+        let mut doc = "wallpaper = \"/w/global.png\"\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        apply_wallpaper_to_doc(&mut doc, "DP-1", "/w/dp1.png", Some("fill"), None).unwrap();
+        assert_eq!(doc["wallpaper"].as_str(), Some("/w/global.png"));
+        assert_eq!(
+            doc["outputs"]["DP-1"]["wallpaper"].as_str(),
+            Some("/w/dp1.png")
+        );
+        assert_eq!(doc["outputs"]["DP-1"]["fit"].as_str(), Some("fill"));
+    }
+
+    /// Comments are the reason this writes through `toml_edit` at all; a
+    /// round-trip that dropped them would silently destroy the documented
+    /// config the project ships.
+    #[test]
+    fn applying_keeps_the_comments() {
+        let mut doc = "# keep me\nwallpaper = \"/w/a.png\"\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        apply_wallpaper_to_doc(&mut doc, EVERY_OUTPUT, "/w/b.png", None, None).unwrap();
+        assert!(doc.to_string().contains("# keep me"));
+        assert!(doc.to_string().contains("\"/w/b.png\""));
+    }
+
+    /// The scale clamp is the daemon's `MAX_SCALE`: writing a larger one would
+    /// make the file fail to parse on the very next reload.
+    #[test]
+    fn applying_clamps_scale_to_the_supported_range() {
+        let mut doc = DocumentMut::new();
+        apply_wallpaper_to_doc(&mut doc, EVERY_OUTPUT, "/w/a.png", None, Some(9.0)).unwrap();
+        assert_eq!(doc["scale"].as_float(), Some(1.35));
+
+        let mut doc = DocumentMut::new();
+        apply_wallpaper_to_doc(&mut doc, EVERY_OUTPUT, "/w/a.png", None, Some(0.2)).unwrap();
+        assert_eq!(doc["scale"].as_float(), Some(1.0));
+    }
+
+    fn sample_transition() -> TransitionConfig {
+        TransitionConfig {
+            selection: "rotate".to_owned(),
+            effect: "portal".to_owned(),
+            effects: vec!["portal".to_owned(), "iris".to_owned()],
+            duration_ms: 1800,
+            curve: "cubic-bezier".to_owned(),
+            cubic_bezier: Some([0.42, 0.0, 0.58, 1.0]),
+            allow_overshoot: false,
+            softness: 0.3,
+            center_x: 0.5,
+            center_y: 0.5,
+            start_radius: 0.08,
+            hold_ms: 0,
+            stripes: 12,
+            push: 0.55,
+            direction: "right".to_owned(),
+            on_start: true,
+        }
+    }
+
+    /// The whole point of the write: what it produces has to be a configuration
+    /// the daemon accepts. A save the daemon then rejects is indistinguishable
+    /// from "the setting did nothing", which is the bug being fixed.
+    #[test]
+    fn a_written_transition_is_accepted_by_the_daemon() {
+        let mut doc = DocumentMut::new();
+        write_transition_to_doc(&mut doc, &sample_transition()).unwrap();
+        niripaper_proto::config::Config::parse_without_niri(&doc.to_string())
+            .expect("the daemon must accept what the panel writes");
+    }
+
+    /// Every value the sliders can produce has to round-trip through the
+    /// parser, including the ends of each range.
+    #[test]
+    fn the_ends_of_every_range_are_still_valid_configuration() {
+        let ends: [(u64, u64, f64, f64, u32, f64, f64); 4] = [
+            // duration, hold, softness, start_radius, stripes, push, center
+            (50, 0, 0.0, 0.0, 2, 0.0, 0.0),
+            (3000, 600, 1.0, 0.5, 64, 1.5, 1.0),
+            (100, 0, 0.3, 0.08, 12, 0.55, 0.5),
+            (400, 399, 0.5, 0.25, 8, 0.75, 0.25),
+        ];
+        for (duration_ms, hold_ms, softness, start_radius, stripes, push, center) in ends {
+            let mut cfg = sample_transition();
+            cfg.duration_ms = duration_ms;
+            cfg.hold_ms = hold_ms;
+            cfg.softness = softness;
+            cfg.start_radius = start_radius;
+            cfg.stripes = stripes;
+            cfg.push = push;
+            cfg.center_x = center;
+            cfg.center_y = center;
+            let mut doc = DocumentMut::new();
+            write_transition_to_doc(&mut doc, &cfg).unwrap();
+            niripaper_proto::config::Config::parse_without_niri(&doc.to_string())
+                .unwrap_or_else(|e| panic!("{cfg:?} produced an invalid config: {e}"));
+        }
+    }
+
+    /// `hold_ms` must stay below `duration_ms`, so a slider combination that
+    /// would violate it (hold 600 with duration 100) has to be clamped rather
+    /// than written out and rejected.
+    #[test]
+    fn hold_is_clamped_below_the_duration() {
+        let mut cfg = sample_transition();
+        cfg.duration_ms = 100;
+        cfg.hold_ms = 600;
+        let mut doc = DocumentMut::new();
+        write_transition_to_doc(&mut doc, &cfg).unwrap();
+        let written = doc["transition"]["hold_ms"].as_integer().unwrap();
+        assert!(written < 100, "hold {written} must be below the duration");
+        niripaper_proto::config::Config::parse_without_niri(&doc.to_string())
+            .expect("clamped hold must still parse");
+    }
+
+    /// The daemon rejects `selection = rotate` with an empty pool, so the write
+    /// has to refuse it instead of producing a file the next reload discards.
+    #[test]
+    fn an_empty_pool_is_refused_rather_than_written() {
+        let mut cfg = sample_transition();
+        cfg.effects.clear();
+        let mut doc = DocumentMut::new();
+        let err = write_transition_to_doc(&mut doc, &cfg).expect_err("must refuse");
+        assert!(err.contains("不能为空"), "{err}");
+    }
+
+    /// `cubic-bezier` needs its four points; dropping the key while the curve
+    /// still names it makes the file fail to parse (§5).
+    #[test]
+    fn cubic_bezier_is_dropped_only_when_the_curve_does_not_need_it() {
+        let mut cfg = sample_transition();
+        cfg.curve = "ease-out-cubic".to_owned();
+        let mut doc = DocumentMut::new();
+        write_transition_to_doc(&mut doc, &cfg).unwrap();
+        assert!(doc["transition"].get("cubic_bezier").is_none());
+        niripaper_proto::config::Config::parse_without_niri(&doc.to_string()).unwrap();
+
+        cfg.curve = "cubic-bezier".to_owned();
+        let mut doc = DocumentMut::new();
+        write_transition_to_doc(&mut doc, &cfg).unwrap();
+        assert!(doc["transition"].get("cubic_bezier").is_some());
+        niripaper_proto::config::Config::parse_without_niri(&doc.to_string()).unwrap();
+    }
+
+    /// The real file, end to end: a full write keeps every comment and the
+    /// result is what the daemon will actually load. Skipped when the user has
+    /// no config yet (a fresh checkout), never skipped silently otherwise.
+    #[test]
+    fn a_real_config_survives_a_full_write() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let path = std::path::PathBuf::from(home).join(".config/niripaper/config.toml");
+        let Ok(before) = std::fs::read_to_string(&path) else {
+            return;
+        };
+
+        let comments_before = before
+            .lines()
+            .filter(|l| l.trim_start().starts_with('#'))
+            .count();
+        let keys_before = before.lines().filter(|l| l.contains('=')).count();
+
+        let mut doc = before.parse::<DocumentMut>().expect("the file parses");
+        let mut cfg = sample_transition();
+        cfg.push = 0.85;
+        write_transition_to_doc(&mut doc, &cfg).expect("writes");
+        let after = doc.to_string();
+
+        assert_eq!(
+            comments_before,
+            after
+                .lines()
+                .filter(|l| l.trim_start().starts_with('#'))
+                .count(),
+            "a write must not delete documentation"
+        );
+        assert_eq!(
+            keys_before,
+            after.lines().filter(|l| l.contains('=')).count(),
+            "a write must not add or drop keys"
+        );
+        let parsed = niripaper_proto::config::Config::parse_without_niri(&after)
+            .expect("the daemon must accept what the panel writes");
+        assert_eq!(
+            parsed.transition.push, 0.85,
+            "the value has to be the one asked for"
+        );
+    }
 }

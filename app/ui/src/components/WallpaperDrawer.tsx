@@ -43,7 +43,7 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
   onAddToPlaylist,
   onSearchTag,
 }) => {
-  const [fit, setFit] = useState('cover')
+  const [fit, setFit] = useState('fill')
   const [scale, setScale] = useState(1.2)
   const [preset, setPreset] = useState<PresetKey>('none')
   const [filters, setFilters] = useState<FilterValues>(PRESETS.none)
@@ -398,10 +398,11 @@ export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
                     value={fit}
                     onChange={(e) => setFit(e.target.value)}
                   >
-                    <option value="cover">cover (比例填满)</option>
-                    <option value="fill">fill (拉伸铺满)</option>
+                    <option value="fill">fill (比例填满)</option>
                     <option value="fit">fit (保留加黑边)</option>
+                    <option value="stretch">stretch (拉伸铺满)</option>
                     <option value="center">center (居中不缩放)</option>
+                    <option value="tile">tile (平铺重复)</option>
                   </select>
                   <div className="m3-select-arrow">▼</div>
                 </div>

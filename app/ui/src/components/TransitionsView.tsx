@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { transitions, type TransitionItem } from '../data/wallpapers'
 import { invoke } from '../hooks/useDaemon'
 
@@ -58,7 +58,14 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
   const [push, setPush] = useState<number>(0.55)
   const [startRadius, setStartRadius] = useState<number>(0.0)
   const [hold, setHold] = useState<number>(0)
+  const [cubicBezier, setCubicBezier] = useState<[number, number, number, number]>([
+    0.42, 0.0, 0.58, 1.0,
+  ])
   const [saving, setSaving] = useState(false)
+  // 首次读取完成前禁止自动保存：否则挂载会用初始 state 覆盖用户已有配置。
+  const [loaded, setLoaded] = useState(false)
+  // 只有用户真的动过控件，写盘才会发生。
+  const dirtyRef = useRef(false)
 
   // 组件挂载时读取 config.toml 中的真实过渡配置
   useEffect(() => {
@@ -71,6 +78,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
         }
         setDuration(cfg.duration_ms)
         setCurve(cfg.curve)
+        if (cfg.cubic_bezier) setCubicBezier(cfg.cubic_bezier)
         setAllowOvershoot(cfg.allow_overshoot)
         setSoftness(cfg.softness)
         setCenterX(Math.round(cfg.center_x * 100))
@@ -86,42 +94,65 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
             ? cfg.effect
             : cfg.effects[0] || 'portal'
         )
+        setLoaded(true)
       })
       .catch((err) => {
         console.warn('获取过渡动画配置失败:', err)
+        onNotify(`读取过渡配置失败: ${err}`)
       })
-  }, [])
+  }, [onNotify])
 
-  // 保存并写回 config.toml
-  const handleSaveConfig = async (override?: Partial<TransitionConfig>) => {
-    setSaving(true)
-    const payload: TransitionConfig = {
-      selection,
-      effect: fixedEffect,
-      effects: poolEffects,
-      duration_ms: duration,
-      curve,
-      cubic_bezier: [0.42, 0.0, 0.58, 1.0],
-      allow_overshoot: allowOvershoot,
-      softness,
-      center_x: centerX / 100,
-      center_y: centerY / 100,
-      start_radius: startRadius,
-      hold_ms: hold,
-      stripes,
-      push,
-      direction,
-      on_start: onStart,
-      ...override,
-    }
+  // 当前完整配置。自动保存只依赖它的 JSON，而不是十几个 setter。
+  const config: TransitionConfig = {
+    selection,
+    effect: fixedEffect,
+    effects: poolEffects,
+    duration_ms: duration,
+    curve,
+    cubic_bezier: cubicBezier,
+    allow_overshoot: allowOvershoot,
+    softness,
+    center_x: centerX / 100,
+    center_y: centerY / 100,
+    start_radius: startRadius,
+    hold_ms: hold,
+    stripes,
+    push,
+    direction,
+    on_start: onStart,
+  }
+  const configJson = JSON.stringify(config)
 
-    try {
-      const res = await invoke<string>('save_transition_config', { cfg: payload })
-      onNotify(res)
-    } catch (e) {
-      onNotify(`保存过渡配置失败: ${e}`)
-    } finally {
-      setSaving(false)
+  const handleSaveConfig = useCallback(
+    async (next: TransitionConfig) => {
+      setSaving(true)
+      try {
+        await invoke<string>('save_transition_config', { cfg: next })
+        return true
+      } catch (e) {
+        onNotify(`保存过渡配置失败: ${e}`)
+        return false
+      } finally {
+        setSaving(false)
+      }
+    },
+    [onNotify]
+  )
+
+  // 滑块/开关自动保存：停止拖动 400ms 后写盘，避免拖动过程中反复改文件。
+  useEffect(() => {
+    if (!loaded || !dirtyRef.current) return
+    const timer = window.setTimeout(() => {
+      void handleSaveConfig(JSON.parse(configJson) as TransitionConfig)
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [configJson, loaded, handleSaveConfig])
+
+  /// 包一层 setter：用户一动手就标记 dirty，自动保存才会接管。
+  function edit<T>(setter: (v: T) => void) {
+    return (value: T) => {
+      dirtyRef.current = true
+      setter(value)
     }
   }
 
@@ -130,7 +161,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
     setInspectEffect(tr.id)
     if (selection === 'fixed') {
       setFixedEffect(tr.id)
-      void handleSaveConfig({ effect: tr.id })
+      void handleSaveConfig({ ...config, effect: tr.id })
       onNotify(`已设为全局固定过渡效果并保存至配置：${tr.name}`)
     } else {
       onNotify(`已激活参数面板：${tr.name}`)
@@ -149,17 +180,17 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
       ? poolEffects.filter((item) => item !== id)
       : [...poolEffects, id]
     setPoolEffects(updated)
-    void handleSaveConfig({ effects: updated })
+    void handleSaveConfig({ ...config, effects: updated })
     onNotify(exists ? `已从轮播池移除：${id}` : `已加入轮播候选池并保存：${id}`)
   }
 
-  // 触发真实桌面预览动效
+  // 触发真实桌面预览动效：先落盘（守护进程热重载），再派发换图。
   const handlePreview = async () => {
+    onNotify('⚡ 正在保存配置并在桌面上触发换图过渡...')
+    if (!(await handleSaveConfig(config))) return
     try {
-      await handleSaveConfig()
-      onNotify('⚡ 正在桌面上触发换图过渡动画...')
       await invoke<string>('trigger_test_transition')
-      onNotify(`✨ 换图过渡动画已在桌面背景层成功播放！`)
+      onNotify('✨ 换图过渡动画已在桌面背景层成功播放！')
     } catch (e) {
       onNotify(`触发过渡动画失败: ${e}`)
     }
@@ -223,7 +254,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
           <button
             className="wh-toggle-pill active"
             style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
-            onClick={() => void handleSaveConfig()}
+            onClick={() => void handleSaveConfig(config)}
             disabled={saving}
           >
             {saving ? '⏳ 保存中...' : '💾 保存并应用配置'}
@@ -290,7 +321,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('fixed')
-                  void handleSaveConfig({ selection: 'fixed' })
+                  void handleSaveConfig({ ...config, selection: 'fixed' })
                   onNotify('已切换为：单一固定效果模式并保存至 config.toml')
                 }}
               >
@@ -303,7 +334,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('rotate')
-                  void handleSaveConfig({ selection: 'rotate' })
+                  void handleSaveConfig({ ...config, selection: 'rotate' })
                   onNotify('已切换为：候选池顺序轮播模式并保存至 config.toml')
                 }}
               >
@@ -316,7 +347,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('random')
-                  void handleSaveConfig({ selection: 'random' })
+                  void handleSaveConfig({ ...config, selection: 'random' })
                   onNotify('已切换为：候选池随机抽选模式并保存至 config.toml')
                 }}
               >
@@ -358,7 +389,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 max="3000"
                 step="50"
                 value={duration}
-                onChange={(e) => setDuration(parseInt(e.target.value))}
+                onChange={(e) => edit(setDuration)(parseInt(e.target.value) || 1500)}
               />
             </div>
 
@@ -371,7 +402,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 <select
                   className="m3-select"
                   value={curve}
-                  onChange={(e) => setCurve(e.target.value)}
+                  onChange={(e) => edit(setCurve)(e.target.value)}
                 >
                   <option value="ease-out-cubic">ease-out-cubic (推荐默认)</option>
                   <option value="ease-out-quad">ease-out-quad</option>
@@ -398,7 +429,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
               <button
                 className={`wh-toggle-pill ${allowOvershoot ? 'active' : ''}`}
                 style={{ height: 38, width: '100%', fontWeight: 700 }}
-                onClick={() => setAllowOvershoot((v) => !v)}
+                onClick={() => { dirtyRef.current = true; setAllowOvershoot((v) => !v) }}
               >
                 {allowOvershoot ? '☑ 允许曲线反弹' : '☐ 限制 0..1 夹紧'}
               </button>
@@ -419,7 +450,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
               <button
                 className={`wh-toggle-pill ${onStart ? 'active' : ''}`}
                 style={{ height: 38, width: '100%', fontWeight: 700 }}
-                onClick={() => setOnStart((v) => !v)}
+                onClick={() => { dirtyRef.current = true; setOnStart((v) => !v) }}
               >
                 {onStart ? '☑ 开机登录播演' : '☐ 登录时硬切'}
               </button>
@@ -633,6 +664,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
               className="wh-clear-btn"
               style={{ height: 32, padding: '0 14px' }}
               onClick={() => {
+                dirtyRef.current = true
                 setDirection('right')
                 setSoftness(0.3)
                 setCenterX(50)
@@ -641,7 +673,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 setPush(0.55)
                 setStartRadius(0.0)
                 setHold(0)
-                onNotify('已恢复专属参数默认值')
+                onNotify('已恢复专属参数默认值（并自动保存）')
               }}
             >
               ↺ 重置此效果参数
@@ -685,7 +717,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         direction === 'left' ? 'active' : ''
                       }`}
                       style={{ flex: 1 }}
-                      onClick={() => setDirection('left')}
+                      onClick={() => edit(setDirection)('left')}
                     >
                       ⬅️ 向左
                     </button>
@@ -694,7 +726,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         direction === 'right' ? 'active' : ''
                       }`}
                       style={{ flex: 1 }}
-                      onClick={() => setDirection('right')}
+                      onClick={() => edit(setDirection)('right')}
                     >
                       ➡️ 向右
                     </button>
@@ -703,7 +735,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         direction === 'up' ? 'active' : ''
                       }`}
                       style={{ flex: 1 }}
-                      onClick={() => setDirection('up')}
+                      onClick={() => edit(setDirection)('up')}
                     >
                       ⬆️ 向上
                     </button>
@@ -712,7 +744,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         direction === 'down' ? 'active' : ''
                       }`}
                       style={{ flex: 1 }}
-                      onClick={() => setDirection('down')}
+                      onClick={() => edit(setDirection)('down')}
                     >
                       ⬇️ 向下
                     </button>
@@ -736,7 +768,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         step="0.05"
                         value={push.toFixed(2)}
                         onChange={(e) =>
-                          setPush(parseFloat(e.target.value) || 0.55)
+                          edit(setPush)(parseFloat(e.target.value) || 0.55)
                         }
                       />
                       <span className="m3-num-badge-unit">x</span>
@@ -749,7 +781,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                     max="1.0"
                     step="0.05"
                     value={push}
-                    onChange={(e) => setPush(parseFloat(e.target.value))}
+                    onChange={(e) => edit(setPush)(parseFloat(e.target.value))}
                   />
                   <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
                     Portal 专属：穿过虫洞时旧画面向外推挤的幅度（0 为 Iris）。
@@ -771,7 +803,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         max="64"
                         value={stripes}
                         onChange={(e) =>
-                          setStripes(parseInt(e.target.value) || 12)
+                          edit(setStripes)(parseInt(e.target.value) || 12)
                         }
                       />
                       <span className="m3-num-badge-unit">条</span>
@@ -783,7 +815,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                     min="2"
                     max="64"
                     value={stripes}
-                    onChange={(e) => setStripes(parseInt(e.target.value))}
+                    onChange={(e) => edit(setStripes)(parseInt(e.target.value))}
                   />
                   <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
                     Stripes 专属：边缘被细分为多少并行推进的等宽切带。
@@ -804,7 +836,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         step="20"
                         value={hold}
                         onChange={(e) =>
-                          setHold(parseInt(e.target.value) || 0)
+                          edit(setHold)(parseInt(e.target.value) || 0)
                         }
                       />
                       <span className="m3-num-badge-unit">ms</span>
@@ -817,7 +849,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                     max="600"
                     step="20"
                     value={hold}
-                    onChange={(e) => setHold(parseInt(e.target.value))}
+                    onChange={(e) => edit(setHold)(parseInt(e.target.value))}
                   />
                   <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
                     让初生光圈在起步前悬停瞬间，让人眼看清成型形状。
@@ -840,7 +872,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         step="0.02"
                         value={startRadius.toFixed(2)}
                         onChange={(e) =>
-                          setStartRadius(parseFloat(e.target.value) || 0.0)
+                          edit(setStartRadius)(parseFloat(e.target.value) || 0.0)
                         }
                       />
                     </div>
@@ -852,7 +884,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                     max="0.5"
                     step="0.02"
                     value={startRadius}
-                    onChange={(e) => setStartRadius(parseFloat(e.target.value))}
+                    onChange={(e) => edit(setStartRadius)(parseFloat(e.target.value))}
                   />
                   <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
                     默认 0.0 从单点成型；大于 0 时首帧即为一个成型圆环。
@@ -875,7 +907,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                         step="0.05"
                         value={softness.toFixed(2)}
                         onChange={(e) =>
-                          setSoftness(parseFloat(e.target.value) || 0.3)
+                          edit(setSoftness)(parseFloat(e.target.value) || 0.3)
                         }
                       />
                     </div>
@@ -887,7 +919,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                     max="1.0"
                     step="0.05"
                     value={softness}
-                    onChange={(e) => setSoftness(parseFloat(e.target.value))}
+                    onChange={(e) => edit(setSoftness)(parseFloat(e.target.value))}
                   />
                   <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
                     0 为刀削般锋利硬边，1 为极柔和弥散渐隐过渡带。
@@ -914,7 +946,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                       min="0"
                       max="100"
                       value={centerX}
-                      onChange={(e) => setCenterX(parseInt(e.target.value))}
+                      onChange={(e) => edit(setCenterX)(parseInt(e.target.value))}
                     />
                     <span style={{ fontSize: 10, color: 'var(--m3-fg-muted)' }}>Y:</span>
                     <input
@@ -923,7 +955,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                       min="0"
                       max="100"
                       value={centerY}
-                      onChange={(e) => setCenterY(parseInt(e.target.value))}
+                      onChange={(e) => edit(setCenterY)(parseInt(e.target.value))}
                     />
                   </div>
                   <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>

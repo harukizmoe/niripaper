@@ -52,6 +52,7 @@ fn main() {
             commands::daemon_state,
             commands::daemon_query,
             commands::daemon_set,
+            commands::daemon_apply,
             commands::daemon_kill,
             commands::daemon_start,
             commands::daemon_status_info,
