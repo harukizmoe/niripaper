@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { invoke } from '../hooks/useDaemon'
+import {
+  SCHEME_LABELS,
+  SCHEME_NAMES,
+  DEFAULT_SCHEME,
+  type SchemeName,
+} from '../theme/schemes'
 
 interface SettingsViewProps {
   followWallpaper: boolean
@@ -9,6 +15,8 @@ interface SettingsViewProps {
   onToggleEnableBlur?: () => void
   lazyLoad?: boolean
   onToggleLazyLoad?: () => void
+  colorScheme?: SchemeName
+  onColorSchemeChange?: (next: SchemeName) => void
   onNotify: (msg: string) => void
 }
 
@@ -26,6 +34,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onToggleEnableBlur,
   lazyLoad = true,
   onToggleLazyLoad,
+  colorScheme = DEFAULT_SCHEME,
+  onColorSchemeChange,
   onNotify,
 }) => {
   const [daemonRunning, setDaemonRunning] = useState(false)
@@ -402,6 +412,49 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <span style={{ fontWeight: 700 }}>
               当前取色种子: {seedColor.toUpperCase()}
             </span>
+          </div>
+
+          {/* 取色方案：决定同一个种子被如何派生为一整套配色 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              paddingTop: 12,
+              borderTop: '1px solid var(--m3-outline-variant)',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800 }}>壁纸取色方案</div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                  maxWidth: 460,
+                }}
+              >
+                决定同一个取色种子派生出的整套配色风格。只影响本应用，不改变系统主题。
+              </div>
+            </div>
+            <div className="m3-select-wrapper" style={{ minWidth: 240 }}>
+              <select
+                className="m3-select"
+                value={colorScheme}
+                onChange={(e) =>
+                  onColorSchemeChange?.(e.target.value as SchemeName)
+                }
+              >
+                {SCHEME_NAMES.map((name) => (
+                  <option key={name} value={name}>
+                    {SCHEME_LABELS[name]}
+                  </option>
+                ))}
+              </select>
+              <div className="m3-select-arrow">▼</div>
+            </div>
           </div>
         </div>
 

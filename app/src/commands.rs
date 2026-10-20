@@ -135,6 +135,51 @@ pub fn config_path() -> Option<String> {
     niripaper_proto::config::default_path().map(|path| path.display().to_string())
 }
 
+/// Write the current palette to `~/.cache/niripaper/palette.toml`.
+///
+/// This is the app's *export* side: a neutral, standard Material-3 keyed file
+/// that any other tool may read — a status bar, an editor theme, a compositor
+/// hook. Nothing here reads anyone else's palette, and nothing writes outside
+/// this one file, so niripaper keeps working on a machine with no other theming
+/// daemon installed.
+///
+/// The UI computes the scheme (it owns the colour maths), so the tokens arrive
+/// already resolved; this only serialises and writes them atomically.
+#[tauri::command]
+pub fn export_palette(
+    seed: String,
+    scheme: String,
+    dark: bool,
+    tokens: BTreeMap<String, String>,
+) -> Result<String, String> {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .ok_or("无法确定缓存目录（XDG_CACHE_HOME / HOME 都未设置）")?;
+    let dir = cache.join("niripaper");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 {} 失败: {e}", dir.display()))?;
+    let path = dir.join("palette.toml");
+
+    let mut doc = String::from(
+        "# NiriPaper palette — generated from the current wallpaper.\n\
+         # Standard Material 3 token names; free to read.\n\
+         # NiriPaper works without this file and without anyone reading it.\n\n",
+    );
+    doc.push_str(&format!("seed = {seed:?}\nscheme = {scheme:?}\n"));
+    doc.push_str(&format!(
+        "mode = {:?}\n\n",
+        if dark { "dark" } else { "light" }
+    ));
+    for (key, value) in &tokens {
+        doc.push_str(&format!("{key} = {value:?}\n"));
+    }
+
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, doc).map_err(|e| format!("写入临时调色板失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("替换调色板失败: {e}"))?;
+    Ok(path.display().to_string())
+}
+
 /// Check whether autostart (systemd user service or XDG autostart) is configured.
 #[tauri::command]
 pub fn get_autostart_status() -> bool {
@@ -715,6 +760,7 @@ fn url_encode(s: &str) -> String {
     encoded
 }
 
+use std::collections::BTreeMap;
 use toml_edit::{DocumentMut, Item};
 
 /// Set `key` in `table` **keeping the comments attached to it**.

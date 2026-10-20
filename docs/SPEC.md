@@ -126,6 +126,30 @@ niripaper（Rust 守护进程）
 
 ---
 
+## 3.1 桌面应用的取色方案
+
+桌面应用（`app/`）自己根据当前壁纸算一套 M3 配色，**不依赖任何外部主题守护进程**。
+
+- 算法在 `app/ui/src/theme/materialYou.ts`（OKLCH），方案参数在
+  `app/ui/src/theme/schemes.ts`。
+- 六个方案：`m3-tonal-spot` / `m3-content` / `m3-fruit-salad` / `m3-rainbow` /
+  `m3-monochrome` / `faithful`。名字与 Noctalia 的取色方案同名，参数由四张差异
+  很大的壁纸交叉实测反推，`scripts/compare-schemes.mts` 可随时对拍。
+  实测色相误差 ≤13°；它不是官方公式，也不承诺逐像素一致。
+- 只保留这六个：Noctalia 的 `vibrant` / `soft` / `dysfunctional` / `muted`
+  会从图像里**换一个不同的源色**（同一张图上 `m3-tonal-spot` 取 `#5a748b`，
+  `muted` 取 `#9f592d`，色相相差 161°），属于重新挑色而非对源色变形。
+  不复刻它的调色板提取就拿不到正确结果，因此不提供这些选项。
+- **对比度守卫**：生成的每对前景/背景在写入 CSS 变量前检查 WCAG AA（4.5:1），
+  不足时只沿亮度轴校正、保留色度。72 组配色（6 种子 × 6 方案 × 明暗）实测
+  最差 5.30。
+- **导出**：应用把同一套配色写到 `~/.cache/niripaper/palette.toml`，键名为标准
+  Material 3（`primary` / `on_surface` / `surface_container_high` …），任何工具
+  都可以读。这是单向的：**niripaper 不读别人的调色板、不写别人的配置文件、
+  不调用其他主题工具的 CLI**。删掉这个文件或无人读取它，应用照常工作。
+- 不实现「跟随系统主题」：那需要读取 `~/.cache/nyxuri/palette.toml` 之类的外部
+  产物，会让应用在没装对应组件时退化。需要时再加，且只作为可选的只读桥接。
+
 ## 4. 运动规格（必须实现的语义）
 
 参数与公式是对 Clavis（`StatIndet/quickshell`）的行为复刻（未复制其源码）。下表是规格来源，数值可直接使用：

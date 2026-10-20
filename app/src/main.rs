@@ -58,6 +58,7 @@ fn main() {
             commands::daemon_status_info,
             commands::daemon_socket,
             commands::config_path,
+            commands::export_palette,
             commands::load_local_wallpapers,
             commands::search_wallhaven,
             commands::download_wallhaven_wallpaper,

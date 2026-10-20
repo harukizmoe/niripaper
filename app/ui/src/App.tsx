@@ -14,9 +14,12 @@ import {
 } from './data/wallpapers'
 import {
   applyThemeTokens,
+  buildM3Scheme,
   pickSeedColor,
+  toM3Export,
   THEME_SEED_FALLBACK,
 } from './theme/materialYou'
+import { DEFAULT_SCHEME, isSchemeName, type SchemeName } from './theme/schemes'
 
 const DISPLAYS = ['DP-1 (主屏)', 'eDP-1 (内屏)', '全部显示器 (*)']
 
@@ -121,12 +124,34 @@ export default function App() {
     return pickSeedColor(active.colors)
   })
 
+  // Which colour-generation style the seed is rendered through.
+  const [colorScheme, setColorScheme] = useState<SchemeName>(() => {
+    const saved = localStorage.getItem('niripaper_color_scheme')
+    return saved && isSchemeName(saved) ? saved : DEFAULT_SCHEME
+  })
+
 
   // Apply theme tokens whenever themeSeed or isDark changes
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
-    applyThemeTokens(themeSeed, isDark)
-  }, [themeSeed, isDark])
+    applyThemeTokens(themeSeed, isDark, colorScheme)
+
+    // Export the same palette so other tools can follow it. Best effort: a
+    // failure here must not affect the app's own colours, and nothing in this
+    // app reads the file back.
+    void invoke<string>('export_palette', {
+      seed: themeSeed,
+      scheme: colorScheme,
+      dark: isDark,
+      tokens: toM3Export(buildM3Scheme(themeSeed, isDark, colorScheme)),
+    }).catch((e) => console.warn('导出调色板失败（不影响本应用配色）:', e))
+  }, [themeSeed, isDark, colorScheme])
+
+  const handleColorSchemeChange = (next: SchemeName) => {
+    setColorScheme(next)
+    localStorage.setItem('niripaper_color_scheme', next)
+    showSnackbar(`取色方案已切换为：${next}`)
+  }
 
   // ESC key to close drawer
   useEffect(() => {
@@ -376,6 +401,8 @@ export default function App() {
             onToggleEnableBlur={handleToggleBlur}
             lazyLoad={lazyLoad}
             onToggleLazyLoad={handleToggleLazyLoad}
+            colorScheme={colorScheme}
+            onColorSchemeChange={handleColorSchemeChange}
             onNotify={showSnackbar}
           />
         )}
