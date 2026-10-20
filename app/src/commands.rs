@@ -186,6 +186,40 @@ pub fn export_palette(
     Ok(path.display().to_string())
 }
 
+/// Read a Material 3 palette produced by another tool, if one exists.
+///
+/// Read-only by design: the app never writes another program's configuration,
+/// so this is safe to enable and safe to leave off. Returns `Ok(None)` when the
+/// file is absent — "not installed" is a normal state, not an error.
+///
+/// The path is the one this environment's theme daemon renders to. It is a
+/// convention, not a dependency: if the file is not there the app falls back to
+/// its own generator.
+#[tauri::command]
+pub fn read_external_palette() -> Result<Option<BTreeMap<String, String>>, String> {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .ok_or("无法确定缓存目录")?;
+    let path = cache.join("nyxuri").join("palette.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let doc = text
+        .parse::<DocumentMut>()
+        .map_err(|e| format!("解析 {} 失败: {e}", path.display()))?;
+    let mut out = BTreeMap::new();
+    for (key, item) in doc.as_table().iter() {
+        if let Some(value) = item.as_str() {
+            out.insert(key.to_owned(), value.to_owned());
+        }
+    }
+    if out.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(out))
+}
+
 /// Check whether autostart (systemd user service or XDG autostart) is configured.
 #[tauri::command]
 pub fn get_autostart_status() -> bool {

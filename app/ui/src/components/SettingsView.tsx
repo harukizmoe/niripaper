@@ -18,6 +18,9 @@ interface SettingsViewProps {
   colorScheme?: SchemeName
   onColorSchemeChange?: (next: SchemeName) => void
   paletteError?: string | null
+  adaptNoctalia?: boolean
+  onToggleAdaptNoctalia?: () => void
+  externalPalette?: Record<string, string> | null
   onNotify: (msg: string) => void
 }
 
@@ -38,6 +41,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   colorScheme = DEFAULT_SCHEME,
   onColorSchemeChange,
   paletteError,
+  adaptNoctalia = false,
+  onToggleAdaptNoctalia,
+  externalPalette,
   onNotify,
 }) => {
   const [daemonRunning, setDaemonRunning] = useState(false)
@@ -458,6 +464,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="m3-select-arrow">▼</div>
             </div>
           </div>
+
+          {/* 跟随系统调色板：只读，不改他人配置 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: '1px solid var(--m3-outline-variant)',
+            }}
+          >
+            <div style={{ maxWidth: 460 }}>
+              <div style={{ fontSize: 13, fontWeight: 800 }}>
+                适配 Noctalia 调色板
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                  lineHeight: 1.5,
+                }}
+              >
+                开启后直接使用系统当前的 Material 3 调色板，与桌面其他应用保持一致。
+                <strong>只读取，不修改</strong>系统设置；找不到时自动退回本应用的取色方案。
+              </div>
+            </div>
+            <button
+              className={`wh-toggle-pill ${adaptNoctalia ? 'active' : ''}`}
+              style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+              onClick={onToggleAdaptNoctalia}
+            >
+              {adaptNoctalia ? '🔗 已跟随系统调色板' : '🎨 使用本应用取色'}
+            </button>
+          </div>
+
+          {adaptNoctalia && (
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+                color: externalPalette ? 'var(--m3-fg-muted)' : 'var(--m3-accent-coral)',
+              }}
+            >
+              {externalPalette
+                ? `已读取系统调色板：primary ${externalPalette['primary']} · surface ${externalPalette['surface']}`
+                : '未找到系统调色板文件，当前沿用本应用取色'}
+            </div>
+          )}
 
           {paletteError && (
             <div

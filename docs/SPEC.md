@@ -147,8 +147,13 @@ niripaper（Rust 守护进程）
   Material 3（`primary` / `on_surface` / `surface_container_high` …），任何工具
   都可以读。这是单向的：**niripaper 不读别人的调色板、不写别人的配置文件、
   不调用其他主题工具的 CLI**。删掉这个文件或无人读取它，应用照常工作。
-- 不实现「跟随系统主题」：那需要读取 `~/.cache/nyxuri/palette.toml` 之类的外部
-  产物，会让应用在没装对应组件时退化。需要时再加，且只作为可选的只读桥接。
+- **可选的只读桥接**：设置里的「适配 Noctalia 调色板」开关打开后，读取
+  `~/.cache/nyxuri/palette.toml` 并按标准 M3 键名映射到内部令牌。边界：
+  - **只读**。不调用 `noctalia msg color-scheme-set`，不写 `~/.config/noctalia/**`。
+    切换全局主题仍然只能由 Noctalia 自己完成。
+  - 默认关闭。文件不存在时自动退回自算方案，并在设置页显示「未找到」。
+  - 开启时导出的 `palette.toml` 会镜像系统调色板（`scheme = "system"`），
+    避免发布出去的颜色与屏幕上看到的不一致。
 
 ## 4. 运动规格（必须实现的语义）
 

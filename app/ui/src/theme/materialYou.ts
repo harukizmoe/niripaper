@@ -262,6 +262,69 @@ export function pickSeedColor(colors?: string[]): string {
   return best;
 }
 
+/// Build the app's tokens from an external Material 3 palette.
+///
+/// This is the *read* side of the Noctalia bridge: it consumes a standard
+/// palette (the same key names the app exports) and maps it onto the internal
+/// `--m3-*` tokens. Nothing here writes anyone else's configuration, so the
+/// switch is purely opt-in and a missing palette simply means "use our own".
+///
+/// Tokens the palette has no analogue for (`--m3-rail-bg`, the accent quartet)
+/// are derived from the palette's own roles rather than guessed, so the app
+/// still reads as one palette.
+export function schemeFromPalette(p: Record<string, string>): Record<string, string> | null {
+  const primary = p['primary']
+  const surface = p['surface']
+  if (!primary || !surface) return null
+
+  const s: Record<string, string> = {}
+  const put = (k: string, v: string | undefined) => {
+    if (v) s[k] = v
+  }
+
+  put('--m3-surface', p['surface'])
+  put('--m3-surface-subtle', p['surface_container'] ?? p['surface_variant'])
+  put('--m3-surface-container', p['surface_container_high'])
+  put('--m3-surface-high', p['surface_container_highest'])
+  put('--m3-bg', p['background'])
+  put('--m3-canvas', p['surface_dim'] ?? p['background'])
+
+  put('--m3-fg', p['on_surface'] ?? p['on_background'])
+  put('--m3-fg-muted', p['on_surface_variant'])
+  put('--m3-outline', p['outline'])
+
+  put('--m3-accent-purple', p['primary'])
+  put('--m3-accent-lavender', p['primary_container'])
+  put('--m3-accent-lime', p['tertiary'])
+  put('--m3-accent-mint', p['tertiary_container'])
+  put('--m3-accent-coral', p['error'])
+
+  // The navigation rail is the app's own surface step. `surface_container_low`
+  // is the closest role in the palette; when it is missing, fall back to the
+  // container step and let the contrast guard fix the text.
+  put('--m3-rail-bg', p['surface_container_low'] ?? p['surface_container'])
+  put('--m3-rail-text', p['on_surface_variant'])
+  put('--m3-rail-text-active', p['on_primary_container'] ?? p['on_primary'])
+
+  // Anything the palette did not provide is filled from our own generator so
+  // the UI never loses a token mid-flight.
+  const missing = Object.keys(buildM3Scheme(primary, isDarkColor(surface))).filter(
+    (k) => !(k in s)
+  )
+  if (missing.length) {
+    const fallback = buildM3Scheme(primary, isDarkColor(surface))
+    for (const k of missing) s[k] = fallback[k]
+  }
+
+  guardContrast(s)
+  return s
+}
+
+/// Whether a colour reads as "dark" for the purpose of picking a base ramp.
+function isDarkColor(hex: string): boolean {
+  return seedToOklch(hex).L < 0.5
+}
+
 /// Map the internal `--m3-*` tokens onto standard Material 3 names, which is
 /// what the exported palette file uses. Anything without a close M3 analogue is
 /// dropped rather than guessed at.

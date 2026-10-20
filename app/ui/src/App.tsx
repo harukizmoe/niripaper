@@ -16,6 +16,7 @@ import {
   applyThemeTokens,
   buildM3Scheme,
   pickSeedColor,
+  schemeFromPalette,
   toM3Export,
   THEME_SEED_FALLBACK,
 } from './theme/materialYou'
@@ -69,6 +70,14 @@ export default function App() {
     return pickSeedColor(active.colors)
   })
   const [paletteError, setPaletteError] = useState<string | null>(null)
+  // Opt-in: follow the system palette instead of generating our own. The
+  // palette is read, never written, so enabling this cannot break another
+  // program's configuration.
+  const [adaptNoctalia, setAdaptNoctalia] = useState<boolean>(() => {
+    return localStorage.getItem('niripaper_adapt_noctalia') === 'true'
+  })
+  const [externalPalette, setExternalPalette] = useState<Record<string, string> | null>(null)
+
 
   // 1. 扫描并加载本地真实壁纸 (~/Pictures/Wallpapers)
   // The real scan replaces the built-in sample list, so the theme seed has to
@@ -177,23 +186,77 @@ export default function App() {
 
 
   // Apply theme tokens whenever themeSeed or isDark changes
+  // Pull the system palette while the switch is on, and once more whenever the
+  // wallpaper changes (a new wallpaper means a new palette). Best effort: a
+  // missing file just leaves `externalPalette` null and we keep generating.
+  useEffect(() => {
+    if (!adaptNoctalia) {
+      setExternalPalette(null)
+      return
+    }
+    let cancelled = false
+    void invoke<Record<string, string> | null>('read_external_palette')
+      .then((p) => {
+        if (cancelled) return
+        if (p && p['primary']) {
+          setExternalPalette(p)
+        } else {
+          setExternalPalette(null)
+          showSnackbar('未找到系统调色板，沿用本应用取色')
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setExternalPalette(null)
+        console.warn('读取系统调色板失败:', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [adaptNoctalia, adaptNoctalia ? themeSeed : null, showSnackbar])
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
-    applyThemeTokens(themeSeed, isDark, colorScheme)
+    const external = adaptNoctalia && externalPalette ? schemeFromPalette(externalPalette) : null
+    if (external) {
+      const root = document.documentElement.style
+      for (const [k, v] of Object.entries(external)) root.setProperty(k, v)
+    } else {
+      applyThemeTokens(themeSeed, isDark, colorScheme)
+    }
 
     // Export the same palette so other tools can follow it. Best effort: a
     // failure here must not affect the app's own colours, and nothing in this
     // app reads the file back.
+    // When following the system palette, export that same palette rather than
+    // our own derivation — otherwise the file we publish would disagree with
+    // the colours on screen.
+    const exported = external
+      ? toM3Export(external)
+      : toM3Export(buildM3Scheme(themeSeed, isDark, colorScheme))
     void invoke<string>('export_palette', {
-      seed: themeSeed,
-      scheme: colorScheme,
+      seed: external?.['primary'] ?? themeSeed,
+      scheme: external ? 'system' : colorScheme,
       dark: isDark,
-      tokens: toM3Export(buildM3Scheme(themeSeed, isDark, colorScheme)),
+      tokens: exported,
     }).catch((e) => {
       console.error('导出调色板失败（不影响本应用配色）:', e)
       setPaletteError(String(e))
     })
-  }, [themeSeed, isDark, colorScheme])
+  }, [themeSeed, isDark, colorScheme, externalPalette, adaptNoctalia])
+
+  const handleToggleAdaptNoctalia = () => {
+    setAdaptNoctalia((prev) => {
+      const next = !prev
+      localStorage.setItem('niripaper_adapt_noctalia', String(next))
+      showSnackbar(
+        next
+          ? '🎨 已改为跟随系统调色板（只读，不修改系统设置）'
+          : '🎨 已改回本应用自己的取色方案'
+      )
+      return next
+    })
+  }
 
   const handleColorSchemeChange = (next: SchemeName) => {
     setColorScheme(next)
@@ -459,6 +522,9 @@ export default function App() {
             colorScheme={colorScheme}
             onColorSchemeChange={handleColorSchemeChange}
             paletteError={paletteError}
+            adaptNoctalia={adaptNoctalia}
+            onToggleAdaptNoctalia={handleToggleAdaptNoctalia}
+            externalPalette={externalPalette}
             onNotify={showSnackbar}
           />
         )}
