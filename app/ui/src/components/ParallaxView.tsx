@@ -1,7 +1,19 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { invoke } from '../hooks/useDaemon'
 
 interface ParallaxViewProps {
   onNotify: (msg: string) => void
+}
+
+interface ParallaxConfig {
+  enabled: boolean
+  scale: number
+  column_span: number
+  workspace_span: number
+  duration_ms: number
+  curve: string
+  follow_niri: boolean
+  overview_zoom: number
 }
 
 // 模拟 4 个独立的垂直工作区（§4.4），每个工作区均包含横向平铺列以及列内垂直平铺窗口（tiles）
@@ -74,16 +86,61 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   // 平铺视差总开关
   const [isParallaxEnabled, setIsParallaxEnabled] = useState(true)
 
-  const handleToggleParallax = () => {
-    setIsParallaxEnabled((prev) => {
-      const next = !prev
+  // 从真实的 ~/.config/niripaper/config.toml 读取当前生效的视差配置
+  useEffect(() => {
+    void invoke<ParallaxConfig>('get_parallax_config')
+      .then((cfg) => {
+        setIsParallaxEnabled(cfg.enabled)
+        setScale(cfg.scale)
+        setColumnSpan(cfg.column_span)
+        setWorkspaceSpan(cfg.workspace_span)
+        setDuration(cfg.duration_ms)
+        setCurve(cfg.curve)
+        setFollowNiri(cfg.follow_niri)
+        setOverviewZoom(cfg.overview_zoom)
+      })
+      .catch((e) => console.warn('从配置文件读取视差参数失败:', e))
+  }, [])
+
+  // 真实持久化开关：写入 ~/.config/niripaper/config.toml（保留全部注释），并通过 inotify 即时重载守护进程
+  const handleToggleParallax = async () => {
+    const next = !isParallaxEnabled
+    setIsParallaxEnabled(next)
+    try {
+      const cfg = await invoke<ParallaxConfig>('set_parallax_enabled', {
+        enabled: next,
+      })
+      setIsParallaxEnabled(cfg.enabled)
+      setScale(cfg.scale)
       onNotify(
-        next
-          ? '⚡ 已开启平铺视差效果：画布超额放大并随窗口平移'
-          : '⏸ 已关闭平铺视差效果：壁纸以 1:1 比例居中静止，不随窗口平移'
+        cfg.enabled
+          ? '⚡ 已开启平铺视差（已更新 config.toml，守护进程即时生效）'
+          : '⏸ 已关闭平铺视差（已写入 scale=1.00，壁纸即时居中静止）'
       )
-      return next
-    })
+    } catch (e) {
+      onNotify(`写入配置文件失败: ${e}`)
+    }
+  }
+
+  // 保存所有调整后的视差参数至 config.toml
+  const handleSaveConfig = async () => {
+    try {
+      const res = await invoke<string>('save_parallax_config', {
+        cfg: {
+          enabled: isParallaxEnabled,
+          scale,
+          column_span: columnSpan,
+          workspace_span: workspaceSpan,
+          duration_ms: duration,
+          curve,
+          follow_niri: followNiri,
+          overview_zoom: overviewZoom,
+        },
+      })
+      onNotify(res)
+    } catch (e) {
+      onNotify(`保存失败: ${e}`)
+    }
   }
   // 2D 布局交互仿真状态
   // 1. 垂直工作区索引 (0 .. 3)
@@ -692,15 +749,25 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
               </div>
             </div>
 
-            <button
-              className={`wh-toggle-pill ${isParallaxEnabled ? 'active' : ''}`}
-              style={{ height: 36, padding: '0 16px', fontWeight: 800 }}
-              onClick={handleToggleParallax}
-            >
-              {isParallaxEnabled
-                ? '⚡ 视差位移已开启'
-                : '⏸ 视差位移已关闭 (1.00x 静止)'}
-            </button>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <button
+                className="wh-clear-btn"
+                style={{ height: 36, padding: '0 16px', fontWeight: 800 }}
+                onClick={handleSaveConfig}
+              >
+                💾 保存参数到配置文件
+              </button>
+
+              <button
+                className={`wh-toggle-pill ${isParallaxEnabled ? 'active' : ''}`}
+                style={{ height: 36, padding: '0 16px', fontWeight: 800 }}
+                onClick={handleToggleParallax}
+              >
+                {isParallaxEnabled
+                  ? '⚡ 视差位移已开启'
+                  : '⏸ 视差位移已关闭 (1.00x 静止)'}
+              </button>
+            </div>
           </div>
 
           {!isParallaxEnabled && (

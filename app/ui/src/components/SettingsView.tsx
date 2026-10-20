@@ -24,8 +24,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [socketPath, setSocketPath] = useState('')
   const [outputInfo, setOutputInfo] = useState<string | null>(null)
   const [autostartEnabled, setAutostartEnabled] = useState(false)
+  const [parallaxEnabled, setParallaxEnabled] = useState(true)
   const [busy, setBusy] = useState(false)
-
   const checkDaemon = useCallback(async () => {
     try {
       const info = await invoke<DaemonStatusInfo>('daemon_status_info')
@@ -45,12 +45,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setAutostartEnabled(false)
     }
   }, [])
+  const checkParallax = useCallback(async () => {
+    try {
+      const cfg = await invoke<{ enabled: boolean }>('get_parallax_config')
+      setParallaxEnabled(cfg.enabled)
+    } catch {
+      setParallaxEnabled(true)
+    }
+  }, [])
 
   useEffect(() => {
     void checkDaemon()
     void checkAutostart()
-  }, [checkDaemon, checkAutostart])
-
+    void checkParallax()
+  }, [checkDaemon, checkAutostart, checkParallax])
   const handleStartDaemon = async () => {
     setBusy(true)
     try {
@@ -423,13 +431,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             <button
-              className="wh-toggle-pill active"
+              className={`wh-toggle-pill ${parallaxEnabled ? 'active' : ''}`}
               style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
-              onClick={() => {
-                onNotify('已切换平铺视差效果开关')
+              onClick={async () => {
+                const next = !parallaxEnabled
+                setParallaxEnabled(next)
+                try {
+                  const cfg = await invoke<{ enabled: boolean }>(
+                    'set_parallax_enabled',
+                    { enabled: next }
+                  )
+                  setParallaxEnabled(cfg.enabled)
+                  onNotify(
+                    cfg.enabled
+                      ? '⚡ 平铺视差已开启（已写入 config.toml，守护进程即时生效）'
+                      : '⏸ 平铺视差已关闭（已将 scale 设为 1.00x，守护进程即时生效）'
+                  )
+                } catch (e) {
+                  onNotify(`更新配置文件失败: ${e}`)
+                }
               }}
             >
-              ⚡ 桌面视差：已启用
+              {parallaxEnabled ? '⚡ 桌面视差：已启用' : '⏸ 桌面视差：已停用'}
             </button>
           </div>
           <div

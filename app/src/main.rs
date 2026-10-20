@@ -62,6 +62,9 @@ fn main() {
             commands::download_wallhaven_wallpaper,
             commands::get_autostart_status,
             commands::set_autostart_enabled,
+            commands::get_parallax_config,
+            commands::set_parallax_enabled,
+            commands::save_parallax_config,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NiriPaper 失败");
