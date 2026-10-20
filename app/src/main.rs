@@ -68,7 +68,6 @@ fn main() {
             commands::save_parallax_config,
             commands::get_transition_config,
             commands::save_transition_config,
-            commands::trigger_test_transition,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NiriPaper 失败");

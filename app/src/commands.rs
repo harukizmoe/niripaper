@@ -1192,32 +1192,6 @@ pub fn save_transition_config(cfg: TransitionConfig) -> Result<String, String> {
     Ok("过渡效果参数已写入 config.toml 并即时热重载".to_owned())
 }
 
-#[tauri::command]
-pub fn trigger_test_transition(
-    connection: State<'_, Connection>,
-    wallpaper_path: Option<String>,
-) -> Result<String, String> {
-    let path = match wallpaper_path {
-        Some(p) => p,
-        None => {
-            let local = load_local_wallpapers(None).unwrap_or_default();
-            if local.is_empty() {
-                return Err("本地壁纸库为空，无法触发测试过渡".to_owned());
-            }
-            if local.len() > 1 {
-                local[1].path.clone()
-            } else {
-                local[0].path.clone()
-            }
-        }
-    };
-
-    connection.send(&Request::Set {
-        output: None,
-        path: path.into(),
-    })
-}
-
 /// The write half of [`daemon_apply`], as a pure function of the document, so
 /// it can be tested without a daemon or a real config file.
 ///

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { transitions, type TransitionItem } from '../data/wallpapers'
 import { invoke } from '../hooks/useDaemon'
 
@@ -62,10 +62,11 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
     0.42, 0.0, 0.58, 1.0,
   ])
   const [saving, setSaving] = useState(false)
-  // 首次读取完成前禁止自动保存：否则挂载会用初始 state 覆盖用户已有配置。
+  // 首次读取完成前不判断"已修改"：否则挂载时就会显示为未保存。
   const [loaded, setLoaded] = useState(false)
-  // 只有用户真的动过控件，写盘才会发生。
-  const dirtyRef = useRef(false)
+  // 有改动尚未写盘。保存按钮据此切换样式 —— 这是用户能看到"还没保存"的唯一途径，
+  // 因此这里不再有自动保存。
+  const [dirty, setDirty] = useState(false)
 
   // 组件挂载时读取 config.toml 中的真实过渡配置
   useEffect(() => {
@@ -121,13 +122,13 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
     direction,
     on_start: onStart,
   }
-  const configJson = JSON.stringify(config)
 
   const handleSaveConfig = useCallback(
     async (next: TransitionConfig) => {
       setSaving(true)
       try {
         await invoke<string>('save_transition_config', { cfg: next })
+        setDirty(false)
         return true
       } catch (e) {
         onNotify(`保存过渡配置失败: ${e}`)
@@ -139,19 +140,10 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
     [onNotify]
   )
 
-  // 滑块/开关自动保存：停止拖动 400ms 后写盘，避免拖动过程中反复改文件。
-  useEffect(() => {
-    if (!loaded || !dirtyRef.current) return
-    const timer = window.setTimeout(() => {
-      void handleSaveConfig(JSON.parse(configJson) as TransitionConfig)
-    }, 400)
-    return () => window.clearTimeout(timer)
-  }, [configJson, loaded, handleSaveConfig])
-
-  /// 包一层 setter：用户一动手就标记 dirty，自动保存才会接管。
+  /// 包一层 setter：用户一动手就标记为"未保存"。
   function edit<T>(setter: (v: T) => void) {
     return (value: T) => {
-      dirtyRef.current = true
+      setDirty(true)
       setter(value)
     }
   }
@@ -161,8 +153,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
     setInspectEffect(tr.id)
     if (selection === 'fixed') {
       setFixedEffect(tr.id)
-      void handleSaveConfig({ ...config, effect: tr.id })
-      onNotify(`已设为全局固定过渡效果并保存至配置：${tr.name}`)
+      setDirty(true)
+      onNotify(`已设为全局固定过渡效果：${tr.name}（待保存）`)
     } else {
       onNotify(`已激活参数面板：${tr.name}`)
     }
@@ -180,21 +172,10 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
       ? poolEffects.filter((item) => item !== id)
       : [...poolEffects, id]
     setPoolEffects(updated)
-    void handleSaveConfig({ ...config, effects: updated })
-    onNotify(exists ? `已从轮播池移除：${id}` : `已加入轮播候选池并保存：${id}`)
+    setDirty(true)
+    onNotify(exists ? `已从轮播池移除：${id}（待保存）` : `已加入轮播候选池：${id}（待保存）`)
   }
 
-  // 触发真实桌面预览动效：先落盘（守护进程热重载），再派发换图。
-  const handlePreview = async () => {
-    onNotify('⚡ 正在保存配置并在桌面上触发换图过渡...')
-    if (!(await handleSaveConfig(config))) return
-    try {
-      await invoke<string>('trigger_test_transition')
-      onNotify('✨ 换图过渡动画已在桌面背景层成功播放！')
-    } catch (e) {
-      onNotify(`触发过渡动画失败: ${e}`)
-    }
-  }
   const selectedInspectObj =
     transitions.find((t) => t.id === inspectEffect) || transitions[0]
 
@@ -251,20 +232,35 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* The button itself is the "unsaved changes" indicator.
+              Nothing else in this panel writes to disk, so this is the only
+              signal that the file and the screen can differ: a filled accent
+              pill while there is something to apply, a quiet outline once they
+              match. Both variants use tokens that stay readable in either
+              theme (`wh-search-btn` already pairs accent-purple with white). */}
           <button
-            className="wh-toggle-pill active"
-            style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+            className={dirty ? 'wh-search-btn' : 'wh-toggle-pill'}
+            style={{
+              height: 38,
+              padding: dirty ? '0 22px' : '0 18px',
+              fontWeight: 800,
+              ...(dirty
+                ? {}
+                : {
+                    background: 'transparent',
+                    border: '1.5px solid var(--m3-outline-variant)',
+                    color: 'var(--m3-fg-muted)',
+                    boxShadow: 'none',
+                  }),
+            }}
             onClick={() => void handleSaveConfig(config)}
-            disabled={saving}
+            disabled={saving || !loaded}
           >
-            {saving ? '⏳ 保存中...' : '💾 保存并应用配置'}
-          </button>
-          <button
-            className="wh-search-btn"
-            style={{ height: 38, background: 'var(--m3-primary)', color: '#fff' }}
-            onClick={handlePreview}
-          >
-            ⚡ 在桌面上测试过渡动效
+            {saving
+              ? '⏳ 保存中...'
+              : dirty
+                ? '💾 保存并应用配置 · 有未保存的修改'
+                : '✓ 配置已保存'}
           </button>
         </div>
       </header>
@@ -321,8 +317,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('fixed')
-                  void handleSaveConfig({ ...config, selection: 'fixed' })
-                  onNotify('已切换为：单一固定效果模式并保存至 config.toml')
+                  setDirty(true)
+                  onNotify('已切换为：单一固定效果模式（待保存）')
                 }}
               >
                 ★ 单一固定 (Fixed)
@@ -334,8 +330,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('rotate')
-                  void handleSaveConfig({ ...config, selection: 'rotate' })
-                  onNotify('已切换为：候选池顺序轮播模式并保存至 config.toml')
+                  setDirty(true)
+                  onNotify('已切换为：候选池顺序轮播模式（待保存）')
                 }}
               >
                 🔄 顺序轮播 (Rotate)
@@ -347,8 +343,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('random')
-                  void handleSaveConfig({ ...config, selection: 'random' })
-                  onNotify('已切换为：候选池随机抽选模式并保存至 config.toml')
+                  setDirty(true)
+                  onNotify('已切换为：候选池随机抽选模式（待保存）')
                 }}
               >
                 🎲 随机抽选 (Random)
@@ -429,7 +425,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
               <button
                 className={`wh-toggle-pill ${allowOvershoot ? 'active' : ''}`}
                 style={{ height: 38, width: '100%', fontWeight: 700 }}
-                onClick={() => { dirtyRef.current = true; setAllowOvershoot((v) => !v) }}
+                onClick={() => { setDirty(true); setAllowOvershoot((v) => !v) }}
               >
                 {allowOvershoot ? '☑ 允许曲线反弹' : '☐ 限制 0..1 夹紧'}
               </button>
@@ -450,7 +446,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
               <button
                 className={`wh-toggle-pill ${onStart ? 'active' : ''}`}
                 style={{ height: 38, width: '100%', fontWeight: 700 }}
-                onClick={() => { dirtyRef.current = true; setOnStart((v) => !v) }}
+                onClick={() => { setDirty(true); setOnStart((v) => !v) }}
               >
                 {onStart ? '☑ 开机登录播演' : '☐ 登录时硬切'}
               </button>
@@ -664,7 +660,7 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
               className="wh-clear-btn"
               style={{ height: 32, padding: '0 14px' }}
               onClick={() => {
-                dirtyRef.current = true
+                setDirty(true)
                 setDirection('right')
                 setSoftness(0.3)
                 setCenterX(50)
