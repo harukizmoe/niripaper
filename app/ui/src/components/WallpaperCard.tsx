@@ -65,47 +65,73 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   // 优先加载 thumb（静态缩略图或视频提取帧），视频源路径仅用于壁纸应用
   const mediaSource = toMediaSrc(wallpaper.thumb || wallpaper.path || '')
   const [imgSrc, setImgSrc] = useState(mediaSource)
-  // `requested` means "the browser may fetch this now"; `loaded` means the
-  // pixels are there and the entrance may start.
+  // One state, not two. Splitting "the skeleton may go" (`loaded`) from "the
+  // entrance may start" (`entering`) let a render land between them: the
+  // skeleton was already removed while the image had not begun fading in, so
+  // the card's own light background showed through for a frame — the white
+  // flash. Everything here now advances in a single transition.
+  //
+  // `placed` is set only once the bitmap is decoded and actually paintable, so
+  // the skeleton never leaves before there are pixels to replace it.
   const [requested, setRequested] = useState(!lazyLoad)
-  const [loaded, setLoaded] = useState(false)
-  // Runs the one-shot entrance. Kept as state rather than derived from
-  // `loaded` so the class can be dropped once the animation is over: a
-  // lingering `animation` would keep overriding the hover zoom.
-  const [entering, setEntering] = useState(false)
+  const [placed, setPlaced] = useState(false)
 
   // Stagger by position within the page so a fresh page arrives as a wave.
   const staggerMs = lazyLoad ? Math.min(index, 12) * 45 : 0
 
   useEffect(() => {
     setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
-    setLoaded(false)
-    setEntering(false)
+    setPlaced(false)
   }, [wallpaper.thumb, wallpaper.path])
 
-  // Start the entrance only when pixels exist. Beginning it at mount made the
-  // image fade in while still blank, so the card showed flat background for
-  // the first part of the animation — the flash this replaced.
+  // Turning the feature off has to reveal everything already on screen, not
+  // wait for the next scroll.
   useEffect(() => {
-    if (lazyLoad && loaded) setEntering(true)
-  }, [lazyLoad, loaded])
+    if (!lazyLoad) setRequested(true)
+  }, [lazyLoad])
 
-  // `onLoad` does not fire when the image is already complete (a cache hit
-  // that happens between render and the listener attaching), which would leave
-  // the skeleton up forever. `complete` is the authoritative check.
+  // Wait for the decoded bitmap, not merely `load`.
+  //
+  // `load` means the bytes arrived; with `decoding="async"` the browser may
+  // still not have produced a paintable frame, so starting the fade there
+  // shows background through a partially decoded image. `decode()` resolves
+  // when the frame is ready, and two rAFs guarantee it has been painted before
+  // the skeleton is taken away.
   useEffect(() => {
+    if (!requested || placed) return
     const img = cardRef.current?.querySelector('img')
-    if (img?.complete && img.naturalWidth > 0) setLoaded(true)
-  }, [requested, imgSrc])
+    if (!img) return
 
-  // `animationend` is the normal exit; this is the fallback for when no
-  // animation runs at all (reduced motion) and the class would otherwise stick
-  // around forever.
-  useEffect(() => {
-    if (!entering) return
-    const timer = window.setTimeout(() => setEntering(false), staggerMs + 800)
-    return () => window.clearTimeout(timer)
-  }, [entering, staggerMs])
+    let cancelled = false
+    let raf = 0
+    const reveal = () => {
+      if (cancelled) return
+      // First frame: the decoded image is committed. Second frame: the browser
+      // has actually drawn it, so removing the skeleton cannot expose a gap.
+      raf = requestAnimationFrame(() => {
+        raf = requestAnimationFrame(() => {
+          if (!cancelled) setPlaced(true)
+        })
+      })
+    }
+
+    if (img.complete && img.naturalWidth > 0) {
+      reveal()
+    } else {
+      const onLoad = () => reveal()
+      img.addEventListener('load', onLoad, { once: true })
+      return () => {
+        cancelled = true
+        img.removeEventListener('load', onLoad)
+        if (raf) cancelAnimationFrame(raf)
+      }
+    }
+
+    return () => {
+      cancelled = true
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [requested, placed, imgSrc])
 
   // Turning the feature off has to reveal everything already on screen, not
   // wait for the next scroll.
@@ -203,12 +229,6 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   const cardFilter = isBlurred ? 'blur(3.5px) brightness(0.82)' : 'none'
   const cardOpacity = isBlurred ? 0.78 : 1
 
-  // The entrance: nothing until the card is near the viewport, then a short
-  // rise-and-settle. Staggered by column position so a freshly loaded page
-  // arrives as a wave rather than a single flash. Disabled entirely when the
-  // setting is off — the feature is the whole deferral *and* the animation.
-  const showPlaceholder = lazyLoad && !requested
-
   return (
     <div
       ref={cardRef}
@@ -232,58 +252,61 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           background: 'var(--m3-surface-subtle)',
         }}
       >
-        {/* 骨架占位：图片未就绪时铺满卡片，图片一到达就与它交叉淡出。
-            不能在图片出现后继续留在底下 —— 两张图叠着会显出扫光条纹的重影。 */}
-        {lazyLoad && !loaded && (
+        {/* 骨架占位：图片解码完成前铺满卡片。它与图片的显隐由同一个 `placed`
+            翻转驱动，因此不存在"骨架已撤、图片未现"的中间帧。 */}
+        {lazyLoad && !placed && (
           <div
             aria-hidden
             data-skeleton
             style={{
               position: 'absolute',
               inset: 0,
+              // A trough-then-highlight sweep, not a flat fill: a card that is
+              // merely light reads as empty (and, at a glance, as a white
+              // flash), while a moving sheen reads as "loading".
               background:
-                'linear-gradient(100deg, var(--m3-surface-subtle) 30%, rgba(255,255,255,0.06) 50%, var(--m3-surface-subtle) 70%)',
+                'linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.55) 45%, rgba(255,255,255,0.55) 55%, transparent 80%)',
               backgroundSize: '220% 100%',
+              backgroundColor: 'var(--m3-surface-subtle)',
               animation:
-                'card-placeholder-sweep 1.5s ease-in-out infinite',
+                'card-placeholder-sweep 1.4s ease-in-out infinite',
             }}
           />
         )}
 
-        {/* 全量采用轻量级高清预览缩略图，视频文件只在应用到壁纸时才由后台守护进程解码 */}
-        {!showPlaceholder && (
-          <img
-            src={imgSrc}
-            alt={wallpaper.name}
-            // With our own observer already gating the fetch, asking the
-            // browser to defer again would only add latency. Without the
-            // feature, native lazy loading is the better default.
-            loading={lazyLoad ? 'eager' : 'lazy'}
-            decoding="async"
-            onLoad={() => setLoaded(true)}
-            onError={() => {
-              setImgSrc(FALLBACK_THUMB)
-              setLoaded(true)
-            }}
-            // A keyframes animation, not a transition on toggled inline
-            // styles: the transition form ran from a start value that was
-            // yanked in the same frame it ended, so the last step jumped. An
-            // animation simply ends at its final keyframe, and the class is
-            // dropped afterwards so the hover zoom gets the element back.
-            className={entering ? 'card-enter' : undefined}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              display: 'block',
-              borderRadius: 'inherit',
-              // Held back until called for, so the image cannot flash at full
-              // opacity before the animation's start frame is painted.
-              animationDelay: entering ? `${staggerMs}ms` : undefined,
-            }}
-            onAnimationEnd={() => setEntering(false)}
-          />
-        )}
+        {/* 全量采用轻量级高清预览缩略图，视频文件只在应用到壁纸时才由后台守护进程解码。
+            图片在整个生命周期内始终挂载：卸载再挂载会重新解码，那一帧本身就是白屏。 */}
+        <img
+          // No `src` until the card is near the viewport. The element stays
+          // mounted (so the reveal is a style change, not a re-mount that
+          // would re-decode and flash), but an absent src issues no request.
+          src={requested ? imgSrc : undefined}
+          alt={wallpaper.name}
+          // Our own observer already gates the fetch, so asking the browser to
+          // defer again would only add latency.
+          loading="eager"
+          decoding="async"
+          onError={() => {
+            setImgSrc(FALLBACK_THUMB)
+          }}
+          // A keyframes animation, not a transition on toggled inline styles:
+          // the transition form ran from a start value that was yanked in the
+          // same frame it ended, so the last step jumped.
+          className={lazyLoad && placed ? 'card-enter' : undefined}
+          style={{
+            // Hidden until decoded, so it cannot paint a blank or partially
+            // decoded frame of its own over the skeleton.
+            visibility: lazyLoad && !placed ? 'hidden' : undefined,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+            borderRadius: 'inherit',
+            // Locked to the animation's start frame during the stagger delay,
+            // so the card cannot flash at full opacity first.
+            animationDelay: lazyLoad ? `${staggerMs}ms` : undefined,
+          }}
+        />
 
         <div ref={glareRef} className="card-glare"></div>
 
