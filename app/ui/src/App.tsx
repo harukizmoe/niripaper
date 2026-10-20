@@ -23,6 +23,24 @@ import { DEFAULT_SCHEME, isSchemeName, type SchemeName } from './theme/schemes'
 
 const DISPLAYS = ['DP-1 (主屏)', 'eDP-1 (内屏)', '全部显示器 (*)']
 
+/// The wallpaper the daemon is actually drawing, if it can be determined.
+async function currentWallpaperPath(): Promise<string | null> {
+  try {
+    const raw = await invoke<string>('daemon_state', { output: null })
+    const parsed = JSON.parse(raw) as {
+      outputs?: Record<string, { wallpaper?: { path?: string } | null }>
+    }
+    const outputs = parsed.outputs ?? {}
+    for (const key of Object.keys(outputs)) {
+      const path = outputs[key]?.wallpaper?.path
+      if (path) return path
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
   const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('local')
@@ -42,12 +60,45 @@ export default function App() {
   const [whLoading, setWhLoading] = useState(false)
   const [whTotal, setWhTotal] = useState(1800)
 
+  // Theme seed and the palette's last export failure. Declared before the
+  // wallpaper scan below: that callback sets the seed, and a `const` used
+  // before its declaration is a TDZ error that takes the whole view down on
+  // first render.
+  const [themeSeed, setThemeSeed] = useState<string>(() => {
+    const active = initialLocalWallpapers.find((w) => w.activeOn) || whWallpapers[0]
+    return pickSeedColor(active.colors)
+  })
+  const [paletteError, setPaletteError] = useState<string | null>(null)
+
   // 1. 扫描并加载本地真实壁纸 (~/Pictures/Wallpapers)
+  // The real scan replaces the built-in sample list, so the theme seed has to
+  // follow it: seeding from the placeholders meant the palette stayed on a
+  // made-up colour after every start, and changing the wallpaper did not move
+  // it either.
+  //
+  // Which wallpaper is "current" comes from the daemon, not from `activeOn`:
+  // that flag only tracks what this session applied, so after a restart it is
+  // null and the seed would never settle on the wallpaper actually on screen.
   const refreshLocalWallpapers = useCallback(async () => {
     try {
       const items = await invoke<WallpaperItem[]>('load_local_wallpapers')
       if (items && items.length > 0) {
         setLocalList(items)
+        void currentWallpaperPath()
+          .then((path) => {
+            if (!path) return
+            const current = items.find((w) => w.path === path)
+            if (!current) {
+              console.warn('当前壁纸不在本地库中，无法取色:', path)
+            }
+            if (current) {
+              const next = pickSeedColor(current.colors)
+              if (next) setThemeSeed(next)
+            }
+          })
+          .catch((e) => {
+            console.warn('读取当前壁纸失败，沿用现有种子:', e)
+          })
       }
     } catch (e) {
       console.warn('读取本地壁纸库失败:', e)
@@ -118,12 +169,6 @@ export default function App() {
   const [selectedSource, setSelectedSource] = useState<'wallhaven' | 'local'>('wallhaven')
   const [drawerTargetDisplay, setDrawerTargetDisplay] = useState('DP-1')
 
-  // Theme seed
-  const [themeSeed, setThemeSeed] = useState<string>(() => {
-    const active = initialLocalWallpapers.find((w) => w.activeOn) || whWallpapers[0]
-    return pickSeedColor(active.colors)
-  })
-
   // Which colour-generation style the seed is rendered through.
   const [colorScheme, setColorScheme] = useState<SchemeName>(() => {
     const saved = localStorage.getItem('niripaper_color_scheme')
@@ -144,7 +189,10 @@ export default function App() {
       scheme: colorScheme,
       dark: isDark,
       tokens: toM3Export(buildM3Scheme(themeSeed, isDark, colorScheme)),
-    }).catch((e) => console.warn('导出调色板失败（不影响本应用配色）:', e))
+    }).catch((e) => {
+      console.error('导出调色板失败（不影响本应用配色）:', e)
+      setPaletteError(String(e))
+    })
   }, [themeSeed, isDark, colorScheme])
 
   const handleColorSchemeChange = (next: SchemeName) => {
@@ -295,8 +343,15 @@ export default function App() {
     )
 
     if (followWallpaper) {
-      const seed = pickSeedColor(selectedWp.colors)
-      setThemeSeed(seed)
+      // Seed from the daemon's idea of the current wallpaper when we can map
+      // it back to a library item (the daemon reports the resolved path, which
+      // is what the scan produced); otherwise fall back to the item we applied.
+      const fromDaemon = await currentWallpaperPath()
+      const match = fromDaemon
+        ? localList.find((w) => w.path === fromDaemon) ?? selectedWp
+        : selectedWp
+      const seed = pickSeedColor(match.colors)
+      if (seed) setThemeSeed(seed)
     }
 
     setDrawerOpen(false)
@@ -403,6 +458,7 @@ export default function App() {
             onToggleLazyLoad={handleToggleLazyLoad}
             colorScheme={colorScheme}
             onColorSchemeChange={handleColorSchemeChange}
+            paletteError={paletteError}
             onNotify={showSnackbar}
           />
         )}

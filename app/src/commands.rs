@@ -175,8 +175,14 @@ pub fn export_palette(
     }
 
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, doc).map_err(|e| format!("写入临时调色板失败: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("替换调色板失败: {e}"))?;
+    std::fs::write(&tmp, doc).map_err(|e| {
+        eprintln!("niripaper: palette write failed: {e}");
+        format!("写入临时调色板失败: {e}")
+    })?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        eprintln!("niripaper: palette rename failed: {e}");
+        format!("替换调色板失败: {e}")
+    })?;
     Ok(path.display().to_string())
 }
 
@@ -275,8 +281,14 @@ pub struct LocalWallpaperItem {
 }
 
 /// Scan `~/Pictures/Wallpapers` (or a custom directory) for real media files (§4.10).
+/// Scan the library.
+///
+/// `async` so Tauri runs it off the webview's thread: this walks a directory,
+/// decodes images and (for videos) shells out to ffmpeg, which can take
+/// seconds on a cold cache. A blocking command froze the window — a blank
+/// screen with no error worth reading.
 #[tauri::command]
-pub fn load_local_wallpapers(
+pub async fn load_local_wallpapers(
     custom_dir: Option<String>,
 ) -> Result<Vec<LocalWallpaperItem>, String> {
     let dir = match custom_dir {
@@ -304,6 +316,49 @@ pub fn load_local_wallpapers(
     }
 
     let files = walk_dir(&dir)?;
+
+    // Decode in parallel, once per file, before the sequential pass below.
+    // Colour extraction is CPU-bound and independent per file, so this turns
+    // the first scan's ~20 seconds into a few; later scans hit the cache and
+    // skip this entirely.
+    let cache_dir = dir.join("thumbnails");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(8);
+        let queue: Vec<_> = files
+            .iter()
+            .filter(|p| {
+                let ext = p
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
+                matches!(ext.as_str(), "webp" | "png" | "jpg" | "jpeg")
+            })
+            .cloned()
+            .collect();
+        let next = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..threads {
+            let queue = queue.clone();
+            let next = next.clone();
+            let cache_dir = cache_dir.clone();
+            handles.push(std::thread::spawn(move || loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if i >= queue.len() {
+                    break;
+                }
+                let _ = extract_colors_cached(&cache_dir, &queue[i]);
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+    }
+
     let mut list = Vec::new();
 
     for path in files {
@@ -351,7 +406,20 @@ pub fn load_local_wallpapers(
             }
         };
 
-        let colors = generate_colors(&name);
+        // Prefer the picture's own colours. A video falls back to its
+        // extracted thumbnail, and only a video whose frame could not be
+        // extracted keeps the name-derived approximation.
+        let mut colors = if is_video {
+            extract_colors_cached(
+                &dir.join("thumbnails"),
+                std::path::Path::new(&thumb_path_str),
+            )
+        } else {
+            extract_colors_cached(&dir.join("thumbnails"), &path)
+        };
+        if colors.is_empty() {
+            colors = generate_colors(&name);
+        }
         let id = format!("local-{}", hash_str(&name));
         let path_str = path.display().to_string();
 
@@ -444,6 +512,141 @@ fn hash_str(s: &str) -> u64 {
     h
 }
 
+/// Pull a small palette out of the image itself.
+///
+/// This used to hash the *file name* and synthesise five hues from it, which
+/// made the theme change whenever a wallpaper was renamed and stay put when
+/// the picture actually changed — the colours had nothing to do with the
+/// image. Downsampling plus a few k-means passes over a thumbnail-sized buffer
+/// is cheap enough to run while scanning a directory, and it is what makes
+/// "pick colours from the wallpaper" mean what it says.
+/// Cached wrapper around [`extract_colors`].
+///
+/// Decoding a directory of 4K wallpapers is expensive, and the scan runs every
+/// time the app starts or the user refreshes. The palette depends only on the
+/// file's bytes, so key it by path + size + mtime and keep the result next to
+/// the video thumbnails. A cache miss costs one decode; every later scan is a
+/// handful of small reads.
+fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) -> Vec<String> {
+    let meta = std::fs::metadata(path).ok();
+    let key = format!(
+        "{:016x}",
+        hash_str(&format!(
+            "{}|{}|{}",
+            path.display(),
+            meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            meta.as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        ))
+    );
+    let cache_file = cache_dir.join(format!("colors-{key}.txt"));
+
+    if let Ok(text) = std::fs::read_to_string(&cache_file) {
+        let colors: Vec<String> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !colors.is_empty() {
+            return colors;
+        }
+    }
+
+    let colors = extract_colors(path);
+    if !colors.is_empty() {
+        let _ = std::fs::write(&cache_file, colors.join("\n"));
+    }
+    colors
+}
+
+fn extract_colors(path: &std::path::Path) -> Vec<String> {
+    let Ok(img) = image::open(path) else {
+        return Vec::new();
+    };
+    // A 64-pixel box is plenty for dominant colours.
+    let small = img.resize_exact(64, 64, image::imageops::FilterType::Triangle);
+    let rgb = small.to_rgb8();
+
+    // Collect in a coarse bucket space first; that is effectively a cheap
+    // clustering pass and it stops a single flat background from dominating.
+    let mut samples: Vec<(f64, f64, f64)> = Vec::with_capacity(64 * 64);
+    for px in rgb.pixels() {
+        let [r, g, b] = px.0;
+        // Skip near-black and near-white: they are almost never the colour a
+        // palette should be built around.
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        if max < 24 || min > 238 || (max - min) < 12 {
+            continue;
+        }
+        samples.push((r as f64, g as f64, b as f64));
+    }
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    // k-means, k = 5, seeded from evenly spaced samples so it is deterministic.
+    const K: usize = 5;
+    let mut centers: Vec<(f64, f64, f64)> =
+        (0..K).map(|i| samples[i * samples.len() / K]).collect();
+    let mut assign = [0usize].repeat(samples.len());
+    for _ in 0..12 {
+        for (i, s) in samples.iter().enumerate() {
+            let mut best = 0;
+            let mut bestd = f64::MAX;
+            for (c, center) in centers.iter().enumerate() {
+                let d =
+                    (s.0 - center.0).powi(2) + (s.1 - center.1).powi(2) + (s.2 - center.2).powi(2);
+                if d < bestd {
+                    bestd = d;
+                    best = c;
+                }
+            }
+            assign[i] = best;
+        }
+        let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0usize)].repeat(K);
+        for (s, &a) in samples.iter().zip(assign.iter()) {
+            let e = &mut sums[a];
+            e.0 += s.0;
+            e.1 += s.1;
+            e.2 += s.2;
+            e.3 += 1;
+        }
+        for (c, e) in sums.iter().enumerate() {
+            if e.3 > 0 {
+                centers[c] = (e.0 / e.3 as f64, e.1 / e.3 as f64, e.2 / e.3 as f64);
+            }
+        }
+    }
+
+    // Order by population: the dominant colour leads, which is what
+    // `pickSeedColor` then chooses among by chroma.
+    let mut counts = [0usize].repeat(K);
+    for &a in &assign {
+        counts[a] += 1;
+    }
+    let mut order: Vec<usize> = (0..K).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(counts[i]));
+    order
+        .into_iter()
+        .filter(|&i| counts[i] > 0)
+        .map(|i| {
+            let (r, g, b) = centers[i];
+            format!(
+                "#{:02x}{:02x}{:02x}",
+                r.round().clamp(0.0, 255.0) as u8,
+                g.round().clamp(0.0, 255.0) as u8,
+                b.round().clamp(0.0, 255.0) as u8
+            )
+        })
+        .collect()
+}
+
+/// Older call site kept for videos, where there is no still frame to sample.
 fn generate_colors(name: &str) -> Vec<String> {
     let h = hash_str(name);
     let hues = [
@@ -1530,5 +1733,53 @@ mod tests {
             parsed.transition.push, 0.85,
             "the value has to be the one asked for"
         );
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    /// The palette must come from the pixels, not from the file name. Two
+    /// different images must not produce the same hue, and the same image must
+    /// produce the same palette twice.
+    #[test]
+    fn extracted_colours_track_the_image() {
+        let dir = std::env::temp_dir().join(format!("niripaper-color-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A saturated red field and a saturated blue field.
+        let mut red = image::RgbImage::new(32, 32);
+        for px in red.pixels_mut() {
+            *px = image::Rgb([200, 30, 30]);
+        }
+        let red_path = dir.join("red.png");
+        red.save(&red_path).unwrap();
+
+        let mut blue = image::RgbImage::new(32, 32);
+        for px in blue.pixels_mut() {
+            *px = image::Rgb([30, 30, 200]);
+        }
+        let blue_path = dir.join("blue.png");
+        blue.save(&blue_path).unwrap();
+
+        let red_colors = extract_colors(&red_path);
+        let blue_colors = extract_colors(&blue_path);
+        assert!(!red_colors.is_empty() && !blue_colors.is_empty());
+        assert_ne!(
+            red_colors[0], blue_colors[0],
+            "different images, different colours"
+        );
+
+        // Dominant channel is preserved.
+        let r = &red_colors[0];
+        let red_channel = u8::from_str_radix(&r[1..3], 16).unwrap();
+        let blue_channel = u8::from_str_radix(&r[5..7], 16).unwrap();
+        assert!(red_channel > blue_channel, "red image gave {r}");
+
+        // Deterministic.
+        assert_eq!(red_colors, extract_colors(&red_path));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -17,6 +17,7 @@ interface SettingsViewProps {
   onToggleLazyLoad?: () => void
   colorScheme?: SchemeName
   onColorSchemeChange?: (next: SchemeName) => void
+  paletteError?: string | null
   onNotify: (msg: string) => void
 }
 
@@ -36,6 +37,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onToggleLazyLoad,
   colorScheme = DEFAULT_SCHEME,
   onColorSchemeChange,
+  paletteError,
   onNotify,
 }) => {
   const [daemonRunning, setDaemonRunning] = useState(false)
@@ -456,6 +458,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="m3-select-arrow">▼</div>
             </div>
           </div>
+
+          {paletteError && (
+            <div
+              style={{
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: '1px solid var(--m3-outline-variant)',
+                fontSize: 11,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--m3-accent-coral)',
+              }}
+            >
+              导出调色板失败（本应用配色不受影响）：{paletteError}
+            </div>
+          )}
         </div>
 
         {/* ================================================================
