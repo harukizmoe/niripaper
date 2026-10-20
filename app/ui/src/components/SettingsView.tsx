@@ -5,6 +5,8 @@ interface SettingsViewProps {
   followWallpaper: boolean
   onToggleFollowWallpaper: () => void
   seedColor: string
+  enableBlur?: boolean
+  onToggleEnableBlur?: () => void
   onNotify: (msg: string) => void
 }
 
@@ -18,6 +20,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   followWallpaper,
   onToggleFollowWallpaper,
   seedColor,
+  enableBlur = true,
+  onToggleEnableBlur,
   onNotify,
 }) => {
   const [daemonRunning, setDaemonRunning] = useState(false)
@@ -466,6 +470,64 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }}
           >
             视差动画已跟随 Niri 工作区与平铺布局配置；关闭视差时壁纸以 1:1 原画居中静止呈现；当窗口全屏完全遮挡背景时，守护进程自动暂停 GPU 渲染回调，待机功耗为 0%。
+          </div>
+        </div>
+
+        {/* ================================================================
+            卡片 5：UI 视觉滤镜与景深虚化控制 (Visual Effects & Blur)
+            ================================================================ */}
+        <div
+          className="wallhaven-control-box"
+          style={{ margin: 0, padding: 22 }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>
+                壁纸悬停景深微模糊 (Depth Blur on Hover)
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                }}
+              >
+                当光标悬停某张壁纸时，使背景其余壁纸产生轻微景深虚化 (`blur(3.5px)`) 以聚焦突出。
+              </div>
+            </div>
+
+            {onToggleEnableBlur && (
+              <button
+                className={`wh-toggle-pill ${enableBlur ? 'active' : ''}`}
+                style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+                onClick={onToggleEnableBlur}
+              >
+                {enableBlur ? '✨ 景深模糊：已开启' : '⚡ 景深模糊：已关闭 (极致流畅)'}
+              </button>
+            )}
+          </div>
+
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--m3-fg-muted)',
+              marginTop: 10,
+              lineHeight: 1.5,
+              borderTop: '1px solid var(--m3-outline-variant)',
+              paddingTop: 10,
+            }}
+          >
+            {enableBlur
+              ? '当前已开启景深聚焦模糊。若在低配核显或老旧设备上滑动时感知掉帧，可随时在此关闭，停用后悬停只保留 3D 微翘高光，彻底免除 GPU 滤镜运算。'
+              : '当前已彻底禁用 CSS 模糊滤镜，所有卡片保持零模糊开销，达到最极致高刷滑动性能。'}
           </div>
         </div>
       </div>

@@ -282,14 +282,28 @@ pub fn load_local_wallpapers(
             _ => continue,
         };
 
-        let (res, aspect) = if !is_video {
-            if let Ok((w, h)) = image::image_dimensions(&path) {
+        let (res, aspect, thumb_path_str) = if !is_video {
+            let (w_str, asp) = if let Ok((w, h)) = image::image_dimensions(&path) {
                 (format!("{w}×{h}"), format!("{w} / {h}"))
             } else {
                 ("2560×1440".to_owned(), "16 / 9".to_owned())
-            }
+            };
+            (w_str, asp, path.display().to_string())
         } else {
-            ("1920×1080".to_owned(), "16 / 9".to_owned())
+            if let Some(t_path) = get_or_extract_video_thumbnail(&dir, &path) {
+                let (w_str, asp) = if let Ok((w, h)) = image::image_dimensions(&t_path) {
+                    (format!("{w}×{h}"), format!("{w} / {h}"))
+                } else {
+                    ("1920×1080".to_owned(), "16 / 9".to_owned())
+                };
+                (w_str, asp, t_path.display().to_string())
+            } else {
+                (
+                    "1920×1080".to_owned(),
+                    "16 / 9".to_owned(),
+                    path.display().to_string(),
+                )
+            }
         };
 
         let colors = generate_colors(&name);
@@ -299,12 +313,12 @@ pub fn load_local_wallpapers(
         list.push(LocalWallpaperItem {
             id,
             name,
-            path: path_str.clone(),
+            path: path_str,
             kind,
             res,
             aspect,
             colors,
-            thumb: path_str,
+            thumb: thumb_path_str,
             fps: if is_video {
                 Some("30 FPS".to_owned())
             } else {
@@ -325,6 +339,11 @@ fn walk_dir(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
         if let Ok(entries) = std::fs::read_dir(&current_dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
+                let file_name = entry.file_name();
+                let name = file_name.to_string_lossy();
+                if name.starts_with('.') || name == "thumbnails" {
+                    continue;
+                }
                 if p.is_dir() {
                     dirs_to_visit.push(p);
                 } else if p.is_file() {
@@ -334,6 +353,42 @@ fn walk_dir(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
         }
     }
     Ok(files)
+}
+fn get_or_extract_video_thumbnail(
+    root_dir: &std::path::Path,
+    video_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let cache_dir = root_dir.join("thumbnails");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let h = format!("{:016x}", hash_str(&video_path.to_string_lossy()));
+    let thumb_path = cache_dir.join(format!("{h}.jpg"));
+
+    if thumb_path.exists() {
+        return Some(thumb_path);
+    }
+
+    // Extract 1 frame at 00:00:01 using ffmpeg, scaling to 720 width
+    let status = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-ss")
+        .arg("00:00:01")
+        .arg("-i")
+        .arg(video_path)
+        .arg("-vframes")
+        .arg("1")
+        .arg("-vf")
+        .arg("scale=720:-1")
+        .arg(&thumb_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    if let Ok(st) = status {
+        if st.success() && thumb_path.exists() {
+            return Some(thumb_path);
+        }
+    }
+    None
 }
 
 fn hash_str(s: &str) -> u64 {

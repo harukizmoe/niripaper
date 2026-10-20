@@ -27,6 +27,7 @@ interface WallpaperViewProps {
   onRefreshLocal: () => void
   whLoading?: boolean
   whTotal?: number
+  enableBlur?: boolean
 }
 
 export const WallpaperView: React.FC<WallpaperViewProps> = ({
@@ -42,6 +43,7 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
   onRefreshLocal,
   whLoading = false,
   whTotal = 26116,
+  enableBlur = true,
 }) => {
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null)
 
@@ -359,6 +361,7 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
                   wallpaper={wp}
                   isAnyHovered={hoveredCardId !== null}
                   isHovered={hoveredCardId === wp.id}
+                  enableBlur={enableBlur}
                   onMouseEnter={() => setHoveredCardId(wp.id)}
                   onMouseLeave={() => setHoveredCardId(null)}
                   onClick={() => onSelectWallpaper(wp, currentSource)}

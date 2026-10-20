@@ -26,7 +26,10 @@ export default function App() {
   const [displayIdx, setDisplayIdx] = useState(0)
   const [isDark, setIsDark] = useState(false)
   const [followWallpaper, setFollowWallpaper] = useState(true)
-
+  const [enableBlur, setEnableBlur] = useState<boolean>(() => {
+    const saved = localStorage.getItem('niripaper_enable_blur')
+    return saved !== null ? saved === 'true' : true
+  })
   const [localList, setLocalList] = useState<WallpaperItem[]>(initialLocalWallpapers)
   const [wallhavenList, setWallhavenList] = useState<WallpaperItem[]>(whWallpapers)
   const [whLoading, setWhLoading] = useState(false)
@@ -154,6 +157,18 @@ export default function App() {
     })
   }
 
+  const handleToggleBlur = () => {
+    setEnableBlur((prev) => {
+      const next = !prev
+      localStorage.setItem('niripaper_enable_blur', String(next))
+      showSnackbar(
+        next
+          ? '✨ 已开启壁纸卡片景深聚焦微模糊效果'
+          : '⚡ 已彻底停用景深模糊（零 GPU 滤镜运算，极致流畅）'
+      )
+      return next
+    })
+  }
   const handleCycleDisplay = () => {
     setDisplayIdx((prev) => {
       const next = (prev + 1) % DISPLAYS.length
@@ -307,6 +322,7 @@ export default function App() {
             localList={localList}
             currentSource={currentSource}
             currentDisplay={DISPLAYS[displayIdx]}
+            enableBlur={enableBlur}
             onSourceChange={handleSourceChange}
             onCycleDisplay={handleCycleDisplay}
             onSelectWallpaper={handleSelectWallpaper}
@@ -331,6 +347,8 @@ export default function App() {
             followWallpaper={followWallpaper}
             onToggleFollowWallpaper={handleToggleFollowWallpaper}
             seedColor={themeSeed}
+            enableBlur={enableBlur}
+            onToggleEnableBlur={handleToggleBlur}
             onNotify={showSnackbar}
           />
         )}

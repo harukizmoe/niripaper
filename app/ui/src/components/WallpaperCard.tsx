@@ -6,6 +6,7 @@ interface WallpaperCardProps {
   wallpaper: WallpaperItem
   isAnyHovered: boolean
   isHovered: boolean
+  enableBlur?: boolean
   onMouseEnter: () => void
   onMouseLeave: () => void
   onClick: () => void
@@ -34,6 +35,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   wallpaper,
   isAnyHovered,
   isHovered,
+  enableBlur = true,
   onMouseEnter,
   onMouseLeave,
   onClick,
@@ -42,11 +44,13 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   const glareRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef<number | null>(null)
 
-  const mediaSource = toMediaSrc(wallpaper.path || wallpaper.thumb)
+  // 优先加载 thumb（静态缩略图或视频提取帧），视频源路径仅用于壁纸应用
+  const mediaSource = toMediaSrc(wallpaper.thumb || wallpaper.path || '')
   const [imgSrc, setImgSrc] = useState(mediaSource)
+
   useEffect(() => {
-    setImgSrc(toMediaSrc(wallpaper.path || wallpaper.thumb))
-  }, [wallpaper.path, wallpaper.thumb])
+    setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
+  }, [wallpaper.thumb, wallpaper.path])
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!cardRef.current) return
@@ -106,7 +110,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
     }
   }
 
-  const isBlurred = isAnyHovered && !isHovered
+  const isBlurred = enableBlur && isAnyHovered && !isHovered
   const cardFilter = isBlurred ? 'blur(3.5px) brightness(0.82)' : 'none'
   const cardOpacity = isBlurred ? 0.78 : 1
 
@@ -133,87 +137,23 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           background: 'var(--m3-surface-subtle)',
         }}
       >
-        {/* 视频壁纸优化：默认呈现轻量海报卡片，悬停时才激活真实视频解码循环，避免17路解码器并行卡死滚动 */}
-        {wallpaper.kind === 'video' ? (
-          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            {isHovered ? (
-              <video
-                src={mediaSource}
-                muted
-                loop
-                autoPlay
-                playsInline
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  display: 'block',
-                  borderRadius: 'inherit',
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  background:
-                    'linear-gradient(135deg, #1e1b4b 0%, #312e81 60%, #4338ca 100%)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  color: '#fff',
-                  userSelect: 'none',
-                }}
-              >
-                <span style={{ fontSize: 32, opacity: 0.9 }}>🎬</span>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 800,
-                    opacity: 0.85,
-                    maxWidth: '85%',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    fontFamily: 'var(--font-mono)',
-                  }}
-                >
-                  {wallpaper.name}
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    opacity: 0.6,
-                    background: 'rgba(255, 255, 255, 0.12)',
-                    padding: '2px 8px',
-                    borderRadius: 9999,
-                  }}
-                >
-                  悬停以播放动效
-                </span>
-              </div>
-            )}
-          </div>
-        ) : (
-          <img
-            src={imgSrc}
-            alt={wallpaper.name}
-            loading="lazy"
-            decoding="async"
-            onError={() => {
-              setImgSrc(FALLBACK_THUMB)
-            }}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              display: 'block',
-              borderRadius: 'inherit',
-            }}
-          />
-        )}
+        {/* 全量采用轻量级高清预览缩略图，视频文件只在应用到壁纸时才由后台守护进程解码 */}
+        <img
+          src={imgSrc}
+          alt={wallpaper.name}
+          loading="lazy"
+          decoding="async"
+          onError={() => {
+            setImgSrc(FALLBACK_THUMB)
+          }}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+            borderRadius: 'inherit',
+          }}
+        />
         <div ref={glareRef} className="card-glare"></div>
 
         {/* 动态视频标记 */}
