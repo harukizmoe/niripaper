@@ -537,6 +537,8 @@
       flex: 1;
       overflow-y: auto;
       padding: 10px 28px 32px 28px;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
     }
 
     .gallery-grid-layout {
@@ -560,7 +562,6 @@
       box-shadow: var(--m3-shadow-sm);
       transform: perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg);
       transition: transform 0.15s ease-out, box-shadow 0.25s ease;
-      will-change: transform, box-shadow;
       transform-style: preserve-3d;
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;

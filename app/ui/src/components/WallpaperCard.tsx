@@ -30,7 +30,7 @@ function toMediaSrc(pathOrUrl: string): string {
   }
 }
 
-export const WallpaperCard: React.FC<WallpaperCardProps> = ({
+const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   wallpaper,
   isAnyHovered,
   isHovered,
@@ -44,11 +44,8 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
 
   const mediaSource = toMediaSrc(wallpaper.path || wallpaper.thumb)
   const [imgSrc, setImgSrc] = useState(mediaSource)
-  const [loaded, setLoaded] = useState(false)
-
   useEffect(() => {
     setImgSrc(toMediaSrc(wallpaper.path || wallpaper.thumb))
-    setLoaded(false)
   }, [wallpaper.path, wallpaper.thumb])
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -136,39 +133,84 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
           background: 'var(--m3-surface-subtle)',
         }}
       >
+        {/* 视频壁纸优化：默认呈现轻量海报卡片，悬停时才激活真实视频解码循环，避免17路解码器并行卡死滚动 */}
         {wallpaper.kind === 'video' ? (
-          <video
-            src={mediaSource}
-            muted
-            loop
-            autoPlay
-            playsInline
-            onLoadedData={() => setLoaded(true)}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              display: 'block',
-              borderRadius: 'inherit',
-              opacity: loaded ? 1 : 0.6,
-              transition: 'opacity 0.25s ease',
-            }}
-          />
+          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+            {isHovered ? (
+              <video
+                src={mediaSource}
+                muted
+                loop
+                autoPlay
+                playsInline
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: 'block',
+                  borderRadius: 'inherit',
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  background:
+                    'linear-gradient(135deg, #1e1b4b 0%, #312e81 60%, #4338ca 100%)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  color: '#fff',
+                  userSelect: 'none',
+                }}
+              >
+                <span style={{ fontSize: 32, opacity: 0.9 }}>🎬</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 800,
+                    opacity: 0.85,
+                    maxWidth: '85%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  {wallpaper.name}
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    opacity: 0.6,
+                    background: 'rgba(255, 255, 255, 0.12)',
+                    padding: '2px 8px',
+                    borderRadius: 9999,
+                  }}
+                >
+                  悬停以播放动效
+                </span>
+              </div>
+            )}
+          </div>
         ) : (
           <img
             src={imgSrc}
             alt={wallpaper.name}
             loading="lazy"
             decoding="async"
-            onLoad={() => setLoaded(true)}
             onError={() => {
               setImgSrc(FALLBACK_THUMB)
-              setLoaded(true)
             }}
             style={{
-              opacity: loaded ? 1 : 0.4,
-              transition:
-                'opacity 0.25s ease, transform 0.4s cubic-bezier(0.2, 0, 0, 1)',
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              borderRadius: 'inherit',
             }}
           />
         )}
@@ -205,3 +247,5 @@ export const WallpaperCard: React.FC<WallpaperCardProps> = ({
     </div>
   )
 }
+
+export const WallpaperCard = React.memo(WallpaperCardComponent)

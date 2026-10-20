@@ -22,7 +22,7 @@ const DISPLAYS = ['DP-1 (主屏)', 'eDP-1 (内屏)', '全部显示器 (*)']
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
-  const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('wallhaven')
+  const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('local')
   const [displayIdx, setDisplayIdx] = useState(0)
   const [isDark, setIsDark] = useState(false)
   const [followWallpaper, setFollowWallpaper] = useState(true)

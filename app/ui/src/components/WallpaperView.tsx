@@ -229,8 +229,22 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
     onNotify(`加载 Wallhaven 第 ${next} 页`)
   }
 
+  const [localPage, setLocalPage] = useState(1)
+  const LOCAL_PAGE_SIZE = 24
+  const filteredLocal = useMemo(() => getFilteredLocal(), [localList, localFilter])
+  const localTotalPages = Math.max(1, Math.ceil(filteredLocal.length / LOCAL_PAGE_SIZE))
+
+  useEffect(() => {
+    setLocalPage(1)
+  }, [localFilter])
+
+  const paginatedLocal = useMemo(() => {
+    const start = (localPage - 1) * LOCAL_PAGE_SIZE
+    return filteredLocal.slice(start, start + LOCAL_PAGE_SIZE)
+  }, [filteredLocal, localPage])
+
   const displayList =
-    currentSource === 'wallhaven' ? wallhavenList : getFilteredLocal()
+    currentSource === 'wallhaven' ? wallhavenList : paginatedLocal
 
   const columns = useMemo(() => {
     const cols: WallpaperItem[][] = Array.from({ length: colCount }, () => [])
@@ -395,6 +409,35 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
             >
               🎲 换一批随机
             </button>
+          </div>
+        )}
+
+        {/* 本地壁纸分页条 */}
+        {currentSource === 'local' && localTotalPages > 1 && (
+          <div className="wh-pagination-bar" id="local-pagination">
+            <div className="wh-page-pill">
+              <button
+                className="wh-page-nav-btn"
+                onClick={() => setLocalPage((p) => Math.max(1, p - 1))}
+                disabled={localPage <= 1}
+              >
+                ◀
+              </button>
+              <span>
+                第{' '}
+                <strong style={{ color: 'var(--m3-accent-purple)' }}>
+                  {localPage}
+                </strong>{' '}
+                页 / 共 {localTotalPages} 页 (本地共 {filteredLocal.length} 张)
+              </span>
+              <button
+                className="wh-page-nav-btn"
+                onClick={() => setLocalPage((p) => Math.min(localTotalPages, p + 1))}
+                disabled={localPage >= localTotalPages}
+              >
+                ▶
+              </button>
+            </div>
           </div>
         )}
       </div>
