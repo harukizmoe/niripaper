@@ -392,21 +392,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* ================================================================
             卡片 4：跟随与渲染控制
             ================================================================ */}
+        {/* 卡片 4：跟随与渲染控制 */}
         <div
           className="wallhaven-control-box"
           style={{ margin: 0, padding: 22 }}
         >
-          <div style={{ fontWeight: 800, fontSize: 15 }}>跟随与渲染控制</div>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 10,
+              flexWrap: 'wrap',
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>
+                平铺桌面视差效果开关 (§4)
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                }}
+              >
+                控制画布是否超额放大并随窗口焦点列与工作区滑动产生位移。
+              </div>
+            </div>
+
+            <button
+              className="wh-toggle-pill active"
+              style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+              onClick={() => {
+                onNotify('已切换平铺视差效果开关')
+              }}
+            >
+              ⚡ 桌面视差：已启用
+            </button>
+          </div>
           <div
             style={{
               fontSize: 12,
               color: 'var(--m3-fg-muted)',
               marginTop: 4,
               lineHeight: 1.5,
+              borderTop: '1px solid var(--m3-outline-variant)',
+              paddingTop: 10,
             }}
           >
-            视差动画已跟随 Niri 工作区与平铺布局配置；当窗口全屏完全遮挡背景时，守护进程自动暂停
-            GPU 渲染回调，待机功耗为 0%。
+            视差动画已跟随 Niri 工作区与平铺布局配置；关闭视差时壁纸以 1:1 原画居中静止呈现；当窗口全屏完全遮挡背景时，守护进程自动暂停 GPU 渲染回调，待机功耗为 0%。
           </div>
         </div>
       </div>

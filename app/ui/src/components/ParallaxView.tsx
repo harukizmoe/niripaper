@@ -71,7 +71,20 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   const [overviewZoom, setOverviewZoom] = useState(0.96)
   const [slowdown, setSlowdown] = useState(1.0)
   const [isOff, setIsOff] = useState(false)
+  // 平铺视差总开关
+  const [isParallaxEnabled, setIsParallaxEnabled] = useState(true)
 
+  const handleToggleParallax = () => {
+    setIsParallaxEnabled((prev) => {
+      const next = !prev
+      onNotify(
+        next
+          ? '⚡ 已开启平铺视差效果：画布超额放大并随窗口平移'
+          : '⏸ 已关闭平铺视差效果：壁纸以 1:1 比例居中静止，不随窗口平移'
+      )
+      return next
+    })
+  }
   // 2D 布局交互仿真状态
   // 1. 垂直工作区索引 (0 .. 3)
   const [activeWs, setActiveWs] = useState(0)
@@ -87,25 +100,25 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
   // 横向进度 (§4.2.1: progress = activeCol / (column_span - 1))
   const hProgress = activeCol / Math.max(1, columnSpan - 1)
   const screenWidth = 2560
-  const overflowX = screenWidth * (scale - 1)
+  const overflowX = isParallaxEnabled ? screenWidth * (scale - 1) : 0
   // §4.3: x = overflow * (0.5 - progress)
-  const offsetPxX = overflowX * (0.5 - hProgress)
+  const offsetPxX = isParallaxEnabled ? overflowX * (0.5 - hProgress) : 0
 
   // 纵向进度 (§4.4: v_progress = activeIndex / (workspace_span - 1))
   const vProgress = activeWs / Math.max(1, workspaceSpan - 1)
   const screenHeight = 1440
-  const overflowY = screenHeight * (scale - 1)
+  const overflowY = isParallaxEnabled ? screenHeight * (scale - 1) : 0
   // §4.3: y = overflow * (0.5 - progress)
-  const offsetPxY = overflowY * (0.5 - vProgress)
+  const offsetPxY = isParallaxEnabled ? overflowY * (0.5 - vProgress) : 0
 
   // 总览倍率与总放大倍数
+  const effectiveScale = isParallaxEnabled ? scale : 1.0
   const currentZoom = isOverviewOpen ? overviewZoom : 1.0
-  const totalScale = scale * currentZoom
+  const totalScale = effectiveScale * currentZoom
 
   // 壁纸背景 2D 平移百分比
-  // 垂直切换工作区时，hProgress 保持原值，因此 bgTranslateX 绝对静止，仅 bgTranslateY 移动（纯垂直轴运动）！
-  const bgTranslateX = (0.5 - hProgress) * ((scale - 1) / scale) * 100
-  const bgTranslateY = (0.5 - vProgress) * ((scale - 1) / scale) * 100
+  const bgTranslateX = isParallaxEnabled ? (0.5 - hProgress) * ((scale - 1) / scale) * 100 : 0
+  const bgTranslateY = isParallaxEnabled ? (0.5 - vProgress) * ((scale - 1) / scale) * 100 : 0
 
   // 切换窗口列（横向视差）
   const handleColSelect = (colIdx: number) => {
@@ -214,13 +227,23 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
           </p>
         </div>
 
-        <button
-          className="wh-search-btn"
-          style={{ height: 38 }}
-          onClick={handleTestParallax}
-        >
-          ▶ 视差动效试演
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            className={`wh-toggle-pill ${isParallaxEnabled ? 'active' : ''}`}
+            style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+            onClick={handleToggleParallax}
+          >
+            {isParallaxEnabled ? '⚡ 视差效果：已启用' : '⏸ 视差效果：已停用'}
+          </button>
+          <button
+            className="wh-search-btn"
+            style={{ height: 38 }}
+            onClick={handleTestParallax}
+            disabled={!isParallaxEnabled}
+          >
+            ▶ 视差动效试演
+          </button>
+        </div>
       </header>
 
       {/* 页面主体内容 */}
@@ -577,11 +600,16 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   border: '1px solid rgba(255,255,255,0.1)',
                 }}
               >
-                ↔ 横向: <strong>h={hProgress.toFixed(2)}</strong> (
-                {offsetPxX >= 0
-                  ? `+${offsetPxX.toFixed(1)}`
-                  : offsetPxX.toFixed(1)}{' '}
-                px) · 列 {activeCol + 1}/{columnSpan}
+                ↔ 横向:{' '}
+                <strong>
+                  {isParallaxEnabled
+                    ? `h=${hProgress.toFixed(2)} (${
+                        offsetPxX >= 0
+                          ? `+${offsetPxX.toFixed(1)}`
+                          : offsetPxX.toFixed(1)
+                      } px) · 列 ${activeCol + 1}/${columnSpan}`
+                    : '视差已停用 (0.0 px · 居中)'}
+                </strong>
               </span>
 
               {/* 纵向视差参数 */}
@@ -590,17 +618,24 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   fontFamily: 'var(--font-mono)',
                   fontSize: 11,
                   background: 'rgba(18, 14, 28, 0.88)',
-                  color: 'var(--m3-accent-lime)',
+                  color: isParallaxEnabled ? 'var(--m3-accent-lime)' : '#aaa',
                   padding: '4px 10px',
                   borderRadius: 'var(--m3-radius-full)',
-                  border: '1px solid rgba(214, 248, 88, 0.3)',
+                  border: isParallaxEnabled
+                    ? '1px solid rgba(214, 248, 88, 0.3)'
+                    : '1px solid rgba(255,255,255,0.1)',
                 }}
               >
-                ↕ 纵向: <strong>v={vProgress.toFixed(2)}</strong> (
-                {offsetPxY >= 0
-                  ? `+${offsetPxY.toFixed(1)}`
-                  : offsetPxY.toFixed(1)}{' '}
-                px) · 工作区 {activeWs + 1}/{workspaceSpan}
+                ↕ 纵向:{' '}
+                <strong>
+                  {isParallaxEnabled
+                    ? `v=${vProgress.toFixed(2)} (${
+                        offsetPxY >= 0
+                          ? `+${offsetPxY.toFixed(1)}`
+                          : offsetPxY.toFixed(1)
+                      } px) · 工作区 ${activeWs + 1}/${workspaceSpan}`
+                    : '视差已停用 (0.0 px · 居中)'}
+                </strong>
               </span>
 
               {/* 缩放参数 */}
@@ -615,8 +650,11 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
                   border: '1px solid rgba(255,255,255,0.1)',
                 }}
               >
-                🔍 scale: <strong>{scale.toFixed(2)}x</strong> · zoom:{' '}
-                <strong>{currentZoom.toFixed(2)}x</strong>
+                🔍 scale:{' '}
+                <strong>
+                  {isParallaxEnabled ? `${scale.toFixed(2)}x` : '1.00x'}
+                </strong>{' '}
+                · zoom: <strong>{currentZoom.toFixed(2)}x</strong>
               </span>
             </div>
           </div>
@@ -629,19 +667,56 @@ export const ParallaxView: React.FC<ParallaxViewProps> = ({ onNotify }) => {
           className="wallhaven-control-box"
           style={{ margin: 0, padding: 22 }}
         >
-          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>
-            视差跨度与画布放大 (§4.1 / §4.2.1 / §4.4)
-          </div>
           <div
             style={{
-              fontSize: 12,
-              color: 'var(--m3-fg-muted)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
               marginBottom: 16,
+              flexWrap: 'wrap',
+              gap: 12,
             }}
           >
-            画布按比例超额放大裁剪，以容纳横向与竖向平移行程。两轴跨度独立设定，彼此互不干扰。
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>
+                视差跨度与画布放大 (§4.1 / §4.2.1 / §4.4)
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                }}
+              >
+                画布按比例超额放大裁剪，以容纳横向与竖向平移行程。两轴跨度独立设定。
+              </div>
+            </div>
+
+            <button
+              className={`wh-toggle-pill ${isParallaxEnabled ? 'active' : ''}`}
+              style={{ height: 36, padding: '0 16px', fontWeight: 800 }}
+              onClick={handleToggleParallax}
+            >
+              {isParallaxEnabled
+                ? '⚡ 视差位移已开启'
+                : '⏸ 视差位移已关闭 (1.00x 静止)'}
+            </button>
           </div>
 
+          {!isParallaxEnabled && (
+            <div
+              style={{
+                padding: '12px 16px',
+                background: 'var(--m3-surface-subtle)',
+                borderRadius: 'var(--m3-radius-md)',
+                marginBottom: 16,
+                fontSize: 12,
+                color: 'var(--m3-fg-muted)',
+              }}
+            >
+              ⏸ 视差位移当前已停用：壁纸按 1.00x 原画尺寸居中呈现，不随窗口平铺滚动发生位移。
+            </div>
+          )}
           <div
             style={{
               display: 'grid',
