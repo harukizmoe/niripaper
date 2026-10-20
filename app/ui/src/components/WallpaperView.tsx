@@ -28,6 +28,7 @@ interface WallpaperViewProps {
   whLoading?: boolean
   whTotal?: number
   enableBlur?: boolean
+  lazyLoad?: boolean
 }
 
 export const WallpaperView: React.FC<WallpaperViewProps> = ({
@@ -44,6 +45,7 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
   whLoading = false,
   whTotal = 26116,
   enableBlur = true,
+  lazyLoad = true,
 }) => {
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null)
 
@@ -355,13 +357,16 @@ export const WallpaperView: React.FC<WallpaperViewProps> = ({
               className="gallery-column"
               style={{ display: 'flex', flexDirection: 'column', gap: 20 }}
             >
-              {col.map((wp) => (
+              {col.map((wp, rowIdx) => (
                 <WallpaperCard
                   key={wp.id}
                   wallpaper={wp}
                   isAnyHovered={hoveredCardId !== null}
                   isHovered={hoveredCardId === wp.id}
                   enableBlur={enableBlur}
+                  lazyLoad={lazyLoad}
+                  scrollRoot={containerRef}
+                  index={rowIdx * colCount + colIdx}
                   onMouseEnter={() => setHoveredCardId(wp.id)}
                   onMouseLeave={() => setHoveredCardId(null)}
                   onClick={() => onSelectWallpaper(wp, currentSource)}

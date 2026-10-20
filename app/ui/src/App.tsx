@@ -30,6 +30,10 @@ export default function App() {
     const saved = localStorage.getItem('niripaper_enable_blur')
     return saved !== null ? saved === 'true' : true
   })
+  const [lazyLoad, setLazyLoad] = useState<boolean>(() => {
+    const saved = localStorage.getItem('niripaper_lazy_load')
+    return saved !== null ? saved === 'true' : true
+  })
   const [localList, setLocalList] = useState<WallpaperItem[]>(initialLocalWallpapers)
   const [wallhavenList, setWallhavenList] = useState<WallpaperItem[]>(whWallpapers)
   const [whLoading, setWhLoading] = useState(false)
@@ -169,6 +173,19 @@ export default function App() {
       return next
     })
   }
+  const handleToggleLazyLoad = () => {
+    setLazyLoad((prev) => {
+      const next = !prev
+      localStorage.setItem('niripaper_lazy_load', String(next))
+      showSnackbar(
+        next
+          ? '⚡ 已开启卡片懒加载：滚到附近才取图，带淡入上浮动画'
+          : '🖼 已关闭懒加载：全部预览图立即加载，无入场动画'
+      )
+      return next
+    })
+  }
+
   const handleCycleDisplay = () => {
     setDisplayIdx((prev) => {
       const next = (prev + 1) % DISPLAYS.length
@@ -330,6 +347,7 @@ export default function App() {
             currentSource={currentSource}
             currentDisplay={DISPLAYS[displayIdx]}
             enableBlur={enableBlur}
+            lazyLoad={lazyLoad}
             onSourceChange={handleSourceChange}
             onCycleDisplay={handleCycleDisplay}
             onSelectWallpaper={handleSelectWallpaper}
@@ -356,6 +374,8 @@ export default function App() {
             seedColor={themeSeed}
             enableBlur={enableBlur}
             onToggleEnableBlur={handleToggleBlur}
+            lazyLoad={lazyLoad}
+            onToggleLazyLoad={handleToggleLazyLoad}
             onNotify={showSnackbar}
           />
         )}

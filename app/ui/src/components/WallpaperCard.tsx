@@ -7,6 +7,16 @@ interface WallpaperCardProps {
   isAnyHovered: boolean
   isHovered: boolean
   enableBlur?: boolean
+  /// Defer loading the preview until the card approaches the viewport, and
+  /// fade it in when it arrives. Off means eager load with no animation.
+  lazyLoad?: boolean
+  /// Position within its column, used only to stagger the entrance animation.
+  index?: number
+  /// The scrolling ancestor. The observer must be rooted here, not in the
+  /// window: with `root: null` the browser measures against the viewport and
+  /// treats content clipped by an inner scroller as visible, so every card in
+  /// the page loads at once and the feature does nothing.
+  scrollRoot?: React.RefObject<HTMLElement | null>
   onMouseEnter: () => void
   onMouseLeave: () => void
   onClick: () => void
@@ -14,6 +24,11 @@ interface WallpaperCardProps {
 
 const FALLBACK_THUMB =
   'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80'
+
+/// How far outside the scroll viewport a card starts loading. Scrolling one
+/// row takes far more than this, so the next row is always ready before it
+/// arrives, while the rest of the page stays unloaded.
+const PRELOAD_MARGIN = '200px 0px'
 
 function toMediaSrc(pathOrUrl: string): string {
   if (!pathOrUrl) return ''
@@ -36,6 +51,9 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   isAnyHovered,
   isHovered,
   enableBlur = true,
+  lazyLoad = true,
+  index = 0,
+  scrollRoot,
   onMouseEnter,
   onMouseLeave,
   onClick,
@@ -47,10 +65,49 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   // 优先加载 thumb（静态缩略图或视频提取帧），视频源路径仅用于壁纸应用
   const mediaSource = toMediaSrc(wallpaper.thumb || wallpaper.path || '')
   const [imgSrc, setImgSrc] = useState(mediaSource)
+  // `requested` means "the browser may fetch this now"; `loaded` drives the
+  // entrance animation and is only meaningful while lazy loading is on.
+  const [requested, setRequested] = useState(!lazyLoad)
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
+    setLoaded(false)
   }, [wallpaper.thumb, wallpaper.path])
+
+  // Turning the feature off has to reveal everything already on screen, not
+  // wait for the next scroll.
+  useEffect(() => {
+    if (!lazyLoad) setRequested(true)
+  }, [lazyLoad])
+
+  // Defer the fetch until the card is near the viewport. `root: null` still
+  // respects the gallery's own scroll container: the intersection rect is
+  // clipped by every ancestor that clips, so this works for the nested
+  // `.gallery-viewport` without handing it a root element.
+  useEffect(() => {
+    if (!lazyLoad || requested) return
+    const el = cardRef.current
+    if (!el) {
+      setRequested(true)
+      return
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      setRequested(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setRequested(true)
+          observer.disconnect()
+        }
+      },
+      { root: scrollRoot?.current ?? null, rootMargin: PRELOAD_MARGIN }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [lazyLoad, requested, scrollRoot])
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!cardRef.current) return
@@ -114,6 +171,14 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   const cardFilter = isBlurred ? 'blur(3.5px) brightness(0.82)' : 'none'
   const cardOpacity = isBlurred ? 0.78 : 1
 
+  // The entrance: nothing until the card is near the viewport, then a short
+  // rise-and-settle. Staggered by column position so a freshly loaded page
+  // arrives as a wave rather than a single flash. Disabled entirely when the
+  // setting is off — the feature is the whole deferral *and* the animation.
+  const showPlaceholder = lazyLoad && !requested
+  const entering = lazyLoad && requested && !loaded
+  const staggerMs = lazyLoad ? Math.min(index, 12) * 45 : 0
+
   return (
     <div
       ref={cardRef}
@@ -138,22 +203,53 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
         }}
       >
         {/* 全量采用轻量级高清预览缩略图，视频文件只在应用到壁纸时才由后台守护进程解码 */}
-        <img
-          src={imgSrc}
-          alt={wallpaper.name}
-          loading="lazy"
-          decoding="async"
-          onError={() => {
-            setImgSrc(FALLBACK_THUMB)
-          }}
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            display: 'block',
-            borderRadius: 'inherit',
-          }}
-        />
+        {!showPlaceholder && (
+          <img
+            src={imgSrc}
+            alt={wallpaper.name}
+            // With our own observer already gating the fetch, asking the
+            // browser to defer again would only add latency. Without the
+            // feature, native lazy loading is the better default.
+            loading={lazyLoad ? 'eager' : 'lazy'}
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            onError={() => {
+              setImgSrc(FALLBACK_THUMB)
+              setLoaded(true)
+            }}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+              borderRadius: 'inherit',
+              // While entering, the inline opacity/transform own the stylesheet's
+              // hover zoom; once settled they are dropped so
+              // `.wallpaper-card:hover .card-media img` takes over again.
+              opacity: entering ? 0 : undefined,
+              transform: entering ? 'scale(1.045) translateY(10px)' : undefined,
+              transition: entering
+                ? `opacity 0.5s cubic-bezier(0.2, 0, 0, 1) ${staggerMs}ms, transform 0.62s cubic-bezier(0.16, 1, 0.3, 1) ${staggerMs}ms`
+                : undefined,
+            }}
+          />
+        )}
+
+        {/* 未进入视口时的占位：与卡片同尺寸，不产生布局跳动 */}
+        {showPlaceholder && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background:
+                'linear-gradient(100deg, var(--m3-surface-subtle) 30%, rgba(255,255,255,0.06) 50%, var(--m3-surface-subtle) 70%)',
+              backgroundSize: '220% 100%',
+              animation: 'card-placeholder-sweep 1.5s ease-in-out infinite',
+            }}
+          />
+        )}
+
         <div ref={glareRef} className="card-glare"></div>
 
         {/* 动态视频标记 */}

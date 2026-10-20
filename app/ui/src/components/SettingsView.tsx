@@ -7,6 +7,8 @@ interface SettingsViewProps {
   seedColor: string
   enableBlur?: boolean
   onToggleEnableBlur?: () => void
+  lazyLoad?: boolean
+  onToggleLazyLoad?: () => void
   onNotify: (msg: string) => void
 }
 
@@ -22,6 +24,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   seedColor,
   enableBlur = true,
   onToggleEnableBlur,
+  lazyLoad = true,
+  onToggleLazyLoad,
   onNotify,
 }) => {
   const [daemonRunning, setDaemonRunning] = useState(false)
@@ -528,6 +532,64 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {enableBlur
               ? '当前已开启景深聚焦模糊。若在低配核显或老旧设备上滑动时感知掉帧，可随时在此关闭，停用后悬停只保留 3D 微翘高光，彻底免除 GPU 滤镜运算。'
               : '当前已彻底禁用 CSS 模糊滤镜，所有卡片保持零模糊开销，达到最极致高刷滑动性能。'}
+          </div>
+        </div>
+
+        {/* ================================================================
+            卡片 6：壁纸卡片懒加载与入场动画 (Lazy Loading)
+            ================================================================ */}
+        <div
+          className="wallhaven-control-box"
+          style={{ margin: 0, padding: 22 }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>
+                壁纸卡片懒加载与入场动画 (Lazy Load)
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--m3-fg-muted)',
+                  marginTop: 2,
+                }}
+              >
+                卡片滚动到视口附近才请求预览图，到达时以淡入 + 轻微上浮的波浪式动画呈现。
+              </div>
+            </div>
+
+            {onToggleLazyLoad && (
+              <button
+                className={`wh-toggle-pill ${lazyLoad ? 'active' : ''}`}
+                style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+                onClick={onToggleLazyLoad}
+              >
+                {lazyLoad ? '⚡ 懒加载：已开启' : '🖼 懒加载：已关闭'}
+              </button>
+            )}
+          </div>
+
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--m3-fg-muted)',
+              marginTop: 10,
+              lineHeight: 1.5,
+              borderTop: '1px solid var(--m3-outline-variant)',
+              paddingTop: 10,
+            }}
+          >
+            {lazyLoad
+              ? '当前按需加载：视口外约一屏范围内的卡片提前预取，更远的保持骨架占位。首屏卡片会依列顺序错峰入场，翻页或切换筛选时同样生效。'
+              : '当前一次性加载全部可见卡片，不做延迟请求、不播放入场动画 —— 适合希望内容瞬时全部出现的场景。'}
           </div>
         </div>
       </div>

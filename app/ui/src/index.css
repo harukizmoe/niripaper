@@ -611,6 +611,18 @@
     }
     .wallpaper-card:hover .card-glare { opacity: 1; }
 
+    /* Lazy-load placeholder: a card-sized sweep so the grid never jumps. The
+       animation is decorative and cheap (background-position only). */
+    @keyframes card-placeholder-sweep {
+      0%   { background-position: 130% 0; }
+      100% { background-position: -30% 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .wallpaper-card [style*="card-placeholder-sweep"] {
+        animation: none !important;
+      }
+    }
+
     .badge-active {
       position: absolute;
       top: 10px;
