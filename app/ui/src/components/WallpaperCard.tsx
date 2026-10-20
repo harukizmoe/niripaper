@@ -65,15 +65,47 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   // 优先加载 thumb（静态缩略图或视频提取帧），视频源路径仅用于壁纸应用
   const mediaSource = toMediaSrc(wallpaper.thumb || wallpaper.path || '')
   const [imgSrc, setImgSrc] = useState(mediaSource)
-  // `requested` means "the browser may fetch this now"; `loaded` drives the
-  // entrance animation and is only meaningful while lazy loading is on.
+  // `requested` means "the browser may fetch this now"; `loaded` means the
+  // pixels are there and the entrance may start.
   const [requested, setRequested] = useState(!lazyLoad)
   const [loaded, setLoaded] = useState(false)
+  // Runs the one-shot entrance. Kept as state rather than derived from
+  // `loaded` so the class can be dropped once the animation is over: a
+  // lingering `animation` would keep overriding the hover zoom.
+  const [entering, setEntering] = useState(false)
+
+  // Stagger by position within the page so a fresh page arrives as a wave.
+  const staggerMs = lazyLoad ? Math.min(index, 12) * 45 : 0
 
   useEffect(() => {
     setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
     setLoaded(false)
+    setEntering(false)
   }, [wallpaper.thumb, wallpaper.path])
+
+  // Start the entrance only when pixels exist. Beginning it at mount made the
+  // image fade in while still blank, so the card showed flat background for
+  // the first part of the animation — the flash this replaced.
+  useEffect(() => {
+    if (lazyLoad && loaded) setEntering(true)
+  }, [lazyLoad, loaded])
+
+  // `onLoad` does not fire when the image is already complete (a cache hit
+  // that happens between render and the listener attaching), which would leave
+  // the skeleton up forever. `complete` is the authoritative check.
+  useEffect(() => {
+    const img = cardRef.current?.querySelector('img')
+    if (img?.complete && img.naturalWidth > 0) setLoaded(true)
+  }, [requested, imgSrc])
+
+  // `animationend` is the normal exit; this is the fallback for when no
+  // animation runs at all (reduced motion) and the class would otherwise stick
+  // around forever.
+  useEffect(() => {
+    if (!entering) return
+    const timer = window.setTimeout(() => setEntering(false), staggerMs + 800)
+    return () => window.clearTimeout(timer)
+  }, [entering, staggerMs])
 
   // Turning the feature off has to reveal everything already on screen, not
   // wait for the next scroll.
@@ -81,10 +113,10 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
     if (!lazyLoad) setRequested(true)
   }, [lazyLoad])
 
-  // Defer the fetch until the card is near the viewport. `root: null` still
-  // respects the gallery's own scroll container: the intersection rect is
-  // clipped by every ancestor that clips, so this works for the nested
-  // `.gallery-viewport` without handing it a root element.
+  // Defer the fetch until the card is near the viewport. The root has to be
+  // the actual scrolling element: with `root: null` the browser measures
+  // against the viewport and counts content clipped by an inner scroller as
+  // visible, so the whole page loads at once and the feature does nothing.
   useEffect(() => {
     if (!lazyLoad || requested) return
     const el = cardRef.current
@@ -176,8 +208,6 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   // arrives as a wave rather than a single flash. Disabled entirely when the
   // setting is off — the feature is the whole deferral *and* the animation.
   const showPlaceholder = lazyLoad && !requested
-  const entering = lazyLoad && requested && !loaded
-  const staggerMs = lazyLoad ? Math.min(index, 12) * 45 : 0
 
   return (
     <div
@@ -202,6 +232,24 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           background: 'var(--m3-surface-subtle)',
         }}
       >
+        {/* 骨架占位：图片未就绪时铺满卡片，图片一到达就与它交叉淡出。
+            不能在图片出现后继续留在底下 —— 两张图叠着会显出扫光条纹的重影。 */}
+        {lazyLoad && !loaded && (
+          <div
+            aria-hidden
+            data-skeleton
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background:
+                'linear-gradient(100deg, var(--m3-surface-subtle) 30%, rgba(255,255,255,0.06) 50%, var(--m3-surface-subtle) 70%)',
+              backgroundSize: '220% 100%',
+              animation:
+                'card-placeholder-sweep 1.5s ease-in-out infinite',
+            }}
+          />
+        )}
+
         {/* 全量采用轻量级高清预览缩略图，视频文件只在应用到壁纸时才由后台守护进程解码 */}
         {!showPlaceholder && (
           <img
@@ -217,36 +265,23 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
               setImgSrc(FALLBACK_THUMB)
               setLoaded(true)
             }}
+            // A keyframes animation, not a transition on toggled inline
+            // styles: the transition form ran from a start value that was
+            // yanked in the same frame it ended, so the last step jumped. An
+            // animation simply ends at its final keyframe, and the class is
+            // dropped afterwards so the hover zoom gets the element back.
+            className={entering ? 'card-enter' : undefined}
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'cover',
               display: 'block',
               borderRadius: 'inherit',
-              // While entering, the inline opacity/transform own the stylesheet's
-              // hover zoom; once settled they are dropped so
-              // `.wallpaper-card:hover .card-media img` takes over again.
-              opacity: entering ? 0 : undefined,
-              transform: entering ? 'scale(1.045) translateY(10px)' : undefined,
-              transition: entering
-                ? `opacity 0.5s cubic-bezier(0.2, 0, 0, 1) ${staggerMs}ms, transform 0.62s cubic-bezier(0.16, 1, 0.3, 1) ${staggerMs}ms`
-                : undefined,
+              // Held back until called for, so the image cannot flash at full
+              // opacity before the animation's start frame is painted.
+              animationDelay: entering ? `${staggerMs}ms` : undefined,
             }}
-          />
-        )}
-
-        {/* 未进入视口时的占位：与卡片同尺寸，不产生布局跳动 */}
-        {showPlaceholder && (
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background:
-                'linear-gradient(100deg, var(--m3-surface-subtle) 30%, rgba(255,255,255,0.06) 50%, var(--m3-surface-subtle) 70%)',
-              backgroundSize: '220% 100%',
-              animation: 'card-placeholder-sweep 1.5s ease-in-out infinite',
-            }}
+            onAnimationEnd={() => setEntering(false)}
           />
         )}
 

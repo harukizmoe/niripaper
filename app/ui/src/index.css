@@ -594,6 +594,11 @@
       backface-visibility: hidden;
       -webkit-backface-visibility: hidden;
       transition: transform 0.4s cubic-bezier(0.2, 0, 0, 1);
+      /* The skeleton is absolutely positioned, and positioned boxes paint
+         above in-flow ones — so without this the sweep was drawn on top of an
+         image that had already decoded, which read as stripes over the card. */
+      position: relative;
+      z-index: 1;
     }
     .wallpaper-card:hover .card-media img {
       transform: scale(1.04);
@@ -617,9 +622,34 @@
       0%   { background-position: 130% 0; }
       100% { background-position: -30% 0; }
     }
+
+    /* The entrance, as keyframes rather than a transition.
+       `backwards` is the load-bearing part: without it the delay window shows
+       the element's own (fully opaque) style, so every staggered card flashes
+       at full opacity and then jumps to 0 to start its fade. */
+    @keyframes card-enter {
+      from {
+        opacity: 0;
+        transform: scale(1.045) translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+    .card-media img.card-enter {
+      animation: card-enter 0.55s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    }
+
     @media (prefers-reduced-motion: reduce) {
-      .wallpaper-card [style*="card-placeholder-sweep"] {
-        animation: none !important;
+      /* The placeholder stops sweeping, and cards appear without motion: the
+         keyframes are replaced by nothing, so `animationend` never fires and
+         the component's timer drops the class instead. */
+      .card-media img.card-enter {
+        animation: none;
+      }
+      .wallpaper-card [data-skeleton] {
+        animation: none;
       }
     }
 
