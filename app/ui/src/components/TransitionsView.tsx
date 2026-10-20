@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { transitions, type TransitionItem } from '../data/wallpapers'
+import { invoke } from '../hooks/useDaemon'
 
 interface TransitionsViewProps {
   onNotify: (msg: string) => void
@@ -7,6 +8,25 @@ interface TransitionsViewProps {
 
 type SelectionMode = 'fixed' | 'rotate' | 'random'
 type DirectionValue = 'left' | 'right' | 'up' | 'down'
+
+interface TransitionConfig {
+  selection: 'fixed' | 'rotate' | 'random'
+  effect: string
+  effects: string[]
+  duration_ms: number
+  curve: string
+  cubic_bezier?: [number, number, number, number]
+  allow_overshoot: boolean
+  softness: number
+  center_x: number
+  center_y: number
+  start_radius: number
+  hold_ms: number
+  stripes: number
+  push: number
+  direction: 'left' | 'right' | 'up' | 'down'
+  on_start: boolean
+}
 
 export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) => {
   // --------------------------------------------------------------------------
@@ -38,13 +58,80 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
   const [push, setPush] = useState<number>(0.55)
   const [startRadius, setStartRadius] = useState<number>(0.0)
   const [hold, setHold] = useState<number>(0)
+  const [saving, setSaving] = useState(false)
+
+  // 组件挂载时读取 config.toml 中的真实过渡配置
+  useEffect(() => {
+    void invoke<TransitionConfig>('get_transition_config')
+      .then((cfg) => {
+        setSelection(cfg.selection as SelectionMode)
+        setFixedEffect(cfg.effect)
+        if (cfg.effects && cfg.effects.length > 0) {
+          setPoolEffects(cfg.effects)
+        }
+        setDuration(cfg.duration_ms)
+        setCurve(cfg.curve)
+        setAllowOvershoot(cfg.allow_overshoot)
+        setSoftness(cfg.softness)
+        setCenterX(Math.round(cfg.center_x * 100))
+        setCenterY(Math.round(cfg.center_y * 100))
+        setStartRadius(cfg.start_radius)
+        setHold(cfg.hold_ms)
+        setStripes(cfg.stripes)
+        setPush(cfg.push)
+        setDirection(cfg.direction as DirectionValue)
+        setOnStart(cfg.on_start)
+        setInspectEffect(
+          cfg.selection === 'fixed'
+            ? cfg.effect
+            : cfg.effects[0] || 'portal'
+        )
+      })
+      .catch((err) => {
+        console.warn('获取过渡动画配置失败:', err)
+      })
+  }, [])
+
+  // 保存并写回 config.toml
+  const handleSaveConfig = async (override?: Partial<TransitionConfig>) => {
+    setSaving(true)
+    const payload: TransitionConfig = {
+      selection,
+      effect: fixedEffect,
+      effects: poolEffects,
+      duration_ms: duration,
+      curve,
+      cubic_bezier: [0.42, 0.0, 0.58, 1.0],
+      allow_overshoot: allowOvershoot,
+      softness,
+      center_x: centerX / 100,
+      center_y: centerY / 100,
+      start_radius: startRadius,
+      hold_ms: hold,
+      stripes,
+      push,
+      direction,
+      on_start: onStart,
+      ...override,
+    }
+
+    try {
+      const res = await invoke<string>('save_transition_config', { cfg: payload })
+      onNotify(res)
+    } catch (e) {
+      onNotify(`保存过渡配置失败: ${e}`)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   // 切换选中卡片
   const handleCardClick = (tr: TransitionItem) => {
     setInspectEffect(tr.id)
     if (selection === 'fixed') {
       setFixedEffect(tr.id)
-      onNotify(`已设为全局固定过渡效果：${tr.name}`)
+      void handleSaveConfig({ effect: tr.id })
+      onNotify(`已设为全局固定过渡效果并保存至配置：${tr.name}`)
     } else {
       onNotify(`已激活参数面板：${tr.name}`)
     }
@@ -53,37 +140,30 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
   // 轮播池勾选/移除
   const togglePoolEffect = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    setPoolEffects((prev) => {
-      const exists = prev.includes(id)
-      if (exists) {
-        if (prev.length <= 1) {
-          onNotify('轮播池至少需保留 1 款效果')
-          return prev
-        }
-        const updated = prev.filter((item) => item !== id)
-        onNotify(`已从轮播池移除：${id}`)
-        return updated
-      } else {
-        const updated = [...prev, id]
-        onNotify(`已加入轮播候选池：${id}`)
-        return updated
-      }
-    })
+    const exists = poolEffects.includes(id)
+    if (exists && poolEffects.length <= 1) {
+      onNotify('轮播池至少需保留 1 款效果')
+      return
+    }
+    const updated = exists
+      ? poolEffects.filter((item) => item !== id)
+      : [...poolEffects, id]
+    setPoolEffects(updated)
+    void handleSaveConfig({ effects: updated })
+    onNotify(exists ? `已从轮播池移除：${id}` : `已加入轮播候选池并保存：${id}`)
   }
 
-  // 触发预览动效
-  const handlePreview = () => {
-    const currentName =
-      selection === 'fixed'
-        ? transitions.find((t) => t.id === fixedEffect)?.name || fixedEffect
-        : `${selection === 'rotate' ? '顺序轮播' : '随机抽选'} (${
-            poolEffects.length
-          } 款)`
-    onNotify(
-      `⚡ 模拟测试换图过渡：[${currentName}] · 时长 ${duration}ms · ${curve}`
-    )
+  // 触发真实桌面预览动效
+  const handlePreview = async () => {
+    try {
+      await handleSaveConfig()
+      onNotify('⚡ 正在桌面上触发换图过渡动画...')
+      await invoke<string>('trigger_test_transition')
+      onNotify(`✨ 换图过渡动画已在桌面背景层成功播放！`)
+    } catch (e) {
+      onNotify(`触发过渡动画失败: ${e}`)
+    }
   }
-
   const selectedInspectObj =
     transitions.find((t) => t.id === inspectEffect) || transitions[0]
 
@@ -141,11 +221,19 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
+            className="wh-toggle-pill active"
+            style={{ height: 38, padding: '0 18px', fontWeight: 800 }}
+            onClick={() => void handleSaveConfig()}
+            disabled={saving}
+          >
+            {saving ? '⏳ 保存中...' : '💾 保存并应用配置'}
+          </button>
+          <button
             className="wh-search-btn"
-            style={{ height: 38 }}
+            style={{ height: 38, background: 'var(--m3-primary)', color: '#fff' }}
             onClick={handlePreview}
           >
-            ▶ 预览测试过渡
+            ⚡ 在桌面上测试过渡动效
           </button>
         </div>
       </header>
@@ -202,7 +290,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('fixed')
-                  onNotify('已切换为：单一固定效果模式')
+                  void handleSaveConfig({ selection: 'fixed' })
+                  onNotify('已切换为：单一固定效果模式并保存至 config.toml')
                 }}
               >
                 ★ 单一固定 (Fixed)
@@ -214,7 +303,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('rotate')
-                  onNotify('已切换为：候选池顺序轮播模式')
+                  void handleSaveConfig({ selection: 'rotate' })
+                  onNotify('已切换为：候选池顺序轮播模式并保存至 config.toml')
                 }}
               >
                 🔄 顺序轮播 (Rotate)
@@ -226,7 +316,8 @@ export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) =>
                 style={{ padding: '0 16px' }}
                 onClick={() => {
                   setSelection('random')
-                  onNotify('已切换为：候选池随机抽选模式')
+                  void handleSaveConfig({ selection: 'random' })
+                  onNotify('已切换为：候选池随机抽选模式并保存至 config.toml')
                 }}
               >
                 🎲 随机抽选 (Random)

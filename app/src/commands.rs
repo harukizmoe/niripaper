@@ -930,3 +930,235 @@ pub fn save_parallax_config(cfg: ParallaxConfig) -> Result<String, String> {
     write_config_atomic(&path, &doc)?;
     Ok("视差与动画参数已写入 config.toml 并即时生效".to_owned())
 }
+
+/// Wallpaper transition effect and motion parameters (§5).
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct TransitionConfig {
+    pub selection: String,
+    pub effect: String,
+    pub effects: Vec<String>,
+    pub duration_ms: u64,
+    pub curve: String,
+    pub cubic_bezier: Option<[f64; 4]>,
+    pub allow_overshoot: bool,
+    pub softness: f64,
+    pub center_x: f64,
+    pub center_y: f64,
+    pub start_radius: f64,
+    pub hold_ms: u64,
+    pub stripes: u32,
+    pub push: f64,
+    pub direction: String,
+    pub on_start: bool,
+}
+
+#[tauri::command]
+pub fn get_transition_config() -> Result<TransitionConfig, String> {
+    let (_, doc) = read_config_doc()?;
+    let tr = doc.get("transition").and_then(|i| i.as_table_like());
+
+    let selection = tr
+        .and_then(|t| t.get("selection"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("rotate")
+        .to_owned();
+
+    let effect = tr
+        .and_then(|t| t.get("effect"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("portal")
+        .to_owned();
+
+    let effects = if let Some(arr) = tr.and_then(|t| t.get("effects")).and_then(|v| v.as_array()) {
+        arr.iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_owned())
+            .collect()
+    } else {
+        vec!["portal".to_owned(), "iris".to_owned()]
+    };
+
+    let duration_ms = tr
+        .and_then(|t| t.get("duration_ms"))
+        .and_then(|v| v.as_integer())
+        .unwrap_or(1800) as u64;
+
+    let curve = tr
+        .and_then(|t| t.get("curve"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("cubic-bezier")
+        .to_owned();
+
+    let cubic_bezier = if let Some(arr) = tr
+        .and_then(|t| t.get("cubic_bezier"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() == 4 {
+            let mut vals = [0.0; 4];
+            for (i, val) in arr.iter().enumerate() {
+                vals[i] = val.as_float().unwrap_or(0.0);
+            }
+            Some(vals)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let allow_overshoot = tr
+        .and_then(|t| t.get("allow_overshoot"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let softness = tr
+        .and_then(|t| t.get("softness"))
+        .and_then(|v| v.as_float())
+        .unwrap_or(0.3);
+
+    let (center_x, center_y) =
+        if let Some(arr) = tr.and_then(|t| t.get("center")).and_then(|v| v.as_array()) {
+            let cx = arr.get(0).and_then(|v| v.as_float()).unwrap_or(0.5);
+            let cy = arr.get(1).and_then(|v| v.as_float()).unwrap_or(0.5);
+            (cx, cy)
+        } else {
+            (0.5, 0.5)
+        };
+
+    let start_radius = tr
+        .and_then(|t| t.get("start_radius"))
+        .and_then(|v| v.as_float())
+        .unwrap_or(0.08);
+
+    let hold_ms = tr
+        .and_then(|t| t.get("hold_ms"))
+        .and_then(|v| v.as_integer())
+        .unwrap_or(0) as u64;
+
+    let stripes = tr
+        .and_then(|t| t.get("stripes"))
+        .and_then(|v| v.as_integer())
+        .unwrap_or(12) as u32;
+
+    let push = tr
+        .and_then(|t| t.get("push"))
+        .and_then(|v| v.as_float())
+        .unwrap_or(0.55);
+
+    let direction = tr
+        .and_then(|t| t.get("direction"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("right")
+        .to_owned();
+
+    let on_start = tr
+        .and_then(|t| t.get("on_start"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    Ok(TransitionConfig {
+        selection,
+        effect,
+        effects,
+        duration_ms,
+        curve,
+        cubic_bezier,
+        allow_overshoot,
+        softness,
+        center_x,
+        center_y,
+        start_radius,
+        hold_ms,
+        stripes,
+        push,
+        direction,
+        on_start,
+    })
+}
+
+#[tauri::command]
+pub fn save_transition_config(cfg: TransitionConfig) -> Result<String, String> {
+    let (path, mut doc) = read_config_doc()?;
+
+    if !doc.contains_key("transition") {
+        doc["transition"] = Item::Table(toml_edit::Table::new());
+    }
+
+    if let Some(tr) = doc
+        .get_mut("transition")
+        .and_then(|i| i.as_table_like_mut())
+    {
+        tr.insert("selection", toml_edit::value(cfg.selection));
+        tr.insert("effect", toml_edit::value(cfg.effect));
+
+        let mut arr = toml_edit::Array::new();
+        for e in &cfg.effects {
+            arr.push(e.as_str());
+        }
+        tr.insert("effects", toml_edit::value(arr));
+
+        tr.insert(
+            "duration_ms",
+            toml_edit::value(cfg.duration_ms.max(50) as i64),
+        );
+        tr.insert("curve", toml_edit::value(cfg.curve.clone()));
+
+        if cfg.curve == "cubic-bezier" {
+            let cb = cfg.cubic_bezier.unwrap_or([0.42, 0.0, 0.58, 1.0]);
+            let mut cb_arr = toml_edit::Array::new();
+            for val in cb {
+                cb_arr.push(val);
+            }
+            tr.insert("cubic_bezier", toml_edit::value(cb_arr));
+        } else {
+            tr.remove("cubic_bezier");
+        }
+
+        tr.insert("allow_overshoot", toml_edit::value(cfg.allow_overshoot));
+        tr.insert("softness", toml_edit::value(cfg.softness.clamp(0.0, 1.0)));
+
+        let mut center_arr = toml_edit::Array::new();
+        center_arr.push(cfg.center_x.clamp(0.0, 1.0));
+        center_arr.push(cfg.center_y.clamp(0.0, 1.0));
+        tr.insert("center", toml_edit::value(center_arr));
+
+        tr.insert(
+            "start_radius",
+            toml_edit::value(cfg.start_radius.clamp(0.0, 1.0)),
+        );
+        tr.insert("hold_ms", toml_edit::value(cfg.hold_ms as i64));
+        tr.insert("stripes", toml_edit::value(cfg.stripes.clamp(2, 64) as i64));
+        tr.insert("push", toml_edit::value(cfg.push.clamp(0.0, 1.5)));
+        tr.insert("direction", toml_edit::value(cfg.direction));
+        tr.insert("on_start", toml_edit::value(cfg.on_start));
+    }
+
+    write_config_atomic(&path, &doc)?;
+    Ok("过渡效果参数已写入 config.toml 并即时热重载".to_owned())
+}
+
+#[tauri::command]
+pub fn trigger_test_transition(
+    connection: State<'_, Connection>,
+    wallpaper_path: Option<String>,
+) -> Result<String, String> {
+    let path = match wallpaper_path {
+        Some(p) => p,
+        None => {
+            let local = load_local_wallpapers(None).unwrap_or_default();
+            if local.is_empty() {
+                return Err("本地壁纸库为空，无法触发测试过渡".to_owned());
+            }
+            if local.len() > 1 {
+                local[1].path.clone()
+            } else {
+                local[0].path.clone()
+            }
+        }
+    };
+
+    connection.send(&Request::Set {
+        output: None,
+        path: path.into(),
+    })
+}
