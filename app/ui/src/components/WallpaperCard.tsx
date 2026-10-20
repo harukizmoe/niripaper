@@ -74,6 +74,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   // `placed` is set only once the bitmap is decoded and actually paintable, so
   // the skeleton never leaves before there are pixels to replace it.
   const [requested, setRequested] = useState(!lazyLoad)
+  // Decoded and paintable: the entrance may start.
   const [placed, setPlaced] = useState(false)
 
   // Stagger by position within the page so a fresh page arrives as a wave.
@@ -83,12 +84,6 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
     setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
     setPlaced(false)
   }, [wallpaper.thumb, wallpaper.path])
-
-  // Turning the feature off has to reveal everything already on screen, not
-  // wait for the next scroll.
-  useEffect(() => {
-    if (!lazyLoad) setRequested(true)
-  }, [lazyLoad])
 
   // Wait for the decoded bitmap, not merely `load`.
   //
@@ -249,30 +244,14 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
         className="card-media"
         style={{
           aspectRatio: wallpaper.aspect || '16 / 9',
-          background: 'var(--m3-surface-subtle)',
+          // Transparent until there is something to show. An opaque fill here
+          // is what made a page of unloaded cards read as one white flash
+          // against dark wallpapers.
+          background: lazyLoad && !placed ? 'transparent' : 'var(--m3-surface-subtle)',
         }}
       >
         {/* 骨架占位：图片解码完成前铺满卡片。它与图片的显隐由同一个 `placed`
             翻转驱动，因此不存在"骨架已撤、图片未现"的中间帧。 */}
-        {lazyLoad && !placed && (
-          <div
-            aria-hidden
-            data-skeleton
-            style={{
-              position: 'absolute',
-              inset: 0,
-              // A trough-then-highlight sweep, not a flat fill: a card that is
-              // merely light reads as empty (and, at a glance, as a white
-              // flash), while a moving sheen reads as "loading".
-              background:
-                'linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.55) 45%, rgba(255,255,255,0.55) 55%, transparent 80%)',
-              backgroundSize: '220% 100%',
-              backgroundColor: 'var(--m3-surface-subtle)',
-              animation:
-                'card-placeholder-sweep 1.4s ease-in-out infinite',
-            }}
-          />
-        )}
 
         {/* 全量采用轻量级高清预览缩略图，视频文件只在应用到壁纸时才由后台守护进程解码。
             图片在整个生命周期内始终挂载：卸载再挂载会重新解码，那一帧本身就是白屏。 */}
@@ -296,7 +275,11 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           style={{
             // Hidden until decoded, so it cannot paint a blank or partially
             // decoded frame of its own over the skeleton.
+            // Hidden until decoded so it cannot paint a blank frame, and
+            // painted above the skeleton once it may show.
             visibility: lazyLoad && !placed ? 'hidden' : undefined,
+            position: 'relative',
+            zIndex: 1,
             width: '100%',
             height: '100%',
             objectFit: 'cover',

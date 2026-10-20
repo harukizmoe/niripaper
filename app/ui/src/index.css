@@ -616,12 +616,10 @@
     }
     .wallpaper-card:hover .card-glare { opacity: 1; }
 
-    /* Lazy-load placeholder: a card-sized sweep so the grid never jumps. The
-       animation is decorative and cheap (background-position only). */
-    @keyframes card-placeholder-sweep {
-      0%   { background-position: 130% 0; }
-      100% { background-position: -30% 0; }
-    }
+    /* There is deliberately no placeholder animation. Any filled block was a
+       large area of colour on screen the instant a page mounted, and against
+       these wallpapers a light block reads as a white flash; an unloaded card
+       is now simply empty. */
 
     /* The entrance, as keyframes rather than a transition.
        `backwards` is the load-bearing part: without it the delay window shows
@@ -646,9 +644,6 @@
          keyframes are replaced by nothing, so `animationend` never fires and
          the component's timer drops the class instead. */
       .card-media img.card-enter {
-        animation: none;
-      }
-      .wallpaper-card [data-skeleton] {
         animation: none;
       }
     }
