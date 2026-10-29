@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Box, CssBaseline, Snackbar } from '@mui/material'
 import { ThemeProvider } from '@mui/material/styles'
 import { invoke } from './hooks/useDaemon'
@@ -54,7 +54,13 @@ export default function App() {
     const saved = localStorage.getItem('niripaper_dark')
     return saved !== null ? saved === 'true' : matchMedia('(prefers-color-scheme: dark)').matches
   })
-  const [followWallpaper, setFollowWallpaper] = useState(true)
+  const [followWallpaper, setFollowWallpaper] = useState<boolean>(
+    () => localStorage.getItem('niripaper_follow_wallpaper') !== 'false',
+  )
+  // Read by the library scan, which is a stable callback and must not seed
+  // the theme once the user has switched following off. Written where the
+  // switch is toggled, the only place the value changes.
+  const followRef = useRef(followWallpaper)
   const [enableBlur, setEnableBlur] = useState<boolean>(() => {
     const saved = localStorage.getItem('niripaper_enable_blur')
     return saved !== null ? saved === 'true' : true
@@ -72,10 +78,9 @@ export default function App() {
   // wallpaper scan below: that callback sets the seed, and a `const` used
   // before its declaration is a TDZ error that takes the whole view down on
   // first render.
-  const [themeSeed, setThemeSeed] = useState<string>(() => {
-    const active = initialLocalWallpapers.find((w) => w.activeOn) || whWallpapers[0]
-    return pickSeedColor(active.colors)
-  })
+  // Until the library scan finds the wallpaper on screen, the fallback: the
+  // built-in sample list is placeholder data, not a colour worth painting.
+  const [themeSeed, setThemeSeed] = useState<string>(THEME_SEED_FALLBACK)
   const [paletteError, setPaletteError] = useState<string | null>(null)
   // Opt-in: follow the system palette instead of generating our own. The
   // palette is read, never written, so enabling this cannot break another
@@ -112,9 +117,8 @@ export default function App() {
             if (!current) {
               console.warn('当前壁纸不在本地库中，无法取色:', path)
             }
-            if (current) {
-              const next = pickSeedColor(current.colors)
-              if (next) setThemeSeed(next)
+            if (current && followRef.current) {
+              setThemeSeed(pickSeedColor(current.colors))
             }
           })
           .catch((e) => {
@@ -189,10 +193,10 @@ export default function App() {
   })
 
 
-  // Apply theme tokens whenever themeSeed or isDark changes
   // Pull the system palette while the switch is on, and once more whenever the
   // wallpaper changes (a new wallpaper means a new palette). Best effort: a
   // missing file just leaves `externalPalette` null and we keep generating.
+  const paletteRefresh = adaptNoctalia ? themeSeed : null
   useEffect(() => {
     if (!adaptNoctalia) {
       setExternalPalette(null)
@@ -205,8 +209,8 @@ export default function App() {
         if (p && p['primary']) {
           setExternalPalette(p)
         } else {
+          // The settings row says so; no toast on top of it.
           setExternalPalette(null)
-          showSnackbar('未找到系统调色板，沿用本应用取色')
         }
       })
       .catch((e) => {
@@ -217,7 +221,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [adaptNoctalia, adaptNoctalia ? themeSeed : null, showSnackbar])
+  }, [adaptNoctalia, paletteRefresh])
 
   // The roles in force: the system palette when following it, otherwise our
   // own scheme from the wallpaper seed. One map drives the MUI theme, the CSS
@@ -247,8 +251,9 @@ export default function App() {
       setPaletteError(String(e))
     })
 
-    // Push the same palette to the desktop's theme daemon.
-    if (syncSystemTheme) {
+    // Push the same palette to the desktop's theme daemon — never while
+    // reading its palette, which would hand it its own colours back.
+    if (syncSystemTheme && !adaptNoctalia) {
       const pick = (k: string) => roles[k]
       void invoke<string>('apply_system_palette', {
         palette: Object.fromEntries(
@@ -265,13 +270,12 @@ export default function App() {
           setPaletteError(String(e))
         })
     }
-  }, [roles, isDark, following, themeSeed, colorScheme, syncSystemTheme])
+  }, [roles, isDark, following, themeSeed, colorScheme, syncSystemTheme, adaptNoctalia])
 
   const handleToggleSyncSystemTheme = () => {
     setSyncSystemTheme((prev) => {
       const next = !prev
       localStorage.setItem('niripaper_sync_system_theme', String(next))
-      showSnackbar(next ? '换壁纸时会同步系统主题' : '系统主题不再跟随本应用')
       return next
     })
   }
@@ -280,7 +284,6 @@ export default function App() {
     setAdaptNoctalia((prev) => {
       const next = !prev
       localStorage.setItem('niripaper_adapt_noctalia', String(next))
-      showSnackbar(next ? '已改为使用系统调色板' : '已改回从壁纸取色')
       return next
     })
   }
@@ -307,18 +310,18 @@ export default function App() {
   }
 
   const handleToggleFollowWallpaper = () => {
-    setFollowWallpaper((prev) => {
-      const next = !prev
-      if (next) {
-        const active = localList.find((w) => w.activeOn) || whWallpapers[0]
-        const seed = pickSeedColor(active.colors)
-        setThemeSeed(seed)
-        showSnackbar('配色已改为跟随当前壁纸')
-      } else {
-        setThemeSeed(THEME_SEED_FALLBACK)
-        showSnackbar('配色已固定为默认色')
-      }
-      return next
+    const next = !followWallpaper
+    setFollowWallpaper(next)
+    followRef.current = next
+    localStorage.setItem('niripaper_follow_wallpaper', String(next))
+    if (!next) {
+      setThemeSeed(THEME_SEED_FALLBACK)
+      return
+    }
+    // Seed from what the daemon is drawing, as the library scan does.
+    void currentWallpaperPath().then((path) => {
+      const current = path ? localList.find((w) => w.path === path) : undefined
+      if (current) setThemeSeed(pickSeedColor(current.colors))
     })
   }
 
@@ -326,11 +329,6 @@ export default function App() {
     setEnableBlur((prev) => {
       const next = !prev
       localStorage.setItem('niripaper_enable_blur', String(next))
-      showSnackbar(
-        next
-          ? '✨ 已开启壁纸卡片景深聚焦微模糊效果'
-          : '⚡ 已彻底停用景深模糊（零 GPU 滤镜运算，极致流畅）'
-      )
       return next
     })
   }
@@ -338,11 +336,6 @@ export default function App() {
     setLazyLoad((prev) => {
       const next = !prev
       localStorage.setItem('niripaper_lazy_load', String(next))
-      showSnackbar(
-        next
-          ? '⚡ 已开启卡片懒加载：滚到附近才取图，带淡入上浮动画'
-          : '🖼 已关闭懒加载：全部预览图立即加载，无入场动画'
-      )
       return next
     })
   }
