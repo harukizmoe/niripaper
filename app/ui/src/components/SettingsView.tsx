@@ -5,7 +5,7 @@ import {
   SCHEME_NAMES,
   DEFAULT_SCHEME,
   type SchemeName,
-} from '../theme/schemes'
+} from '../theme/color'
 
 interface SettingsViewProps {
   followWallpaper: boolean

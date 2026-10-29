@@ -647,14 +647,6 @@ fn hash_str(s: &str) -> u64 {
     h
 }
 
-/// Pull a small palette out of the image itself.
-///
-/// This used to hash the *file name* and synthesise five hues from it, which
-/// made the theme change whenever a wallpaper was renamed and stay put when
-/// the picture actually changed — the colours had nothing to do with the
-/// image. Downsampling plus a few k-means passes over a thumbnail-sized buffer
-/// is cheap enough to run while scanning a directory, and it is what makes
-/// "pick colours from the wallpaper" mean what it says.
 /// Cached wrapper around [`extract_colors`].
 ///
 /// Decoding a directory of 4K wallpapers is expensive, and the scan runs every
@@ -677,7 +669,9 @@ fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) ->
                 .unwrap_or(0)
         ))
     );
-    let cache_file = cache_dir.join(format!("colors-{key}.txt"));
+    // `v2`: ranked source colours (Score), not k-means centres. Older cache
+    // files hold the latter and must not be read as the former.
+    let cache_file = cache_dir.join(format!("colors-v2-{key}.txt"));
 
     if let Ok(text) = std::fs::read_to_string(&cache_file) {
         let colors: Vec<String> = text
@@ -698,86 +692,37 @@ fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) ->
     colors
 }
 
+/// Rank the image's candidate theme source colours, best first.
+///
+/// This is Material's own wallpaper path (`sourceColorFromImage`): Celebi
+/// quantisation to 128 clusters, then `Score`, which weighs chroma against
+/// how much of the picture each hue covers. The front end takes the first
+/// entry as the seed and builds the scheme from it with the same library, so
+/// the theme is what any other Material You implementation would derive from
+/// this picture. It replaces a k-means pass whose centres were then picked
+/// among by raw chroma — a heuristic of our own that small vivid specks won.
 fn extract_colors(path: &std::path::Path) -> Vec<String> {
+    use material_colors::color::Rgb;
+    use material_colors::quantize::{Quantizer, QuantizerCelebi};
+    use material_colors::score::Score;
+
     let Ok(img) = image::open(path) else {
         return Vec::new();
     };
-    // A 64-pixel box is plenty for dominant colours.
-    let small = img.resize_exact(64, 64, image::imageops::FilterType::Triangle);
-    let rgb = small.to_rgb8();
-
-    // Collect in a coarse bucket space first; that is effectively a cheap
-    // clustering pass and it stops a single flat background from dominating.
-    let mut samples: Vec<(f64, f64, f64)> = Vec::with_capacity(64 * 64);
-    for px in rgb.pixels() {
-        let [r, g, b] = px.0;
-        // Skip near-black and near-white: they are almost never the colour a
-        // palette should be built around.
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        if max < 24 || min > 238 || (max - min) < 12 {
-            continue;
-        }
-        samples.push((r as f64, g as f64, b as f64));
-    }
-    if samples.is_empty() {
-        return Vec::new();
-    }
-
-    // k-means, k = 5, seeded from evenly spaced samples so it is deterministic.
-    const K: usize = 5;
-    let mut centers: Vec<(f64, f64, f64)> =
-        (0..K).map(|i| samples[i * samples.len() / K]).collect();
-    let mut assign = [0usize].repeat(samples.len());
-    for _ in 0..12 {
-        for (i, s) in samples.iter().enumerate() {
-            let mut best = 0;
-            let mut bestd = f64::MAX;
-            for (c, center) in centers.iter().enumerate() {
-                let d =
-                    (s.0 - center.0).powi(2) + (s.1 - center.1).powi(2) + (s.2 - center.2).powi(2);
-                if d < bestd {
-                    bestd = d;
-                    best = c;
-                }
-            }
-            assign[i] = best;
-        }
-        let mut sums = [(0.0f64, 0.0f64, 0.0f64, 0usize)].repeat(K);
-        for (s, &a) in samples.iter().zip(assign.iter()) {
-            let e = &mut sums[a];
-            e.0 += s.0;
-            e.1 += s.1;
-            e.2 += s.2;
-            e.3 += 1;
-        }
-        for (c, e) in sums.iter().enumerate() {
-            if e.3 > 0 {
-                centers[c] = (e.0 / e.3 as f64, e.1 / e.3 as f64, e.2 / e.3 as f64);
-            }
-        }
-    }
-
-    // Order by population: the dominant colour leads, which is what
-    // `pickSeedColor` then chooses among by chroma.
-    let mut counts = [0usize].repeat(K);
-    for &a in &assign {
-        counts[a] += 1;
-    }
-    let mut order: Vec<usize> = (0..K).collect();
-    order.sort_by_key(|&i| std::cmp::Reverse(counts[i]));
-    order
-        .into_iter()
-        .filter(|&i| counts[i] > 0)
-        .map(|i| {
-            let (r, g, b) = centers[i];
-            format!(
-                "#{:02x}{:02x}{:02x}",
-                r.round().clamp(0.0, 255.0) as u8,
-                g.round().clamp(0.0, 255.0) as u8,
-                b.round().clamp(0.0, 255.0) as u8
-            )
-        })
+    // Downscale first, as the library asks: 128x128 keeps every region of the
+    // picture represented and quantises in a few milliseconds.
+    let small = img.resize_exact(128, 128, image::imageops::FilterType::Triangle);
+    let pixels: Vec<Rgb> = small
+        .to_rgb8()
+        .pixels()
+        .map(|p| Rgb::new(p.0[0], p.0[1], p.0[2]))
+        .collect();
+    let clusters = QuantizerCelebi::quantize(&pixels, 128);
+    // `filter = true` drops greys and slivers; when nothing survives, Score
+    // returns its fallback, which is an honest "no usable colour" seed.
+    Score::score(&clusters.color_to_count, Some(4), None, Some(true))
+        .iter()
+        .map(|c| format!("#{}", c.as_hex()))
         .collect()
 }
 

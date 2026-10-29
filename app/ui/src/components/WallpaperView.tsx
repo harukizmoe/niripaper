@@ -3,7 +3,7 @@ import type { WallpaperItem } from '../data/wallpapers'
 import { WallhavenControls } from './WallhavenControls'
 import { LocalControls, type LocalFilter } from './LocalControls'
 import { WallpaperCard } from './WallpaperCard'
-import { hexToRgb } from '../theme/materialYou'
+import { hexToRgb } from '../theme/color'
 
 interface WallpaperViewProps {
   wallhavenList: WallpaperItem[]

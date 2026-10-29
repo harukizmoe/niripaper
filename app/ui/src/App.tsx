@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Box, CssBaseline, Snackbar } from '@mui/material'
+import { ThemeProvider } from '@mui/material/styles'
 import { invoke } from './hooks/useDaemon'
 import { Rail, type NavTab } from './components/Rail'
 import { WallpaperView } from './components/WallpaperView'
@@ -6,20 +8,22 @@ import { TransitionsView } from './components/TransitionsView'
 import { SettingsView } from './components/SettingsView'
 import { ParallaxView } from './components/ParallaxView'
 import { WallpaperDrawer } from './components/WallpaperDrawer'
-import { Snackbar } from './components/Snackbar'
 import {
   whWallpapers,
   localWallpapers as initialLocalWallpapers,
   type WallpaperItem,
 } from './data/wallpapers'
 import {
-  buildM3Scheme,
+  applyRoleVars,
+  buildRoles,
+  DEFAULT_SCHEME,
+  isSchemeName,
   pickSeedColor,
-  schemeFromPalette,
-  toM3Export,
+  rolesFromPalette,
   THEME_SEED_FALLBACK,
-} from './theme/materialYou'
-import { DEFAULT_SCHEME, isSchemeName, type SchemeName } from './theme/schemes'
+  type SchemeName,
+} from './theme/color'
+import { buildTheme } from './theme/mui'
 
 const DISPLAYS = ['DP-1 (主屏)', 'eDP-1 (内屏)', '全部显示器 (*)']
 
@@ -45,7 +49,11 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
   const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('local')
   const [displayIdx, setDisplayIdx] = useState(0)
-  const [isDark, setIsDark] = useState(false)
+  // Light/dark is remembered; the first run follows the desktop's preference.
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    const saved = localStorage.getItem('niripaper_dark')
+    return saved !== null ? saved === 'true' : matchMedia('(prefers-color-scheme: dark)').matches
+  })
   const [followWallpaper, setFollowWallpaper] = useState(true)
   const [enableBlur, setEnableBlur] = useState<boolean>(() => {
     const saved = localStorage.getItem('niripaper_enable_blur')
@@ -118,18 +126,10 @@ export default function App() {
     }
   }, [])
 
-  // Toast / Snackbar
-  const [snackbarMessage, setSnackbarMessage] = useState('')
-  const [snackbarVisible, setSnackbarVisible] = useState(false)
-  const snackbarTimerRef = useRef<number | undefined>(undefined)
-
-  const showSnackbar = useCallback((msg: string) => {
-    setSnackbarMessage(msg)
-    setSnackbarVisible(true)
-    clearTimeout(snackbarTimerRef.current)
-    snackbarTimerRef.current = window.setTimeout(() => {
-      setSnackbarVisible(false)
-    }, 2200)
+  // Snackbar. A new message replaces the current one; MUI handles the timeout.
+  const [snackbar, setSnackbar] = useState<{ key: number; message: string } | null>(null)
+  const showSnackbar = useCallback((message: string) => {
+    setSnackbar({ key: Date.now(), message })
   }, [])
   // 2. 真实调用 Wallhaven API v1 检索壁纸
   const handleSearchWallhaven = useCallback(
@@ -219,56 +219,45 @@ export default function App() {
     }
   }, [adaptNoctalia, adaptNoctalia ? themeSeed : null, showSnackbar])
 
+  // The roles in force: the system palette when following it, otherwise our
+  // own scheme from the wallpaper seed. One map drives the MUI theme, the CSS
+  // variables, the exported file and the desktop push, so they cannot differ.
+  const roles = useMemo(
+    () =>
+      (adaptNoctalia && externalPalette ? rolesFromPalette(externalPalette) : null) ??
+      buildRoles(themeSeed, isDark, colorScheme),
+    [themeSeed, isDark, colorScheme, externalPalette, adaptNoctalia],
+  )
+  const theme = useMemo(() => buildTheme(roles, isDark), [roles, isDark])
+  const following = adaptNoctalia && externalPalette !== null
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
-    const external = adaptNoctalia && externalPalette ? schemeFromPalette(externalPalette) : null
-    // The token map actually in force, so the push below sends the same
-    // colours this window is painting rather than a second derivation.
-    const s = external ?? buildM3Scheme(themeSeed, isDark, colorScheme)
-    const root = document.documentElement.style
-    for (const [k, v] of Object.entries(s)) root.setProperty(k, v)
+    applyRoleVars(roles)
 
-    // Export the same palette so other tools can follow it. Best effort: a
-    // failure here must not affect the app's own colours, and nothing in this
-    // app reads the file back.
-    // When following the system palette, export that same palette rather than
-    // our own derivation — otherwise the file we publish would disagree with
-    // the colours on screen.
-    const exported = external
-      ? toM3Export(external)
-      : toM3Export(buildM3Scheme(themeSeed, isDark, colorScheme))
+    // Export the palette so other tools can follow it. Best effort: a failure
+    // here must not affect the app's own colours.
     void invoke<string>('export_palette', {
-      seed: external?.['primary'] ?? themeSeed,
-      scheme: external ? 'system' : colorScheme,
+      seed: following ? roles.primary : themeSeed,
+      scheme: following ? 'system' : colorScheme,
       dark: isDark,
-      tokens: exported,
+      tokens: roles,
     }).catch((e) => {
       console.error('导出调色板失败（不影响本应用配色）:', e)
       setPaletteError(String(e))
     })
 
-    // Push the same palette to the desktop's theme daemon. `s` is the token
-    // map we just applied, so what the rest of the desktop gets matches what
-    // this window shows. Failure is reported, not fatal: the app keeps its own
-    // colours either way.
-    if (syncSystemTheme && s) {
-      const pick = (k: string, fallback: string) => s[k] ?? fallback
+    // Push the same palette to the desktop's theme daemon.
+    if (syncSystemTheme) {
+      const pick = (k: string) => roles[k]
       void invoke<string>('apply_system_palette', {
-        palette: {
-          primary: pick('--m3-accent-purple', '#624b89'),
-          on_primary: pick('--m3-rail-text-active', '#ffffff'),
-          secondary: pick('--m3-accent-mint', '#8ed6ac'),
-          on_secondary: pick('--m3-rail-text-active', '#ffffff'),
-          tertiary: pick('--m3-accent-lime', '#cacc58'),
-          on_tertiary: pick('--m3-rail-text-active', '#ffffff'),
-          error: pick('--m3-accent-coral', '#ffb4ab'),
-          on_error: pick('--m3-rail-text-active', '#ffffff'),
-          surface: pick('--m3-surface', '#ffffff'),
-          on_surface: pick('--m3-fg', '#211d2f'),
-          surface_variant: pick('--m3-surface-subtle', '#eae6f7'),
-          on_surface_variant: pick('--m3-fg-muted', '#69657e'),
-          outline: pick('--m3-outline', '#bbb8cb'),
-        },
+        palette: Object.fromEntries(
+          [
+            'primary', 'on_primary', 'secondary', 'on_secondary', 'tertiary', 'on_tertiary',
+            'error', 'on_error', 'surface', 'on_surface', 'surface_variant',
+            'on_surface_variant', 'outline',
+          ].map((k) => [k, pick(k)]),
+        ),
       })
         .then(() => setPaletteError(null))
         .catch((e) => {
@@ -276,17 +265,13 @@ export default function App() {
           setPaletteError(String(e))
         })
     }
-  }, [themeSeed, isDark, colorScheme, externalPalette, adaptNoctalia])
+  }, [roles, isDark, following, themeSeed, colorScheme, syncSystemTheme])
 
   const handleToggleSyncSystemTheme = () => {
     setSyncSystemTheme((prev) => {
       const next = !prev
       localStorage.setItem('niripaper_sync_system_theme', String(next))
-      showSnackbar(
-        next
-          ? '🌗 已开启：换壁纸会同步整个系统的主题配色'
-          : '🌗 已关闭：系统主题不再跟随本应用'
-      )
+      showSnackbar(next ? '换壁纸时会同步系统主题' : '系统主题不再跟随本应用')
       return next
     })
   }
@@ -295,11 +280,7 @@ export default function App() {
     setAdaptNoctalia((prev) => {
       const next = !prev
       localStorage.setItem('niripaper_adapt_noctalia', String(next))
-      showSnackbar(
-        next
-          ? '🎨 已改为跟随系统调色板（只读，不修改系统设置）'
-          : '🎨 已改回本应用自己的取色方案'
-      )
+      showSnackbar(next ? '已改为使用系统调色板' : '已改回从壁纸取色')
       return next
     })
   }
@@ -307,7 +288,6 @@ export default function App() {
   const handleColorSchemeChange = (next: SchemeName) => {
     setColorScheme(next)
     localStorage.setItem('niripaper_color_scheme', next)
-    showSnackbar(`取色方案已切换为：${next}`)
   }
 
   // ESC key to close drawer
@@ -321,9 +301,8 @@ export default function App() {
 
   const handleToggleTheme = () => {
     setIsDark((prev) => {
-      const next = !prev
-      showSnackbar(`已切换为 ${next ? '夜间深色' : '浅色'} 模式（配色仍取自当前壁纸）`)
-      return next
+      localStorage.setItem('niripaper_dark', String(!prev))
+      return !prev
     })
   }
 
@@ -334,10 +313,10 @@ export default function App() {
         const active = localList.find((w) => w.activeOn) || whWallpapers[0]
         const seed = pickSeedColor(active.colors)
         setThemeSeed(seed)
-        showSnackbar('主题配色已跟随当前壁纸取色')
+        showSnackbar('配色已改为跟随当前壁纸')
       } else {
         setThemeSeed(THEME_SEED_FALLBACK)
-        showSnackbar('主题配色已固定为默认紫')
+        showSnackbar('配色已固定为默认色')
       }
       return next
     })
@@ -495,30 +474,16 @@ export default function App() {
 
   const handleTabChange = (tab: NavTab) => {
     setCurrentTab(tab)
-    showSnackbar(
-      `切换至：${
-        tab === 'wallpapers'
-          ? '壁纸库'
-          : tab === 'transitions'
-          ? '过渡动画'
-          : tab === 'parallax'
-          ? '视差动画'
-          : '系统设置'
-      }`
-    )
   }
 
   const handleSourceChange = (src: 'wallhaven' | 'local') => {
     setCurrentSource(src)
-    showSnackbar(
-      src === 'wallhaven'
-        ? '已切换至 Wallhaven 在线公共壁纸库'
-        : '已切换至本地壁纸库 (~/Pictures/Wallpapers)'
-    )
   }
 
   return (
-    <div className="app-layout">
+    <ThemeProvider theme={theme}>
+    <CssBaseline />
+    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: 'md.surface_container' }}>
       {/* 左侧导航栏 */}
       <Rail
         currentTab={currentTab}
@@ -528,7 +493,11 @@ export default function App() {
       />
 
       {/* 右侧工作区 */}
-      <main className="main-workspace">
+      <Box
+        component="main"
+        className="main-workspace"
+        sx={{ my: 1, mr: 1, borderRadius: 4, overflow: 'hidden', bgcolor: 'md.surface' }}
+      >
         {currentTab === 'wallpapers' && (
           <WallpaperView
             wallhavenList={wallhavenList}
@@ -576,7 +545,7 @@ export default function App() {
             onNotify={showSnackbar}
           />
         )}
-      </main>
+      </Box>
 
           {/* 右侧滑出抽屉 */}
           <WallpaperDrawer
@@ -596,8 +565,15 @@ export default function App() {
             }}
           />
 
-      {/* M3 浮动提示条 */}
-      <Snackbar message={snackbarMessage} visible={snackbarVisible} />
-    </div>
+      <Snackbar
+        key={snackbar?.key}
+        open={snackbar !== null}
+        message={snackbar?.message}
+        autoHideDuration={4000}
+        onClose={(_, reason) => reason !== 'clickaway' && setSnackbar(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
+    </Box>
+    </ThemeProvider>
   )
 }

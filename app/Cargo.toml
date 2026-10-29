@@ -13,6 +13,7 @@ niripaper-proto = { path = "../crates/proto" }
 parking_lot = "0.12"
 tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+material-colors = { version = "0.5", features = ["quantize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml_edit = "0.22"

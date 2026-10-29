@@ -1,4 +1,3 @@
-@import "tailwindcss";
 
 /* ==========================================================================
        Google Material 3 (Material You) 核心色彩与几何系统
@@ -43,7 +42,7 @@
       --m3-shadow-md: 0 8px 24px -4px rgba(34, 28, 53, 0.10);
       --m3-shadow-float: 0 20px 40px -10px rgba(34, 28, 53, 0.22);
 
-      --font-m3: "Google Sans", "Plus Jakarta Sans", "Roboto", -apple-system, sans-serif;
+      --font-m3: "Roboto Flex", Roboto, "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", sans-serif;
       --font-mono: "Roboto Mono", monospace;
     }
 
