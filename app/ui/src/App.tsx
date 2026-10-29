@@ -4,7 +4,7 @@ import { ThemeProvider } from '@mui/material/styles'
 import { invoke } from './hooks/useDaemon'
 import { EVERY_OUTPUT, outputLabel, useOutputs } from './hooks/useOutputs'
 import { Rail, type NavTab } from './components/Rail'
-import { WallpaperView } from './components/WallpaperView'
+import { WallpaperView, type WallhavenQuery } from './components/WallpaperView'
 import { TransitionsView } from './components/TransitionsView'
 import { SettingsView } from './components/SettingsView'
 import { ParallaxView } from './components/ParallaxView'
@@ -70,7 +70,8 @@ export default function App() {
   const [localList, setLocalList] = useState<WallpaperItem[]>(initialLocalWallpapers)
   const [wallhavenList, setWallhavenList] = useState<WallpaperItem[]>(whWallpapers)
   const [whLoading, setWhLoading] = useState(false)
-  const [whTotal, setWhTotal] = useState(1800)
+  const [whHasMore, setWhHasMore] = useState(false)
+  const [whFailed, setWhFailed] = useState(false)
 
   // Theme seed and the palette's last export failure. Declared before the
   // wallpaper scan below: that callback sets the seed, and a `const` used
@@ -139,19 +140,19 @@ export default function App() {
       failed: /失败/.test(message),
     })
   }, [])
-  // 2. 真实调用 Wallhaven API v1 检索壁纸
+  // The newest request wins: a slow answer to an earlier search must not be
+  // appended to (or replace) the list of a later one.
+  const whRequest = useRef(0)
+  // What the list on screen was searched with, and the last page of it loaded.
+  const whLast = useRef<{ params: WallhavenQuery; page: number } | null>(null)
+
+  /// Search Wallhaven. Page 1 replaces the list; later pages are appended.
   const handleSearchWallhaven = useCallback(
-    async (params: {
-      q?: string
-      categories?: string
-      purity?: string
-      sorting?: string
-      order?: string
-      page?: number
-      ratios?: string
-      atleast?: string
-    }) => {
+    async (params: WallhavenQuery) => {
+      const id = ++whRequest.current
+      const page = params.page ?? 1
       setWhLoading(true)
+      setWhFailed(false)
       try {
         const res = await invoke<{
           wallpapers: WallpaperItem[]
@@ -159,19 +160,31 @@ export default function App() {
           last_page: number
           current_page: number
         }>('search_wallhaven', { params })
-        if (res && res.wallpapers && res.wallpapers.length > 0) {
-          setWallhavenList(res.wallpapers)
-          setWhTotal(res.total)
-        }
+        if (id !== whRequest.current) return
+        const items = res?.wallpapers ?? []
+        setWallhavenList((prev) => {
+          if (page <= 1) return items
+          const seen = new Set(prev.map((w) => w.id))
+          return [...prev, ...items.filter((w) => !seen.has(w.id))]
+        })
+        setWhHasMore(items.length > 0 && res.current_page < res.last_page)
+        whLast.current = { params, page }
       } catch (e) {
+        if (id !== whRequest.current) return
         console.warn('检索 Wallhaven 失败:', e)
+        setWhFailed(true)
         showSnackbar(`Wallhaven 检索失败: ${e}`)
       } finally {
-        setWhLoading(false)
+        if (id === whRequest.current) setWhLoading(false)
       }
     },
-    [showSnackbar]
+    [showSnackbar],
   )
+
+  const handleLoadMoreWallhaven = useCallback(() => {
+    const last = whLast.current
+    if (last) void handleSearchWallhaven({ ...last.params, page: last.page + 1 })
+  }, [handleSearchWallhaven])
 
   // 启动时同时拉取本地库与在线热门源
   useEffect(() => {
@@ -350,11 +363,11 @@ export default function App() {
     })
   }
 
-  const handleSelectWallpaper = (wp: WallpaperItem, source: 'wallhaven' | 'local') => {
+  const handleSelectWallpaper = useCallback((wp: WallpaperItem, source: 'wallhaven' | 'local') => {
     setSelectedWp(wp)
     setSelectedSource(source)
     setDrawerOpen(true)
-  }
+  }, [])
 
   const handleApplyWallpaper = async (params: { fit: string }) => {
     if (!selectedWp) return
@@ -493,9 +506,11 @@ export default function App() {
             onSourceChange={handleSourceChange}
             onSelectWallpaper={handleSelectWallpaper}
             onSearchWallhaven={handleSearchWallhaven}
+            onLoadMoreWallhaven={handleLoadMoreWallhaven}
             onRefreshLocal={refreshLocalWallpapers}
             whLoading={whLoading}
-            whTotal={whTotal}
+            whHasMore={whHasMore}
+            whFailed={whFailed}
           />
         )}
 

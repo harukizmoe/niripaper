@@ -466,7 +466,7 @@ pub async fn load_local_wallpapers(
     // Colour extraction is CPU-bound and independent per file, so this turns
     // the first scan's ~20 seconds into a few; later scans hit the cache and
     // skip this entirely.
-    let cache_dir = dir.join("thumbnails");
+    let cache_dir = library_cache_dir();
     let _ = std::fs::create_dir_all(&cache_dir);
     {
         let threads = std::thread::available_parallelism()
@@ -497,6 +497,7 @@ pub async fn load_local_wallpapers(
                     break;
                 }
                 let _ = extract_colors_cached(&cache_dir, &queue[i]);
+                let _ = image_thumbnail_cached(&cache_dir, &queue[i]);
             }));
         }
         for h in handles {
@@ -533,9 +534,12 @@ pub async fn load_local_wallpapers(
             } else {
                 ("2560×1440".to_owned(), "16 / 9".to_owned())
             };
-            (w_str, asp, path.display().to_string())
+            // The cards show a small copy: decoding the original (often 4K) for
+            // every card is what made the page heavy. Applying still uses `path`.
+            let thumb = image_thumbnail_cached(&cache_dir, &path).unwrap_or_else(|| path.clone());
+            (w_str, asp, thumb.display().to_string())
         } else {
-            if let Some(t_path) = get_or_extract_video_thumbnail(&dir, &path) {
+            if let Some(t_path) = get_or_extract_video_thumbnail(&cache_dir, &path) {
                 let (w_str, asp) = if let Ok((w, h)) = image::image_dimensions(&t_path) {
                     (format!("{w}×{h}"), format!("{w} / {h}"))
                 } else {
@@ -555,12 +559,9 @@ pub async fn load_local_wallpapers(
         // extracted thumbnail, and only a video whose frame could not be
         // extracted keeps the name-derived approximation.
         let mut colors = if is_video {
-            extract_colors_cached(
-                &dir.join("thumbnails"),
-                std::path::Path::new(&thumb_path_str),
-            )
+            extract_colors_cached(&cache_dir, std::path::Path::new(&thumb_path_str))
         } else {
-            extract_colors_cached(&dir.join("thumbnails"), &path)
+            extract_colors_cached(&cache_dir, &path)
         };
         if colors.is_empty() {
             colors = generate_colors(&name);
@@ -613,11 +614,10 @@ fn walk_dir(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
     Ok(files)
 }
 fn get_or_extract_video_thumbnail(
-    root_dir: &std::path::Path,
+    cache_dir: &std::path::Path,
     video_path: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
-    let cache_dir = root_dir.join("thumbnails");
-    let _ = std::fs::create_dir_all(&cache_dir);
+    let _ = std::fs::create_dir_all(cache_dir);
     let h = format!("{:016x}", hash_str(&video_path.to_string_lossy()));
     let thumb_path = cache_dir.join(format!("{h}.jpg"));
 
@@ -647,6 +647,60 @@ fn get_or_extract_video_thumbnail(
         }
     }
     None
+}
+
+/// Where previews and extracted colours live: the user's cache directory, not
+/// the wallpaper folder, which other programs (the desktop shell) scan too and
+/// would list every preview as a wallpaper of its own.
+fn library_cache_dir() -> std::path::PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("niripaper")
+        .join("library")
+}
+
+/// Width of the card previews, the same as the video thumbnails.
+const THUMB_WIDTH: u32 = 720;
+
+/// A small JPEG copy of an image for the library cards, made once and reused.
+/// The name carries the file's size and modification time, so an edited file
+/// gets a fresh preview instead of a stale one.
+fn image_thumbnail_cached(
+    cache_dir: &std::path::Path,
+    image_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let meta = std::fs::metadata(image_path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let key = format!(
+        "{}|{}|{}",
+        image_path.to_string_lossy(),
+        meta.len(),
+        modified
+    );
+    let thumb_path = cache_dir.join(format!("img-{:016x}.jpg", hash_str(&key)));
+    if thumb_path.exists() {
+        return Some(thumb_path);
+    }
+
+    let img = image::open(image_path).ok()?;
+    // Never enlarge a small image.
+    let width = img.width().min(THUMB_WIDTH);
+    let height =
+        (u64::from(img.height()) * u64::from(width) / u64::from(img.width().max(1))).max(1) as u32;
+    let small = img.thumbnail(width, height).to_rgb8();
+    // Write beside the target and rename, so a reader never sees half a file.
+    let tmp = thumb_path.with_extension("tmp");
+    small
+        .save_with_format(&tmp, image::ImageFormat::Jpeg)
+        .ok()?;
+    std::fs::rename(&tmp, &thumb_path).ok()?;
+    Some(thumb_path)
 }
 
 fn hash_str(s: &str) -> u64 {

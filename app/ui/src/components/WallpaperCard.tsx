@@ -22,9 +22,9 @@ interface WallpaperCardProps {
   /// treats content clipped by an inner scroller as visible, so every card in
   /// the page loads at once and the feature does nothing.
   scrollRoot?: React.RefObject<HTMLElement | null>
-  onMouseEnter: () => void
-  onMouseLeave: () => void
-  onClick: () => void
+  /** The card under the pointer, or null when it leaves. */
+  onHover: (id: string | null) => void
+  onSelect: (wallpaper: WallpaperItem) => void
 }
 
 /// How far outside the scroll viewport a card starts loading. Scrolling one
@@ -56,9 +56,8 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   lazyLoad = true,
   index = 0,
   scrollRoot,
-  onMouseEnter,
-  onMouseLeave,
-  onClick,
+  onHover,
+  onSelect,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null)
   const glareRef = useRef<HTMLDivElement>(null)
@@ -203,7 +202,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   }
 
   const handleMouseEnterCard = () => {
-    onMouseEnter()
+    onHover(wallpaper.id)
     if (cardRef.current) {
       cardRef.current.style.transition =
         'transform 0.12s ease-out, box-shadow 0.25s ease, filter 0.3s ease, opacity 0.3s ease'
@@ -211,7 +210,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   }
 
   const handleMouseLeaveCard = () => {
-    onMouseLeave()
+    onHover(null)
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     if (cardRef.current) {
       cardRef.current.style.transition =
@@ -242,7 +241,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
       onMouseMove={handleMouseMove}
       onMouseEnter={handleMouseEnterCard}
       onMouseLeave={handleMouseLeaveCard}
-      onClick={onClick}
+      onClick={() => onSelect(wallpaper)}
     >
       <div
         className="card-media"
