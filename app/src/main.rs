@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod config_edit;
 mod state;
 
 use tauri::{
@@ -58,6 +59,9 @@ fn main() {
             commands::daemon_status_info,
             commands::daemon_socket,
             commands::config_path,
+            config_edit::config_schema,
+            config_edit::config_values,
+            config_edit::config_set,
             commands::export_palette,
             commands::read_external_palette,
             commands::apply_system_palette,
@@ -66,9 +70,6 @@ fn main() {
             commands::download_wallhaven_wallpaper,
             commands::get_autostart_status,
             commands::set_autostart_enabled,
-            commands::get_parallax_config,
-            commands::set_parallax_enabled,
-            commands::save_parallax_config,
             commands::get_transition_config,
             commands::save_transition_config,
         ])

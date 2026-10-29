@@ -1063,20 +1063,7 @@ fn set_keep_comments(table: &mut dyn toml_edit::TableLike, key: &str, value: tom
     }
 }
 
-/// Parallax and layout-reactive motion configuration parameters (§4).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct ParallaxConfig {
-    pub enabled: bool,
-    pub scale: f64,
-    pub column_span: usize,
-    pub workspace_span: usize,
-    pub duration_ms: u64,
-    pub curve: String,
-    pub follow_niri: bool,
-    pub overview_zoom: f64,
-}
-
-fn read_config_doc() -> Result<(std::path::PathBuf, DocumentMut), String> {
+pub(crate) fn read_config_doc() -> Result<(std::path::PathBuf, DocumentMut), String> {
     let path = niripaper_proto::config::default_path()
         .ok_or_else(|| "无法获取 config.toml 路径".to_owned())?;
     let text = if path.exists() {
@@ -1090,7 +1077,7 @@ fn read_config_doc() -> Result<(std::path::PathBuf, DocumentMut), String> {
     Ok((path, doc))
 }
 
-fn write_config_atomic(path: &std::path::Path, doc: &DocumentMut) -> Result<(), String> {
+pub(crate) fn write_config_atomic(path: &std::path::Path, doc: &DocumentMut) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1098,195 +1085,6 @@ fn write_config_atomic(path: &std::path::Path, doc: &DocumentMut) -> Result<(), 
     std::fs::write(&temp_path, doc.to_string()).map_err(|e| format!("写入临时配置失败: {e}"))?;
     std::fs::rename(&temp_path, path).map_err(|e| format!("替换配置文件失败: {e}"))?;
     Ok(())
-}
-
-/// Read the real parallax configuration directly from `config.toml`.
-#[tauri::command]
-pub fn get_parallax_config() -> Result<ParallaxConfig, String> {
-    let (_, doc) = read_config_doc()?;
-
-    let scale_val = doc.get("scale").and_then(|v| v.as_float()).unwrap_or(1.1);
-    let column_span = doc
-        .get("column_span")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(6) as usize;
-    let workspace_span = doc
-        .get("workspace_span")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(6) as usize;
-
-    let anim_table = doc.get("animations").and_then(|i| i.as_table_like());
-    let follow_niri = anim_table
-        .and_then(|t| t.get("follow_niri"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let global_off = anim_table
-        .and_then(|t| t.get("off"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let parallax_table = anim_table
-        .and_then(|t| t.get("parallax"))
-        .and_then(|i| i.as_table_like());
-    let parallax_off = parallax_table
-        .and_then(|t| t.get("off"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let duration_ms = parallax_table
-        .and_then(|t| t.get("duration_ms"))
-        .and_then(|v| v.as_integer())
-        .unwrap_or(600) as u64;
-    let curve = parallax_table
-        .and_then(|t| t.get("curve"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("ease-out-cubic")
-        .to_owned();
-
-    let overview_table = anim_table
-        .and_then(|t| t.get("overview-open-close"))
-        .and_then(|i| i.as_table_like());
-    let overview_zoom = overview_table
-        .and_then(|t| t.get("zoom"))
-        .and_then(|v| v.as_float())
-        .unwrap_or(0.96);
-
-    let enabled = scale_val > 1.001 && !global_off && !parallax_off;
-
-    Ok(ParallaxConfig {
-        enabled,
-        scale: scale_val,
-        column_span,
-        workspace_span,
-        duration_ms,
-        curve,
-        follow_niri,
-        overview_zoom,
-    })
-}
-
-/// Toggle the real parallax effect on or off in `config.toml` (saving atomically).
-/// When off: sets scale = 1.0 and [animations.parallax] off = true.
-/// When on: sets scale = 1.10 and enables parallax easing.
-#[tauri::command]
-pub fn set_parallax_enabled(enabled: bool) -> Result<ParallaxConfig, String> {
-    let (path, mut doc) = read_config_doc()?;
-
-    if enabled {
-        let current_scale = doc.get("scale").and_then(|v| v.as_float()).unwrap_or(1.0);
-        if current_scale <= 1.001 {
-            doc["scale"] = toml_edit::value(1.10);
-        }
-
-        if let Some(anim) = doc
-            .get_mut("animations")
-            .and_then(|i| i.as_table_like_mut())
-        {
-            if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
-                parallax.remove("off");
-                if !parallax.contains_key("duration_ms") {
-                    set_keep_comments(parallax, "duration_ms", toml_edit::value(600));
-                }
-                if !parallax.contains_key("curve") {
-                    set_keep_comments(parallax, "curve", toml_edit::value("ease-out-cubic"));
-                }
-            }
-            if anim.get("off").and_then(|v| v.as_bool()) == Some(true) {
-                anim.remove("off");
-            }
-        }
-    } else {
-        doc["scale"] = toml_edit::value(1.0);
-
-        if !doc.contains_key("animations") {
-            doc["animations"] = Item::Table(toml_edit::Table::new());
-        }
-        if let Some(anim) = doc
-            .get_mut("animations")
-            .and_then(|i| i.as_table_like_mut())
-        {
-            if !anim.contains_key("parallax") {
-                set_keep_comments(anim, "parallax", Item::Table(toml_edit::Table::new()));
-            }
-            if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
-                // §2.17: `off` 不能与 duration_ms / curve 共存，写 off 前必须移除
-                parallax.remove("duration_ms");
-                parallax.remove("curve");
-                parallax.remove("spring");
-                parallax.remove("cubic_bezier");
-                set_keep_comments(parallax, "off", toml_edit::value(true));
-            }
-        }
-    }
-
-    write_config_atomic(&path, &doc)?;
-    get_parallax_config()
-}
-
-/// Save all parallax parameters directly to `~/.config/niripaper/config.toml`.
-#[tauri::command]
-pub fn save_parallax_config(cfg: ParallaxConfig) -> Result<String, String> {
-    let (path, mut doc) = read_config_doc()?;
-
-    if cfg.enabled {
-        doc["scale"] = toml_edit::value(cfg.scale.clamp(1.0, 1.35));
-    } else {
-        doc["scale"] = toml_edit::value(1.0);
-    }
-
-    doc["column_span"] = toml_edit::value(cfg.column_span as i64);
-    doc["workspace_span"] = toml_edit::value(cfg.workspace_span as i64);
-
-    if !doc.contains_key("animations") {
-        doc["animations"] = Item::Table(toml_edit::Table::new());
-    }
-    if let Some(anim) = doc
-        .get_mut("animations")
-        .and_then(|i| i.as_table_like_mut())
-    {
-        set_keep_comments(anim, "follow_niri", toml_edit::value(cfg.follow_niri));
-
-        if !anim.contains_key("parallax") {
-            set_keep_comments(anim, "parallax", Item::Table(toml_edit::Table::new()));
-        }
-        if let Some(parallax) = anim.get_mut("parallax").and_then(|i| i.as_table_like_mut()) {
-            if cfg.enabled {
-                parallax.remove("off");
-                set_keep_comments(
-                    parallax,
-                    "duration_ms",
-                    toml_edit::value(cfg.duration_ms as i64),
-                );
-                set_keep_comments(parallax, "curve", toml_edit::value(cfg.curve));
-            } else {
-                parallax.remove("duration_ms");
-                parallax.remove("curve");
-                parallax.remove("spring");
-                parallax.remove("cubic_bezier");
-                set_keep_comments(parallax, "off", toml_edit::value(true));
-            }
-        }
-
-        if !anim.contains_key("overview-open-close") {
-            set_keep_comments(
-                anim,
-                "overview-open-close",
-                Item::Table(toml_edit::Table::new()),
-            );
-        }
-        if let Some(overview) = anim
-            .get_mut("overview-open-close")
-            .and_then(|i| i.as_table_like_mut())
-        {
-            set_keep_comments(
-                overview,
-                "zoom",
-                toml_edit::value(cfg.overview_zoom.clamp(0.5, 1.0)),
-            );
-        }
-    }
-
-    write_config_atomic(&path, &doc)?;
-    Ok("视差与动画参数已写入 config.toml 并即时生效".to_owned())
 }
 
 /// Wallpaper transition effect and motion parameters (§5).

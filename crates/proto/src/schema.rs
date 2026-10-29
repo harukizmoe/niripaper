@@ -401,6 +401,16 @@ fn effect_names(effects: &[Effect]) -> Vec<String> {
 pub fn animation_value(animation: &Animation) -> Value {
     match animation {
         Animation::Off => json!({ "off": true }),
+        // A bezier's points travel with it: without them the value could not
+        // be written back, since `curve = "cubic-bezier"` alone does not parse.
+        Animation::Easing {
+            duration,
+            curve: Curve::CubicBezier(points),
+        } => json!({
+            "duration_ms": duration.as_millis() as u64,
+            "curve": Curve::CubicBezier(*points).name(),
+            "cubic_bezier": points,
+        }),
         Animation::Easing { duration, curve } => json!({
             "duration_ms": duration.as_millis() as u64,
             "curve": curve.name(),
@@ -418,6 +428,24 @@ pub fn animation_value(animation: &Animation) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `animation_value` reports has to parse back into the same
+    /// animation, or a client that edits one field of it writes a file the
+    /// daemon rejects.
+    #[test]
+    fn a_bezier_animation_round_trips() {
+        let text = "[animations.parallax]\nduration_ms = 300\ncurve = \"cubic-bezier\"\ncubic_bezier = [0.4, 0.0, 0.2, 1.0]\n";
+        let config = Config::parse_without_niri(text).unwrap();
+        let value = animation_value(&config.animations.parallax);
+        assert_eq!(value["cubic_bezier"], json!([0.4, 0.0, 0.2, 1.0]));
+        let table: toml::Table = toml::from_str(&format!(
+            "[animations.parallax]\nduration_ms = {}\ncurve = {}\ncubic_bezier = {}\n",
+            value["duration_ms"], value["curve"], value["cubic_bezier"]
+        ))
+        .unwrap();
+        let again = Config::parse_without_niri(&toml::to_string(&table).unwrap()).unwrap();
+        assert_eq!(again.animations.parallax, config.animations.parallax);
+    }
 
     /// The schema is hand-written, so the way it drifts is a renamed or
     /// misspelled key — or a default the parser would reject. Writing each one

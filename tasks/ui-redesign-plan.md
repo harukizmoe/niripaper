@@ -77,7 +77,7 @@
 
 1. [x] **主题层 + 外壳**：卸 Tailwind；装 `@material/material-color-utilities`；`theme/color.ts`、`theme/mui.ts`、ThemeProvider、navigation rail、动态取色接线。
 2. [x] **系统设置页**：最简单（几乎全是开关），用它把"设置分组 + 设置行"模式定下来。
-3. **视差页**：套用模式；删沙盒与重复开关。
+3. [x] **视差页**：套用模式；删沙盒与重复开关。
 4. **过渡页**：效果池网格 + 当前效果的参数分组；删 Push、加 none。
 5. **壁纸库 + 抽屉**：瀑布流结构保留（它是现在最好的一页），换掉筛选条、来源切换、输出选择、角标；删假滤镜。
 6. **收尾**：删掉 `index.css` 里已无引用的旧样式与全部内联颜色；更新 `tasks/decisions.md`（MUI v7→v9，
