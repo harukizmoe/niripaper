@@ -20,12 +20,6 @@ export interface WallpaperItem {
   path?: string;
 }
 
-export interface TransitionItem {
-  id: string;
-  name: string;
-  desc: string;
-}
-
 export const whWallpapers: WallpaperItem[] = [
       {
         id: "wh-1",
@@ -200,14 +194,3 @@ export const localWallpapers: WallpaperItem[] = [
       { id: "loc-12", name: "neon_alley_night.mp4", res: "2560×1440", kind: "video", fps: "24 FPS", aspect: "9/16", colors: ["#0f172a", "#f472b6", "#38bdf8", "#ec4899", "#1e293b"], thumb: "https://images.unsplash.com/photo-1514565131-fce0801e5785?w=600&auto=format&fit=crop&q=80" }
     ];
 
-export const transitions: TransitionItem[] = [
-      { id: "portal", name: "Portal 传送门", desc: "空间推挤折叠，伴随景深收缩，默认配置 0.55 push。" },
-      { id: "iris", name: "Iris 圆环光圈", desc: "以画面焦点展开圆形视野，start_radius 与 center 可配。" },
-      { id: "zoom", name: "Zoom 径向变焦", desc: "画面从纵深疾速拉近覆盖，经典电影级转场。" },
-      { id: "slide", name: "Slide 平滑推移", desc: "跟随桌面平铺方向水平滑入，极其克制工整。" },
-      { id: "fade", name: "Fade 柔和淡入", desc: "最稳健优雅的淡入淡出，零侵略感。" },
-      { id: "dissolve", name: "Dissolve 溶解粒子", desc: "像素矩阵轻微解离渐变，带胶片质感。" },
-      { id: "wipe", name: "Wipe 线性擦除", desc: "单向扫光换图，斜角擦除。" },
-      { id: "stripes", name: "Stripes 百叶窗", desc: "多条等距切带并行展开。" },
-      { id: "push", name: "Push 弹性推挤", desc: "带轻微 spring 物理惯性的位移覆盖。" }
-    ];

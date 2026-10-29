@@ -311,7 +311,7 @@ export function AnimationField({
   )
 }
 
-function Labeled({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Labeled({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
       <Box sx={{ width: 112, flexShrink: 0 }}>

@@ -95,7 +95,7 @@ export function SettingRow({
             {label}
           </Typography>
           {description && (
-            <Typography variant="body1" sx={{ color: 'text.secondary', mt: 0.25 }}>
+            <Typography variant="body1" component="div" sx={{ color: 'text.secondary', mt: 0.25 }}>
               {description}
             </Typography>
           )}

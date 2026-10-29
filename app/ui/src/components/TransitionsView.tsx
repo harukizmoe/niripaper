@@ -1,968 +1,417 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { transitions, type TransitionItem } from '../data/wallpapers'
-import { invoke } from '../hooks/useDaemon'
+import { useState } from 'react'
+import { ButtonBase, Chip, Stack, Switch, ToggleButton, ToggleButtonGroup, Typography, Box } from '@mui/material'
+import CheckCircleRounded from '@mui/icons-material/CheckCircleRounded'
+import RadioButtonUncheckedRounded from '@mui/icons-material/RadioButtonUncheckedRounded'
+import { useConfig, type Config } from '../hooks/useConfig'
+import { BezierInput, CurveSelect, Labeled, NumberInput, SliderField } from './fields'
+import { SettingRow, SettingsGroup, SettingsPage } from './settings'
 
-interface TransitionsViewProps {
-  onNotify: (msg: string) => void
+// The wallpaper-change transition, as `config.toml` states it. Every row edits
+// one key and saves it at once; the daemon reloads the file itself.
+
+const EFFECTS: { id: string; name: string; desc: string }[] = [
+  { id: 'none', name: '无过渡', desc: '直接切换，没有动画。' },
+  { id: 'fade', name: '淡入淡出', desc: '新壁纸在旧壁纸上逐渐显现。' },
+  { id: 'dissolve', name: '溶解', desc: '画面按像素颗粒逐点换成新壁纸。' },
+  { id: 'wipe', name: '擦除', desc: '一条边缘扫过屏幕，扫过的地方换成新壁纸。' },
+  { id: 'stripes', name: '百叶窗', desc: '边缘分成多条切带，同时向前推进。' },
+  { id: 'iris', name: '光圈', desc: '新壁纸从一个圆形开口里展开。' },
+  { id: 'portal', name: '传送门', desc: '圆形开口展开的同时，旧画面向外推开。' },
+  { id: 'zoom', name: '变焦', desc: '新壁纸从远处迅速拉近，盖住旧画面。' },
+  { id: 'slide', name: '滑动', desc: '新壁纸沿一个方向滑入。' },
+]
+
+const nameOf = (id: string) => EFFECTS.find((e) => e.id === id)?.name ?? id
+
+// Which effects read which parameter.
+const USED_BY = {
+  direction: ['wipe', 'stripes', 'slide'],
+  softness: ['wipe', 'stripes', 'iris', 'portal'],
+  center: ['iris', 'portal', 'zoom'],
+  push: ['portal'],
+  stripes: ['stripes'],
+  start_radius: ['iris', 'portal'],
+  hold_ms: ['iris', 'portal'],
 }
 
-type SelectionMode = 'fixed' | 'rotate' | 'random'
-type DirectionValue = 'left' | 'right' | 'up' | 'down'
+const BEZIER_START = [0.42, 0, 0.58, 1]
 
-interface TransitionConfig {
-  selection: 'fixed' | 'rotate' | 'random'
-  effect: string
-  effects: string[]
-  duration_ms: number
-  curve: string
-  cubic_bezier?: [number, number, number, number]
-  allow_overshoot: boolean
-  softness: number
-  center_x: number
-  center_y: number
-  start_radius: number
-  hold_ms: number
-  stripes: number
-  push: number
-  direction: 'left' | 'right' | 'up' | 'down'
-  on_start: boolean
-}
+const SELECTIONS = [
+  { id: 'fixed', label: '固定', desc: '每次换壁纸都用同一个效果。' },
+  { id: 'rotate', label: '轮播', desc: '按顺序轮流使用候选效果。' },
+  { id: 'random', label: '随机', desc: '每次从候选效果里随机选一个。' },
+]
 
-export const TransitionsView: React.FC<TransitionsViewProps> = ({ onNotify }) => {
-  // --------------------------------------------------------------------------
-  // 全局策略与动力学基础参数 (Settings · §5)
-  // --------------------------------------------------------------------------
-  const [selection, setSelection] = useState<SelectionMode>('rotate')
-  const [fixedEffect, setFixedEffect] = useState<string>('fade')
-  const [poolEffects, setPoolEffects] = useState<string[]>([
-    'portal',
-    'iris',
-    'dissolve',
-  ])
-  const [duration, setDuration] = useState<number>(1500)
-  const [curve, setCurve] = useState<string>('ease-out-cubic')
-  const [allowOvershoot, setAllowOvershoot] = useState<boolean>(false)
-  const [onStart, setOnStart] = useState<boolean>(true)
-
-  // --------------------------------------------------------------------------
-  // 当前正在检视/调优的高级效果（选中画廊中任意卡片即可在下方专属面板调参）
-  // --------------------------------------------------------------------------
-  const [inspectEffect, setInspectEffect] = useState<string>('portal')
-
-  // 专属效果几何与物理参数
-  const [direction, setDirection] = useState<DirectionValue>('right')
-  const [softness, setSoftness] = useState<number>(0.3)
-  const [centerX, setCenterX] = useState<number>(50)
-  const [centerY, setCenterY] = useState<number>(50)
-  const [stripes, setStripes] = useState<number>(12)
-  const [push, setPush] = useState<number>(0.55)
-  const [startRadius, setStartRadius] = useState<number>(0.0)
-  const [hold, setHold] = useState<number>(0)
-  const [cubicBezier, setCubicBezier] = useState<[number, number, number, number]>([
-    0.42, 0.0, 0.58, 1.0,
-  ])
-  const [saving, setSaving] = useState(false)
-  // 首次读取完成前不判断"已修改"：否则挂载时就会显示为未保存。
-  const [loaded, setLoaded] = useState(false)
-  // 有改动尚未写盘。保存按钮据此切换样式 —— 这是用户能看到"还没保存"的唯一途径，
-  // 因此这里不再有自动保存。
-  const [dirty, setDirty] = useState(false)
-
-  // 组件挂载时读取 config.toml 中的真实过渡配置
-  useEffect(() => {
-    void invoke<TransitionConfig>('get_transition_config')
-      .then((cfg) => {
-        setSelection(cfg.selection as SelectionMode)
-        setFixedEffect(cfg.effect)
-        if (cfg.effects && cfg.effects.length > 0) {
-          setPoolEffects(cfg.effects)
-        }
-        setDuration(cfg.duration_ms)
-        setCurve(cfg.curve)
-        if (cfg.cubic_bezier) setCubicBezier(cfg.cubic_bezier)
-        setAllowOvershoot(cfg.allow_overshoot)
-        setSoftness(cfg.softness)
-        setCenterX(Math.round(cfg.center_x * 100))
-        setCenterY(Math.round(cfg.center_y * 100))
-        setStartRadius(cfg.start_radius)
-        setHold(cfg.hold_ms)
-        setStripes(cfg.stripes)
-        setPush(cfg.push)
-        setDirection(cfg.direction as DirectionValue)
-        setOnStart(cfg.on_start)
-        setInspectEffect(
-          cfg.selection === 'fixed'
-            ? cfg.effect
-            : cfg.effects[0] || 'portal'
-        )
-        setLoaded(true)
-      })
-      .catch((err) => {
-        console.warn('获取过渡动画配置失败:', err)
-        onNotify(`读取过渡配置失败: ${err}`)
-      })
-  }, [onNotify])
-
-  // 当前完整配置。自动保存只依赖它的 JSON，而不是十几个 setter。
-  const config: TransitionConfig = {
-    selection,
-    effect: fixedEffect,
-    effects: poolEffects,
-    duration_ms: duration,
-    curve,
-    cubic_bezier: cubicBezier,
-    allow_overshoot: allowOvershoot,
-    softness,
-    center_x: centerX / 100,
-    center_y: centerY / 100,
-    start_radius: startRadius,
-    hold_ms: hold,
-    stripes,
-    push,
-    direction,
-    on_start: onStart,
-  }
-
-  const handleSaveConfig = useCallback(
-    async (next: TransitionConfig) => {
-      setSaving(true)
-      try {
-        await invoke<string>('save_transition_config', { cfg: next })
-        setDirty(false)
-        return true
-      } catch (e) {
-        onNotify(`保存过渡配置失败: ${e}`)
-        return false
-      } finally {
-        setSaving(false)
-      }
-    },
-    [onNotify]
-  )
-
-  /// 包一层 setter：用户一动手就标记为"未保存"。
-  function edit<T>(setter: (v: T) => void) {
-    return (value: T) => {
-      setDirty(true)
-      setter(value)
-    }
-  }
-
-  // 切换选中卡片
-  const handleCardClick = (tr: TransitionItem) => {
-    setInspectEffect(tr.id)
-    if (selection === 'fixed') {
-      setFixedEffect(tr.id)
-      setDirty(true)
-      onNotify(`已设为全局固定过渡效果：${tr.name}（待保存）`)
-    } else {
-      onNotify(`已激活参数面板：${tr.name}`)
-    }
-  }
-
-  // 轮播池勾选/移除
-  const togglePoolEffect = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation()
-    const exists = poolEffects.includes(id)
-    if (exists && poolEffects.length <= 1) {
-      onNotify('轮播池至少需保留 1 款效果')
-      return
-    }
-    const updated = exists
-      ? poolEffects.filter((item) => item !== id)
-      : [...poolEffects, id]
-    setPoolEffects(updated)
-    setDirty(true)
-    onNotify(exists ? `已从轮播池移除：${id}（待保存）` : `已加入轮播候选池：${id}（待保存）`)
-  }
-
-  const selectedInspectObj =
-    transitions.find((t) => t.id === inspectEffect) || transitions[0]
-
-  // 判断各组专属参数适用性
-  const hasDirection = ['wipe', 'stripes', 'slide'].includes(inspectEffect)
-  const hasSoftness = ['wipe', 'stripes', 'iris', 'portal'].includes(
-    inspectEffect
-  )
-  const hasCenter = ['iris', 'portal', 'zoom'].includes(inspectEffect)
-  const hasPortal = inspectEffect === 'portal'
-  const hasStripes = inspectEffect === 'stripes'
-  const hasIrisPortal = ['iris', 'portal'].includes(inspectEffect)
-  const isPureColor = ['fade', 'dissolve', 'none'].includes(inspectEffect)
+export function TransitionsView({ onNotify }: { onNotify: (msg: string) => void }) {
+  const config = useConfig(onNotify)
 
   return (
-    <div className="view-page active" id="view-transitions">
-      {/* 顶栏 */}
-      <header
-        className="wallpaper-top-bar"
-        style={{ borderBottom: '1px solid var(--m3-outline-variant)' }}
+    <SettingsPage title="过渡">
+      {config.ready ? (
+        <Settings config={config} onNotify={onNotify} />
+      ) : (
+        <Typography sx={{ color: 'text.secondary', px: 2 }}>
+          {config.loadError ? `读取配置失败：${config.loadError}` : '正在读取配置…'}
+        </Typography>
+      )}
+    </SettingsPage>
+  )
+}
+
+function Settings({ config: c, onNotify }: { config: Config; onNotify: (msg: string) => void }) {
+  const selection = c.value<string>('transition.selection')
+  const effect = c.value<string>('transition.effect')
+  const pool = c.value<string[]>('transition.effects')
+  const curve = c.value<string>('transition.curve')
+  const fixed = selection === 'fixed'
+  const active = fixed ? [effect] : pool
+
+  const curves = (() => {
+    const kind = c.key('transition.curve')?.kind
+    return kind?.type === 'enum' ? kind.options : []
+  })()
+
+  // Looking at one effect narrows the parameters to the ones it reads. It is
+  // only a view: no value changes. A focus that has left the selection falls
+  // back to showing everything.
+  const [focus, setFocus] = useState('all')
+  const shown = active.includes(focus) ? [focus] : active
+
+  const applies = (param: keyof typeof USED_BY) => USED_BY[param].filter((id) => shown.includes(id))
+
+  /// Who reads this parameter, as tags under the row's help text.
+  const usedBy = (param: keyof typeof USED_BY) => {
+    const users = USED_BY[param].filter((id) => active.includes(id))
+    return (
+      <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 0.75, mt: 0.75 }}>
+        {users.map((id) => (
+          <Chip
+            key={id}
+            size="small"
+            label={nameOf(id)}
+            color={id === focus ? 'primary' : 'default'}
+            variant={id === focus ? 'filled' : 'outlined'}
+          />
+        ))}
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          {USED_BY[param].length === 1 ? '专属参数' : users.length > 1 ? '这些效果共用，改动同时生效' : ''}
+        </Typography>
+      </Stack>
+    )
+  }
+
+  const togglePool = (id: string) => {
+    if (!pool.includes(id)) return void c.set('transition.effects', [...pool, id])
+    if (pool.length <= 1) return onNotify('候选效果至少保留一个')
+    void c.set('transition.effects', pool.filter((e) => e !== id))
+  }
+
+  const setCurve = (next: string) => {
+    void c.set('transition.curve', next)
+    // The curve needs its control points before it can run.
+    if (next === 'cubic-bezier' && !c.isSet('transition.cubic_bezier')) {
+      void c.set('transition.cubic_bezier', BEZIER_START)
+    }
+  }
+
+  const center = c.value<number[]>('transition.center')
+  const bezier = c.value<number[] | null>('transition.cubic_bezier') ?? BEZIER_START
+  const percent = (v: number) => Math.round(v * 100)
+
+  const param = (key: string, children: React.ReactNode, label: string, desc: string, which: keyof typeof USED_BY) =>
+    applies(which).length > 0 && (
+      <SettingRow
+        label={label}
+        description={<>{desc}{usedBy(which)}</>}
+        modified={c.isSet(key)}
+        onReset={() => void c.reset(key)}
       >
-        <div className="page-title-box">
-          <h2
-            style={{
-              fontSize: 18,
-              fontWeight: 800,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <span>换图过渡效果 (Transitions)</span>
-            <span
-              className="wh-quick-tag"
-              style={{
-                fontSize: 11,
-                fontWeight: 800,
-                background: 'var(--m3-accent-lavender)',
-                color: 'var(--m3-accent-purple)',
-              }}
+        {children}
+      </SettingRow>
+    )
+
+  return (
+    <>
+      <SettingsGroup title="换壁纸时">
+        <SettingRow
+          label="效果选择方式"
+          description={SELECTIONS.find((s) => s.id === selection)?.desc}
+          modified={c.isSet('transition.selection')}
+          onReset={() => void c.reset('transition.selection')}
+          control={
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={selection}
+              onChange={(_, v) => v && void c.set('transition.selection', v)}
             >
-              仅全局配置 §5
-            </span>
-          </h2>
-          <p
-            style={{
-              fontSize: 12,
-              color: 'var(--m3-fg-muted)',
-              marginTop: 2,
-            }}
-          >
-            GPU 屏幕空间着色器混合。多显示器换图时全局生效，不按显示器划分。
-          </p>
-        </div>
+              {SELECTIONS.map((s) => (
+                <ToggleButton key={s.id} value={s.id}>
+                  {s.label}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          }
+        />
+        <SettingRow
+          label="登录时播放过渡"
+          description="守护进程启动时播放一次过渡，登录时不会硬切。"
+          modified={c.isSet('transition.on_start')}
+          onReset={() => void c.reset('transition.on_start')}
+          control={
+            <Switch
+              checked={c.value<boolean>('transition.on_start')}
+              onChange={() => void c.set('transition.on_start', !c.value<boolean>('transition.on_start'))}
+            />
+          }
+        />
+      </SettingsGroup>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* The button itself is the "unsaved changes" indicator.
-              Nothing else in this panel writes to disk, so this is the only
-              signal that the file and the screen can differ: a filled accent
-              pill while there is something to apply, a quiet outline once they
-              match. Both variants use tokens that stay readable in either
-              theme (`wh-search-btn` already pairs accent-purple with white). */}
-          <button
-            className={dirty ? 'wh-search-btn' : 'wh-toggle-pill'}
-            style={{
-              height: 38,
-              padding: dirty ? '0 22px' : '0 18px',
-              fontWeight: 800,
-              ...(dirty
-                ? {}
-                : {
-                    background: 'transparent',
-                    border: '1.5px solid var(--m3-outline-variant)',
-                    color: 'var(--m3-fg-muted)',
-                    boxShadow: 'none',
-                  }),
-            }}
-            onClick={() => void handleSaveConfig(config)}
-            disabled={saving || !loaded}
-          >
-            {saving
-              ? '⏳ 保存中...'
-              : dirty
-                ? '💾 保存并应用配置 · 有未保存的修改'
-                : '✓ 配置已保存'}
-          </button>
-        </div>
-      </header>
-
-      {/* 滚动容器 */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '24px 28px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 24,
-        }}
+      <SettingsGroup
+        title={fixed ? '使用的效果' : '候选效果'}
+        description={fixed ? '选一个效果。' : '勾选参与的效果，至少保留一个。'}
       >
-        {/* ================================================================
-            模块一：全局策略与基础动力学 (Global Strategy & Dynamics)
-            ================================================================ */}
-        <div
-          className="wallhaven-control-box"
-          style={{ margin: 0, padding: 22 }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16,
-              flexWrap: 'wrap',
-              gap: 12,
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>
-                全局过渡策略与动力学配置
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: 'var(--m3-fg-muted)',
-                  marginTop: 2,
-                }}
-              >
-                决定每次换壁纸时的转场选择模式、基础时长以及平滑曲线。
-              </div>
-            </div>
-
-            {/* 策略选择器 */}
-            <div className="m3-seg-box">
-              <button
-                className={`m3-seg-btn ${
-                  selection === 'fixed' ? 'active' : ''
-                }`}
-                style={{ padding: '0 16px' }}
-                onClick={() => {
-                  setSelection('fixed')
-                  setDirty(true)
-                  onNotify('已切换为：单一固定效果模式（待保存）')
-                }}
-              >
-                ★ 单一固定 (Fixed)
-              </button>
-              <button
-                className={`m3-seg-btn ${
-                  selection === 'rotate' ? 'active' : ''
-                }`}
-                style={{ padding: '0 16px' }}
-                onClick={() => {
-                  setSelection('rotate')
-                  setDirty(true)
-                  onNotify('已切换为：候选池顺序轮播模式（待保存）')
-                }}
-              >
-                🔄 顺序轮播 (Rotate)
-              </button>
-              <button
-                className={`m3-seg-btn ${
-                  selection === 'random' ? 'active' : ''
-                }`}
-                style={{ padding: '0 16px' }}
-                onClick={() => {
-                  setSelection('random')
-                  setDirty(true)
-                  onNotify('已切换为：候选池随机抽选模式（待保存）')
-                }}
-              >
-                🎲 随机抽选 (Random)
-              </button>
-            </div>
-          </div>
-
-          <div
-            style={{
+        <Box sx={{ p: 2 }}>
+          <Box
+            sx={{
               display: 'grid',
-              gridTemplateColumns: '1.2fr 1.2fr 1fr 1fr',
-              gap: 16,
-              alignItems: 'center',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: 1.5,
             }}
           >
-            {/* duration */}
-            <div className="m3-slider-tile">
-              <div className="m3-tile-header">
-                <span className="m3-tile-label">⏱️ 过渡时长 (duration)</span>
-                <div className="m3-num-badge">
-                  <input
-                    type="number"
-                    min="100"
-                    max="3000"
-                    step="50"
-                    value={duration}
-                    onChange={(e) =>
-                      setDuration(parseInt(e.target.value) || 1500)
-                    }
-                  />
-                  <span className="m3-num-badge-unit">ms</span>
-                </div>
-              </div>
-              <input
-                type="range"
-                className="m3-slider"
-                min="100"
-                max="3000"
-                step="50"
-                value={duration}
-                onChange={(e) => edit(setDuration)(parseInt(e.target.value) || 1500)}
-              />
-            </div>
-
-            {/* curve */}
-            <div className="m3-slider-tile">
-              <span className="m3-tile-label" style={{ marginBottom: 6 }}>
-                📈 插值缓动曲线 (curve)
-              </span>
-              <div className="m3-select-wrapper">
-                <select
-                  className="m3-select"
-                  value={curve}
-                  onChange={(e) => edit(setCurve)(e.target.value)}
-                >
-                  <option value="ease-out-cubic">ease-out-cubic (推荐默认)</option>
-                  <option value="ease-out-quad">ease-out-quad</option>
-                  <option value="ease-out-expo">ease-out-expo</option>
-                  <option value="linear">linear (线性)</option>
-                  <option value="cubic-bezier">cubic-bezier</option>
-                </select>
-                <div className="m3-select-arrow">▼</div>
-              </div>
-            </div>
-
-            {/* allow_overshoot */}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-                padding: '4px 8px',
-              }}
-            >
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--m3-fg-muted)' }}>
-                物理回弹 (Overshoot):
-              </span>
-              <button
-                className={`wh-toggle-pill ${allowOvershoot ? 'active' : ''}`}
-                style={{ height: 38, width: '100%', fontWeight: 700 }}
-                onClick={() => { setDirty(true); setAllowOvershoot((v) => !v) }}
-              >
-                {allowOvershoot ? '☑ 允许曲线反弹' : '☐ 限制 0..1 夹紧'}
-              </button>
-            </div>
-
-            {/* on_start */}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-                padding: '4px 8px',
-              }}
-            >
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--m3-fg-muted)' }}>
-                开机启动播演:
-              </span>
-              <button
-                className={`wh-toggle-pill ${onStart ? 'active' : ''}`}
-                style={{ height: 38, width: '100%', fontWeight: 700 }}
-                onClick={() => { setDirty(true); setOnStart((v) => !v) }}
-              >
-                {onStart ? '☑ 开机登录播演' : '☐ 登录时硬切'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ================================================================
-            模块二：9 款 Shader 效果画廊 (3×3 矩阵网格)
-            ================================================================ */}
-        <div>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 800,
-              color: 'var(--m3-fg-muted)',
-              textTransform: 'uppercase',
-              marginBottom: 12,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <span>
-              9 款 Shader 转场效果（点击卡片调优专属参数
-              {selection !== 'fixed' && '，点击角标加入轮播池'}）
-            </span>
-            <span
-              style={{
-                fontSize: 11,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--m3-accent-purple)',
-              }}
-            >
-              当前调参焦点: [{selectedInspectObj.name}]
-            </span>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: 16,
-            }}
-          >
-            {transitions.map((tr) => {
-              const isFixedActive =
-                selection === 'fixed' && tr.id === fixedEffect
-              const isInPool = poolEffects.includes(tr.id)
-              const isInspected = tr.id === inspectEffect
-
+            {EFFECTS.map((e) => {
+              const selected = fixed ? effect === e.id : pool.includes(e.id)
               return (
-                <div
-                  key={tr.id}
-                  className="tr-card"
-                  style={{
-                    background: 'var(--m3-surface)',
-                    borderRadius: 'var(--m3-radius-lg)',
-                    padding: 18,
-                    cursor: 'pointer',
-                    boxShadow: isInspected
-                      ? '0 0 0 3px var(--m3-accent-purple), var(--m3-shadow-md)'
-                      : 'var(--m3-shadow-sm)',
-                    border: isFixedActive
-                      ? '2px solid var(--m3-accent-lime)'
-                      : '1px solid var(--m3-outline-variant)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                    transition: 'all 0.2s cubic-bezier(0.2, 0, 0, 1)',
+                <ButtonBase
+                  key={e.id}
+                  role={fixed ? 'radio' : 'checkbox'}
+                  aria-checked={selected}
+                  onClick={() => (fixed ? void c.set('transition.effect', e.id) : togglePool(e.id))}
+                  sx={{
+                    display: 'block',
+                    textAlign: 'left',
+                    p: 2,
+                    borderRadius: 3,
+                    border: 1,
+                    borderColor: selected ? 'primary.main' : 'divider',
+                    bgcolor: selected ? 'md.secondary_container' : 'md.surface_container',
+                    color: selected ? 'md.on_secondary_container' : 'text.primary',
                   }}
-                  onClick={() => handleCardClick(tr)}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <span style={{ fontWeight: 800, fontSize: 14 }}>
-                      {tr.name}
-                    </span>
-
-                    {/* 固定模式下的主激活标签 */}
-                    {selection === 'fixed' && isFixedActive && (
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 900,
-                          padding: '2px 8px',
-                          borderRadius: 9999,
-                          background: 'var(--m3-accent-lime)',
-                          color: '#1c192b',
-                        }}
-                      >
-                        ★ 当前生效
-                      </span>
+                  <Stack direction="row" sx={{ alignItems: 'center', mb: 0.5 }}>
+                    <Typography variant="subtitle1" sx={{ flex: 1 }}>
+                      {e.name}
+                    </Typography>
+                    {selected ? (
+                      <CheckCircleRounded fontSize="small" sx={{ color: 'primary.main' }} />
+                    ) : (
+                      <RadioButtonUncheckedRounded fontSize="small" sx={{ color: 'text.secondary' }} />
                     )}
-
-                    {/* 轮播/随机模式下的入池开关 */}
-                    {selection !== 'fixed' && (
-                      <button
-                        onClick={(e) => togglePoolEffect(e, tr.id)}
-                        style={{
-                          border: 'none',
-                          padding: '2px 8px',
-                          borderRadius: 9999,
-                          fontSize: 11,
-                          fontWeight: 800,
-                          cursor: 'pointer',
-                          background: isInPool
-                            ? 'rgba(120, 220, 119, 0.25)'
-                            : 'var(--m3-surface-subtle)',
-                          color: isInPool ? '#2e7d32' : 'var(--m3-fg-muted)',
-                        }}
-                      >
-                        {isInPool ? '✓ 已入池' : '+ 加入池'}
-                      </button>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--m3-fg-muted)',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {tr.desc}
-                  </div>
-
-                  {isInspected && (
-                    <div
-                      style={{
-                        marginTop: 'auto',
-                        paddingTop: 6,
-                        borderTop: '1px dashed var(--m3-outline-variant)',
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: 'var(--m3-accent-purple)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                    >
-                      <span>⚙️ 正在配置下方专属参数</span>
-                    </div>
-                  )}
-                </div>
+                  </Stack>
+                  <Typography variant="body2" sx={{ color: 'inherit', opacity: 0.8 }}>
+                    {e.desc}
+                  </Typography>
+                </ButtonBase>
               )
             })}
-          </div>
-        </div>
+          </Box>
+        </Box>
+      </SettingsGroup>
 
-        {/* ================================================================
-            模块三：所选效果高级情境调参面板 (Contextual Parameter Inspector)
-            ================================================================ */}
-        <div
-          className="wallhaven-control-box"
-          style={{
-            margin: 0,
-            padding: 22,
-            border: '2px solid var(--m3-surface-container)',
-          }}
+      <SettingsGroup title="时长与节奏">
+        <SettingRow
+          label="过渡时长"
+          description="一次过渡从开始到结束的时间。"
+          modified={c.isSet('transition.duration_ms')}
+          onReset={() => void c.reset('transition.duration_ms')}
         >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16,
-              paddingBottom: 12,
-              borderBottom: '1px solid var(--m3-outline-variant)',
-            }}
+          <SliderField
+            value={c.value<number>('transition.duration_ms')}
+            min={200}
+            max={4000}
+            step={50}
+            inputMax={60000}
+            unit="ms"
+            onCommit={(v) => void c.set('transition.duration_ms', v)}
+          />
+        </SettingRow>
+        <SettingRow
+          label="缓动曲线"
+          description="过渡的快慢变化方式。"
+          modified={c.isSet('transition.curve')}
+          onReset={() => void c.reset('transition.curve')}
+          control={<CurveSelect value={curve} curves={curves} onChange={setCurve} />}
+        />
+        {curve === 'cubic-bezier' && (
+          <SettingRow
+            label="贝塞尔控制点"
+            description="两个控制点的坐标，写法与 CSS 相同。横坐标限制在 0 到 1 之间。"
+            modified={c.isSet('transition.cubic_bezier')}
+            onReset={() => void c.reset('transition.cubic_bezier')}
           >
-            <div>
-              <div
-                style={{
-                  fontWeight: 800,
-                  fontSize: 15,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
-                <span>⚙️「{selectedInspectObj.name}」专属几何与物理参数调优</span>
-                <span
-                  className="wh-quick-tag"
-                  style={{
-                    background: 'var(--m3-surface-subtle)',
-                    fontSize: 10,
-                    fontWeight: 700,
-                  }}
+            <BezierInput value={bezier} onCommit={(v) => void c.set('transition.cubic_bezier', v)} />
+          </SettingRow>
+        )}
+        <SettingRow
+          label="允许曲线回弹"
+          description="曲线可以超出起止位置，让效果有回弹的感觉。"
+          modified={c.isSet('transition.allow_overshoot')}
+          onReset={() => void c.reset('transition.allow_overshoot')}
+          control={
+            <Switch
+              checked={c.value<boolean>('transition.allow_overshoot')}
+              onChange={() =>
+                void c.set('transition.allow_overshoot', !c.value<boolean>('transition.allow_overshoot'))
+              }
+            />
+          }
+        />
+      </SettingsGroup>
+
+      {['direction', 'softness', 'center', 'push', 'stripes', 'start_radius', 'hold_ms'].some((p) =>
+        applies(p as keyof typeof USED_BY).length > 0,
+      ) && (
+        <SettingsGroup title="效果参数" description="只列出选中的效果用到的参数。点效果名只看它的参数；被多个效果共用的参数，改动对它们同时生效。">
+          <Stack direction="row" spacing={1} sx={{ px: 2, py: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
+            {['all', ...active].map((id) => (
+              <Chip
+                key={id}
+                label={id === 'all' ? '全部' : nameOf(id)}
+                color={(id === 'all' ? !active.includes(focus) : id === focus) ? 'primary' : 'default'}
+                variant={(id === 'all' ? !active.includes(focus) : id === focus) ? 'filled' : 'outlined'}
+                onClick={() => setFocus(id)}
+              />
+            ))}
+          </Stack>
+          {applies('direction').length > 0 && (
+            <SettingRow
+              label="方向"
+              description={<>边缘推进或新壁纸滑入的方向。{usedBy('direction')}</>}
+              modified={c.isSet('transition.direction')}
+              onReset={() => void c.reset('transition.direction')}
+              control={
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={c.value<string>('transition.direction')}
+                  onChange={(_, v) => v && void c.set('transition.direction', v)}
                 >
-                  着色器动态情境
-                </span>
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: 'var(--m3-fg-muted)',
-                  marginTop: 2,
-                }}
-              >
-                此效果支持的高级参数已高亮呈现；其它不相干的几何参数已自动屏蔽。
-              </div>
-            </div>
-
-            <button
-              className="wh-clear-btn"
-              style={{ height: 32, padding: '0 14px' }}
-              onClick={() => {
-                setDirty(true)
-                setDirection('right')
-                setSoftness(0.3)
-                setCenterX(50)
-                setCenterY(50)
-                setStripes(12)
-                setPush(0.55)
-                setStartRadius(0.0)
-                setHold(0)
-                onNotify('已恢复专属参数默认值（并自动保存）')
-              }}
-            >
-              ↺ 重置此效果参数
-            </button>
-          </div>
-
-          {/* 无额外几何参数的纯色/解离类效果提示 */}
-          {isPureColor && (
-            <div
-              style={{
-                padding: '24px 16px',
-                textAlign: 'center',
-                color: 'var(--m3-fg-muted)',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              ✨「{selectedInspectObj.name}」为全屏像素/色度平滑混合，直接由基础时长（
-              {duration}ms）与缓动曲线（{curve}）驱动，无需额外几何或方向参数。
-            </div>
+                  <ToggleButton value="left">向左</ToggleButton>
+                  <ToggleButton value="right">向右</ToggleButton>
+                  <ToggleButton value="up">向上</ToggleButton>
+                  <ToggleButton value="down">向下</ToggleButton>
+                </ToggleButtonGroup>
+              }
+            />
           )}
-
-          {/* 动态专属参数网格 */}
-          {!isPureColor && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: 16,
-              }}
-            >
-              {/* 1. 方向 (direction) · Wipe / Stripes / Slide 专属 */}
-              {hasDirection && (
-                <div className="m3-slider-tile">
-                  <span className="m3-tile-label" style={{ marginBottom: 6 }}>
-                    🧭 扫光/滑动推进方向 (direction)
-                  </span>
-                  <div className="m3-seg-box" style={{ width: '100%' }}>
-                    <button
-                      className={`m3-seg-btn ${
-                        direction === 'left' ? 'active' : ''
-                      }`}
-                      style={{ flex: 1 }}
-                      onClick={() => edit(setDirection)('left')}
-                    >
-                      ⬅️ 向左
-                    </button>
-                    <button
-                      className={`m3-seg-btn ${
-                        direction === 'right' ? 'active' : ''
-                      }`}
-                      style={{ flex: 1 }}
-                      onClick={() => edit(setDirection)('right')}
-                    >
-                      ➡️ 向右
-                    </button>
-                    <button
-                      className={`m3-seg-btn ${
-                        direction === 'up' ? 'active' : ''
-                      }`}
-                      style={{ flex: 1 }}
-                      onClick={() => edit(setDirection)('up')}
-                    >
-                      ⬆️ 向上
-                    </button>
-                    <button
-                      className={`m3-seg-btn ${
-                        direction === 'down' ? 'active' : ''
-                      }`}
-                      style={{ flex: 1 }}
-                      onClick={() => edit(setDirection)('down')}
-                    >
-                      ⬇️ 向下
-                    </button>
-                  </div>
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    边缘推进或新画面滑入的轴向。
-                  </span>
-                </div>
-              )}
-
-              {/* 2. 虫洞推挤深度 (push) · Portal 专属 */}
-              {hasPortal && (
-                <div className="m3-slider-tile">
-                  <div className="m3-tile-header">
-                    <span className="m3-tile-label">🚀 虫洞推挤深度 (push)</span>
-                    <div className="m3-num-badge">
-                      <input
-                        type="number"
-                        min="0.0"
-                        max="1.0"
-                        step="0.05"
-                        value={push.toFixed(2)}
-                        onChange={(e) =>
-                          edit(setPush)(parseFloat(e.target.value) || 0.55)
-                        }
-                      />
-                      <span className="m3-num-badge-unit">x</span>
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    className="m3-slider"
-                    min="0.0"
-                    max="1.0"
-                    step="0.05"
-                    value={push}
-                    onChange={(e) => edit(setPush)(parseFloat(e.target.value))}
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    Portal 专属：穿过虫洞时旧画面向外推挤的幅度（0 为 Iris）。
-                  </span>
-                </div>
-              )}
-
-              {/* 3. 百叶窗条带数 (stripes) · Stripes 专属 */}
-              {hasStripes && (
-                <div className="m3-slider-tile">
-                  <div className="m3-tile-header">
-                    <span className="m3-tile-label">
-                      🪟 百叶窗切带数量 (stripes)
-                    </span>
-                    <div className="m3-num-badge">
-                      <input
-                        type="number"
-                        min="2"
-                        max="64"
-                        value={stripes}
-                        onChange={(e) =>
-                          edit(setStripes)(parseInt(e.target.value) || 12)
-                        }
-                      />
-                      <span className="m3-num-badge-unit">条</span>
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    className="m3-slider"
-                    min="2"
-                    max="64"
-                    value={stripes}
-                    onChange={(e) => edit(setStripes)(parseInt(e.target.value))}
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    Stripes 专属：边缘被细分为多少并行推进的等宽切带。
-                  </span>
-                </div>
-              )}
-
-              {/* 4. 首帧停顿时间 (hold) · Iris / Portal 专属 */}
-              {hasIrisPortal && (
-                <div className="m3-slider-tile">
-                  <div className="m3-tile-header">
-                    <span className="m3-tile-label">⏸️ 首帧成型停顿 (hold)</span>
-                    <div className="m3-num-badge">
-                      <input
-                        type="number"
-                        min="0"
-                        max="600"
-                        step="20"
-                        value={hold}
-                        onChange={(e) =>
-                          edit(setHold)(parseInt(e.target.value) || 0)
-                        }
-                      />
-                      <span className="m3-num-badge-unit">ms</span>
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    className="m3-slider"
-                    min="0"
-                    max="600"
-                    step="20"
-                    value={hold}
-                    onChange={(e) => edit(setHold)(parseInt(e.target.value))}
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    让初生光圈在起步前悬停瞬间，让人眼看清成型形状。
-                  </span>
-                </div>
-              )}
-
-              {/* 5. 起始光圈孔径 (start_radius) · Iris / Portal 专属 */}
-              {hasIrisPortal && (
-                <div className="m3-slider-tile">
-                  <div className="m3-tile-header">
-                    <span className="m3-tile-label">
-                      ⭕ 起始孔径 (start_radius)
-                    </span>
-                    <div className="m3-num-badge">
-                      <input
-                        type="number"
-                        min="0.0"
-                        max="0.5"
-                        step="0.02"
-                        value={startRadius.toFixed(2)}
-                        onChange={(e) =>
-                          edit(setStartRadius)(parseFloat(e.target.value) || 0.0)
-                        }
-                      />
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    className="m3-slider"
-                    min="0.0"
-                    max="0.5"
-                    step="0.02"
-                    value={startRadius}
-                    onChange={(e) => edit(setStartRadius)(parseFloat(e.target.value))}
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    默认 0.0 从单点成型；大于 0 时首帧即为一个成型圆环。
-                  </span>
-                </div>
-              )}
-
-              {/* 6. 边缘羽化 (softness) · Wipe / Stripes / Iris / Portal */}
-              {hasSoftness && (
-                <div className="m3-slider-tile">
-                  <div className="m3-tile-header">
-                    <span className="m3-tile-label">
-                      🌫️ 边缘羽化柔度 (softness)
-                    </span>
-                    <div className="m3-num-badge">
-                      <input
-                        type="number"
-                        min="0.0"
-                        max="1.0"
-                        step="0.05"
-                        value={softness.toFixed(2)}
-                        onChange={(e) =>
-                          edit(setSoftness)(parseFloat(e.target.value) || 0.3)
-                        }
-                      />
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    className="m3-slider"
-                    min="0.0"
-                    max="1.0"
-                    step="0.05"
-                    value={softness}
-                    onChange={(e) => edit(setSoftness)(parseFloat(e.target.value))}
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    0 为刀削般锋利硬边，1 为极柔和弥散渐隐过渡带。
-                  </span>
-                </div>
-              )}
-
-              {/* 7. 发散几何中心 (center) · Iris / Portal / Zoom */}
-              {hasCenter && (
-                <div className="m3-slider-tile">
-                  <div className="m3-tile-header">
-                    <span className="m3-tile-label">🎯 径向发散中心点 (center)</span>
-                    <div className="m3-num-badge">
-                      <span>
-                        {centerX}%, {centerY}%
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--m3-fg-muted)' }}>X:</span>
-                    <input
-                      type="range"
-                      className="m3-slider"
-                      min="0"
-                      max="100"
-                      value={centerX}
-                      onChange={(e) => edit(setCenterX)(parseInt(e.target.value))}
-                    />
-                    <span style={{ fontSize: 10, color: 'var(--m3-fg-muted)' }}>Y:</span>
-                    <input
-                      type="range"
-                      className="m3-slider"
-                      min="0"
-                      max="100"
-                      value={centerY}
-                      onChange={(e) => edit(setCenterY)(parseInt(e.target.value))}
-                    />
-                  </div>
-                  <span style={{ fontSize: 11, color: 'var(--m3-fg-muted)' }}>
-                    默认 (50%, 50%) 位于屏幕正中，可调整为视窗偏焦点。
-                  </span>
-                </div>
-              )}
-            </div>
+          {param(
+            'transition.softness',
+            <SliderField
+              value={c.value<number>('transition.softness')}
+              min={0}
+              max={1}
+              step={0.05}
+              onCommit={(v) => void c.set('transition.softness', v)}
+            />,
+            '边缘柔和度',
+            '0 为硬边，1 为很宽的渐变边。',
+            'softness',
           )}
-        </div>
-      </div>
-    </div>
+          {applies('center').length > 0 && (
+            <SettingRow
+              label="中心位置"
+              description={<>开口或变焦的起点，按屏幕宽高的百分比计，左上角为 0%。{usedBy('center')}</>}
+              modified={c.isSet('transition.center')}
+              onReset={() => void c.reset('transition.center')}
+            >
+              <Stack spacing={1}>
+                <Labeled label="横向">
+                  <SliderField
+                    value={percent(center[0])}
+                    min={0}
+                    max={100}
+                    step={1}
+                    unit="%"
+                    onCommit={(v) => void c.set('transition.center', [v / 100, center[1]])}
+                  />
+                </Labeled>
+                <Labeled label="纵向">
+                  <SliderField
+                    value={percent(center[1])}
+                    min={0}
+                    max={100}
+                    step={1}
+                    unit="%"
+                    onCommit={(v) => void c.set('transition.center', [center[0], v / 100])}
+                  />
+                </Labeled>
+              </Stack>
+            </SettingRow>
+          )}
+          {param(
+            'transition.push',
+            <SliderField
+              value={c.value<number>('transition.push')}
+              min={0}
+              max={1.5}
+              step={0.05}
+              onCommit={(v) => void c.set('transition.push', v)}
+            />,
+            '推开幅度',
+            '旧画面被向外推开的距离，0 时与光圈相同。',
+            'push',
+          )}
+          {applies('stripes').length > 0 && (
+            <SettingRow
+              label="切带数量"
+              description={<>边缘被分成多少条同时推进的切带。{usedBy('stripes')}</>}
+              modified={c.isSet('transition.stripes')}
+              onReset={() => void c.reset('transition.stripes')}
+              control={
+                <NumberInput
+                  value={c.value<number>('transition.stripes')}
+                  min={2}
+                  max={64}
+                  step={1}
+                  unit="条"
+                  onCommit={(v) => void c.set('transition.stripes', v)}
+                />
+              }
+            />
+          )}
+          {param(
+            'transition.start_radius',
+            <SliderField
+              value={c.value<number>('transition.start_radius')}
+              min={0}
+              max={1}
+              step={0.02}
+              onCommit={(v) => void c.set('transition.start_radius', v)}
+            />,
+            '起始开口大小',
+            '开口一开始的大小，按屏幕高度的比例计。0 从一个点展开。',
+            'start_radius',
+          )}
+          {applies('hold_ms').length > 0 && (
+            <SettingRow
+              label="起步停顿"
+              description={<>第一帧先停住不动的时间，让开口的形状看得清。{usedBy('hold_ms')}</>}
+              modified={c.isSet('transition.hold_ms')}
+              onReset={() => void c.reset('transition.hold_ms')}
+            >
+              <SliderField
+                value={c.value<number>('transition.hold_ms')}
+                min={0}
+                max={600}
+                step={20}
+                inputMax={10000}
+                unit="ms"
+                onCommit={(v) => void c.set('transition.hold_ms', v)}
+              />
+            </SettingRow>
+          )}
+        </SettingsGroup>
+      )}
+    </>
   )
 }
