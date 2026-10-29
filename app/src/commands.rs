@@ -220,19 +220,6 @@ pub fn read_external_palette() -> Result<Option<BTreeMap<String, String>>, Strin
     Ok(Some(out))
 }
 
-/// Publish a Material 3 palette to the system theme daemon and switch to it.
-///
-/// Three steps, and no more: write the palette where the daemon looks, tell it
-/// to use that palette, and leave everything else alone. In particular this
-/// does **not** touch the wallpaper — niripaper keeps drawing it — so the two
-/// programs do not fight over the Background layer.
-///
-/// The palette goes into the daemon's *community* palette directory because
-/// that is the one whose contents can be selected by name. A user's own file
-/// there is additive: it changes nothing until it is selected, and selecting
-/// another scheme afterwards leaves this file behind rather than fighting it.
-///
-/// Returns the palette name that was activated.
 /// One Material 3 role set, as the system theme daemon expects it.
 #[derive(serde::Deserialize)]
 pub struct SystemPalette {
@@ -258,26 +245,25 @@ pub struct SystemPalette {
 /// does **not** touch the wallpaper — niripaper keeps drawing it — so the two
 /// programs do not fight over the Background layer.
 ///
-/// The palette goes into the daemon's *community* palette directory because
-/// that is the one whose contents can be selected by name. A user's own file
-/// there is additive: it changes nothing until it is selected, and selecting
-/// another scheme afterwards leaves this file behind rather than fighting it.
+/// The palette goes into the daemon's *custom* palette directory
+/// (`~/.config/noctalia/palettes`), the one meant for user-supplied files. The
+/// community directory is a download cache the daemon prunes, so a file put
+/// there vanishes within seconds. The file is additive: it changes nothing
+/// until selected, and selecting another scheme leaves it behind.
 ///
 /// Returns the palette name that was activated.
 #[tauri::command]
 pub fn apply_system_palette(palette: SystemPalette) -> Result<String, String> {
     const NAME: &str = "NiriPaper";
 
-    let state = std::env::var_os("XDG_STATE_HOME")
+    let config = std::env::var_os("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
-        })
-        .ok_or("无法确定状态目录")?;
-    let dir = state.join("noctalia").join("community-palettes");
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .ok_or("无法确定配置目录")?;
+    let dir = config.join("noctalia").join("palettes");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建 {} 失败: {e}", dir.display()))?;
 
-    // Same shape a community palette uses: one block per mode, `m`-prefixed
+    // Same shape a Noctalia palette file uses: one block per mode, `m`-prefixed
     // roles. Both modes get the same colours — the daemon picks by its own
     // light/dark state, and a consistent look beats guessing wrong.
     let roles = serde_json::json!({
@@ -295,6 +281,30 @@ pub fn apply_system_palette(palette: SystemPalette) -> Result<String, String> {
         "mOnSurfaceVariant": palette.on_surface_variant,
         "mOutline": palette.outline,
         "mShadow": "#000000",
+        "mHover": palette.surface_variant,
+        "mOnHover": palette.on_surface_variant,
+        // The daemon rejects a palette without a terminal block ("not found
+        // or invalid" in its log), so derive one from the same roles.
+        "terminal": {
+            "background": palette.surface,
+            "foreground": palette.on_surface,
+            "cursor": palette.on_surface,
+            "cursorText": palette.surface,
+            "selectionBg": palette.primary,
+            "selectionFg": palette.on_primary,
+            "normal": {
+                "black": palette.surface, "red": palette.error,
+                "green": palette.secondary, "yellow": palette.tertiary,
+                "blue": palette.primary, "magenta": palette.tertiary,
+                "cyan": palette.secondary, "white": palette.on_surface
+            },
+            "bright": {
+                "black": palette.outline, "red": palette.error,
+                "green": palette.secondary, "yellow": palette.tertiary,
+                "blue": palette.primary, "magenta": palette.tertiary,
+                "cyan": palette.secondary, "white": palette.on_surface
+            },
+        },
     });
     let body = serde_json::json!({ "dark": roles, "light": roles }).to_string();
 
@@ -303,11 +313,11 @@ pub fn apply_system_palette(palette: SystemPalette) -> Result<String, String> {
     std::fs::write(&tmp, body).map_err(|e| format!("写入调色板失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("替换调色板失败: {e}"))?;
 
-    // Errors here mean "the daemon is not running" or "this build has no
-    // community palettes"; either way the file is written and the next
-    // selection will find it, so report the failure rather than pretending.
+    // An error here means the daemon is not running; the file is written and
+    // the next selection will find it, so report the failure rather than
+    // pretending.
     let out = std::process::Command::new("noctalia")
-        .args(["msg", "color-scheme-set", "community", NAME])
+        .args(["msg", "color-scheme-set", "custom", NAME])
         .output()
         .map_err(|e| format!("调用 noctalia 失败: {e}"))?;
     if !out.status.success() {
@@ -1667,14 +1677,14 @@ mod palette_push_tests {
     use super::*;
 
     /// The palette must land in the daemon's directory, in the exact shape it
-    /// expects, before any command is run. Uses a temp dir via XDG_STATE_HOME
+    /// expects, before any command is run. Uses a temp dir via XDG_CONFIG_HOME
     /// so the real one is never touched.
     #[test]
-    fn writes_a_community_palette() {
+    fn writes_a_custom_palette() {
         let dir = std::env::temp_dir().join(format!("niripaper-pal-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("XDG_STATE_HOME", &dir);
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
 
         let palette = SystemPalette {
             primary: "#115e7f".into(),
@@ -1695,7 +1705,7 @@ mod palette_push_tests {
         // the file write is asserted here.
         let _ = apply_system_palette(palette);
 
-        let path = dir.join("noctalia/community-palettes/NiriPaper.json");
+        let path = dir.join("noctalia/palettes/NiriPaper.json");
         let text = std::fs::read_to_string(&path).expect("palette written");
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(parsed["dark"]["mPrimary"], "#115e7f");
