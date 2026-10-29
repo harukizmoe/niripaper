@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Alert, Box, CssBaseline, Snackbar } from '@mui/material'
 import { ThemeProvider } from '@mui/material/styles'
 import { invoke } from './hooks/useDaemon'
+import { EVERY_OUTPUT, outputLabel, useOutputs } from './hooks/useOutputs'
 import { Rail, type NavTab } from './components/Rail'
 import { WallpaperView } from './components/WallpaperView'
 import { TransitionsView } from './components/TransitionsView'
@@ -25,8 +26,6 @@ import {
 } from './theme/color'
 import { buildTheme } from './theme/mui'
 
-const DISPLAYS = ['DP-1 (主屏)', 'eDP-1 (内屏)', '全部显示器 (*)']
-
 /// The wallpaper the daemon is actually drawing, if it can be determined.
 async function currentWallpaperPath(): Promise<string | null> {
   try {
@@ -48,7 +47,6 @@ async function currentWallpaperPath(): Promise<string | null> {
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
   const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('local')
-  const [displayIdx, setDisplayIdx] = useState(0)
   // Light/dark is remembered; the first run follows the desktop's preference.
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem('niripaper_dark')
@@ -190,7 +188,13 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectedWp, setSelectedWp] = useState<WallpaperItem | null>(null)
   const [selectedSource, setSelectedSource] = useState<'wallhaven' | 'local'>('wallhaven')
-  const [drawerTargetDisplay, setDrawerTargetDisplay] = useState('DP-1')
+  // Which monitor a wallpaper is applied to. Until one is picked: the only
+  // monitor there is, or all of them.
+  const { outputs } = useOutputs()
+  const [pickedTarget, setPickedTarget] = useState<string | null>(null)
+  const target = pickedTarget ?? (outputs.length === 1 ? outputs[0].name : EVERY_OUTPUT)
+  // A tag chosen in the drawer becomes a Wallhaven search on the wallpaper page.
+  const [searchRequest, setSearchRequest] = useState<{ query: string; key: number } | null>(null)
 
   // Which colour-generation style the seed is rendered through.
   const [colorScheme, setColorScheme] = useState<SchemeName>(() => {
@@ -346,31 +350,19 @@ export default function App() {
     })
   }
 
-  const handleCycleDisplay = () => {
-    setDisplayIdx((prev) => {
-      const next = (prev + 1) % DISPLAYS.length
-      showSnackbar(`切换当前目标屏幕为：${DISPLAYS[next]}`)
-      return next
-    })
-  }
-
   const handleSelectWallpaper = (wp: WallpaperItem, source: 'wallhaven' | 'local') => {
     setSelectedWp(wp)
     setSelectedSource(source)
     setDrawerOpen(true)
   }
 
-  const handleApplyWallpaper = async (params: {
-    fit: string
-    scale: number
-    filterPreset: string
-  }) => {
+  const handleApplyWallpaper = async (params: { fit: string }) => {
     if (!selectedWp) return
 
     let finalPath = selectedWp.path
 
     if (selectedSource === 'wallhaven') {
-      showSnackbar(`⏳ 正在下载并应用 Wallhaven 壁纸「${selectedWp.name}」...`)
+      showSnackbar(`正在下载「${selectedWp.name}」…`)
       try {
         const ext =
           selectedWp.file_type === 'image/png' ? '.png' : '.jpg'
@@ -395,10 +387,9 @@ export default function App() {
       try {
         // Persist first, then swap the screen: `daemon_set` alone leaves
         // config.toml untouched, which is why the wallpaper was forgotten on
-        // restart. `scale` here is the drawer's zoom, mapped onto the daemon's
-        // canvas scale only when it would actually enlarge the canvas.
+        // restart.
         await invoke('daemon_apply', {
-          output: drawerTargetDisplay,
+          output: target,
           path: finalPath,
           fit: params.fit,
           scale: null,
@@ -412,22 +403,18 @@ export default function App() {
     if (selectedSource === 'local') {
       setLocalList((prev) =>
         prev.map((w) => {
-          if (w.activeOn === drawerTargetDisplay) {
+          if (w.activeOn === target) {
             return { ...w, activeOn: null }
           }
           if (w.id === selectedWp.id) {
-            return { ...w, activeOn: drawerTargetDisplay }
+            return { ...w, activeOn: target }
           }
           return w
         })
       )
     }
 
-    showSnackbar(
-      `⚡ [${drawerTargetDisplay}] 已设为当前壁纸：${selectedWp.name} (${
-        params.fit
-      }, ${params.scale.toFixed(2)}x, 滤镜: ${params.filterPreset})`
-    )
+    showSnackbar(`已将「${selectedWp.name}」设为${outputLabel(target)}的壁纸`)
 
     if (followWallpaper) {
       // Seed from the daemon's idea of the current wallpaper when we can map
@@ -445,7 +432,7 @@ export default function App() {
   }
 
   const handleSaveToLocal = async (wp: WallpaperItem) => {
-    showSnackbar(`⏳ 正在下载 Wallhaven 4K 原图「${wp.name}」...`)
+    showSnackbar(`正在下载「${wp.name}」…`)
     try {
       const ext = wp.file_type === 'image/png' ? '.png' : '.jpg'
       const filename =
@@ -458,16 +445,11 @@ export default function App() {
         fullUrl: wp.full_url || wp.thumb,
         filename,
       })
-      showSnackbar(`💾 已成功保存到本地库：${savedPath}`)
+      showSnackbar(`已保存到本地库：${savedPath}`)
       await refreshLocalWallpapers()
     } catch (e) {
       showSnackbar(`保存到本地失败: ${e}`)
     }
-    setDrawerOpen(false)
-  }
-
-  const handleAddToPlaylist = (wp: WallpaperItem) => {
-    showSnackbar(`➕ 已将「${wp.name}」加入 [${drawerTargetDisplay}] 轮播队列`)
     setDrawerOpen(false)
   }
 
@@ -502,13 +484,14 @@ export default function App() {
             wallhavenList={wallhavenList}
             localList={localList}
             currentSource={currentSource}
-            currentDisplay={DISPLAYS[displayIdx]}
+            outputs={outputs}
+            target={target}
+            onTargetChange={setPickedTarget}
+            searchRequest={searchRequest}
             enableBlur={enableBlur}
             lazyLoad={lazyLoad}
             onSourceChange={handleSourceChange}
-            onCycleDisplay={handleCycleDisplay}
             onSelectWallpaper={handleSelectWallpaper}
-            onNotify={showSnackbar}
             onSearchWallhaven={handleSearchWallhaven}
             onRefreshLocal={refreshLocalWallpapers}
             whLoading={whLoading}
@@ -551,17 +534,18 @@ export default function App() {
             isOpen={drawerOpen}
             wallpaper={selectedWp}
             source={selectedSource}
-            targetDisplay={drawerTargetDisplay}
+            outputs={outputs}
+            target={target}
+            onTargetChange={setPickedTarget}
             onClose={() => setDrawerOpen(false)}
-            onSetTargetDisplay={setDrawerTargetDisplay}
             onApply={handleApplyWallpaper}
             onSaveToLocal={handleSaveToLocal}
-            onAddToPlaylist={handleAddToPlaylist}
             onSearchTag={(tag) => {
               setCurrentTab('wallpapers')
               setCurrentSource('wallhaven')
-              showSnackbar(`按标签「${tag}」搜索`)
+              setSearchRequest({ query: tag, key: Date.now() })
             }}
+            onNotify={showSnackbar}
           />
 
       <Snackbar

@@ -576,7 +576,7 @@
       transform: perspective(1000px) scale(1.02) translateY(-4px) !important;
     }
     .wallpaper-card.active-target {
-      box-shadow: 0 0 0 4px var(--m3-accent-lime), var(--m3-shadow-md);
+      box-shadow: 0 0 0 3px var(--md-sys-color-primary), var(--m3-shadow-md);
     }
 
     .card-media {

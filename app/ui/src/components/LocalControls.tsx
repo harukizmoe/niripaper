@@ -1,75 +1,36 @@
-import React from 'react'
+import { IconButton, Stack, Tooltip } from '@mui/material'
+import RefreshRounded from '@mui/icons-material/RefreshRounded'
+import { ToggleChip } from './chips'
 
 export type LocalFilter = 'all' | 'static' | 'video' | 'dark' | 'light'
 
-interface LocalControlsProps {
-  currentFilter: LocalFilter
-  count: number
-  onFilterChange: (filter: LocalFilter) => void
-  onRefresh?: () => void
-}
+const FILTERS: { id: LocalFilter; label: string }[] = [
+  { id: 'all', label: '全部' },
+  { id: 'static', label: '图片' },
+  { id: 'video', label: '视频' },
+  { id: 'dark', label: '暗色' },
+  { id: 'light', label: '亮色' },
+]
 
-export const LocalControls: React.FC<LocalControlsProps> = ({
+export function LocalControls({
   currentFilter,
-  count,
   onFilterChange,
   onRefresh,
-}) => {
+}: {
+  currentFilter: LocalFilter
+  onFilterChange: (filter: LocalFilter) => void
+  onRefresh: () => void
+}) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 28px 12px 28px',
-        gap: 8,
-        userSelect: 'none',
-      }}
-    >
-      <button
-        className={`wh-toggle-pill ${currentFilter === 'all' ? 'active' : ''}`}
-        onClick={() => onFilterChange('all')}
-      >
-        全部本地 ({count})
-      </button>
-      <button
-        className={`wh-toggle-pill ${currentFilter === 'static' ? 'active' : ''}`}
-        onClick={() => onFilterChange('static')}
-      >
-        静态图片
-      </button>
-      <button
-        className={`wh-toggle-pill ${currentFilter === 'video' ? 'active' : ''}`}
-        onClick={() => onFilterChange('video')}
-      >
-        动态视频
-      </button>
-      <button
-        className={`wh-toggle-pill ${currentFilter === 'dark' ? 'active' : ''}`}
-        onClick={() => onFilterChange('dark')}
-      >
-        暗色系
-      </button>
-      <button
-        className={`wh-toggle-pill ${currentFilter === 'light' ? 'active' : ''}`}
-        onClick={() => onFilterChange('light')}
-      >
-        亮色系
-      </button>
-
-      {onRefresh && (
-        <button
-          className="wh-toggle-pill"
-          style={{
-            marginLeft: 'auto',
-            background: 'var(--m3-surface)',
-            border: '1px solid var(--m3-outline-variant)',
-          }}
-          onClick={onRefresh}
-          title="重新扫描 ~/Pictures/Wallpapers"
-        >
-          🔄 重新扫描本地库
-        </button>
-      )}
-    </div>
+    <Stack direction="row" spacing={1} sx={{ px: 3.5, pb: 1.5, alignItems: 'center' }}>
+      {FILTERS.map((f) => (
+        <ToggleChip key={f.id} label={f.label} selected={currentFilter === f.id} onClick={() => onFilterChange(f.id)} />
+      ))}
+      <Tooltip title="重新扫描壁纸库">
+        <IconButton onClick={onRefresh} aria-label="重新扫描壁纸库" sx={{ ml: 'auto !important' }}>
+          <RefreshRounded />
+        </IconButton>
+      </Tooltip>
+    </Stack>
   )
 }

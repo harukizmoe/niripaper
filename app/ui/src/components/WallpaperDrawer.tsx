@@ -1,739 +1,261 @@
-import React, { useState, useEffect } from 'react'
+import { useState } from 'react'
+import {
+  Box,
+  Button,
+  Chip,
+  Divider,
+  Drawer,
+  IconButton,
+  MenuItem,
+  Select,
+  Stack,
+  Tooltip,
+  Typography,
+} from '@mui/material'
+import CloseRounded from '@mui/icons-material/CloseRounded'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { WallpaperItem } from '../data/wallpapers'
-import { PRESETS, type PresetKey, type FilterValues } from '../data/presets'
+import { useConfig } from '../hooks/useConfig'
+import type { OutputInfo } from '../hooks/useOutputs'
+import { NumberInput } from './fields'
+import { OutputSelect } from './OutputSelect'
+import { SettingRow } from './settings'
 
 function toMediaSrc(pathOrUrl: string): string {
   if (!pathOrUrl) return ''
-  if (
-    pathOrUrl.startsWith('http://') ||
-    pathOrUrl.startsWith('https://') ||
-    pathOrUrl.startsWith('data:')
-  ) {
-    return pathOrUrl
-  }
+  if (/^(https?:|data:)/.test(pathOrUrl)) return pathOrUrl
   try {
     return convertFileSrc(pathOrUrl)
   } catch {
     return pathOrUrl
   }
 }
+
+const FIT_LABELS: Record<string, string> = {
+  fill: '填满，裁掉多出的部分',
+  fit: '完整显示，留出边',
+  stretch: '拉伸铺满',
+  center: '居中，不缩放',
+  tile: '平铺',
+}
+
 interface WallpaperDrawerProps {
   isOpen: boolean
   wallpaper: WallpaperItem | null
   source: 'wallhaven' | 'local'
-  targetDisplay: string
+  outputs: OutputInfo[]
+  target: string
+  onTargetChange: (target: string) => void
   onClose: () => void
-  onSetTargetDisplay: (target: string) => void
-  onApply: (params: { fit: string; scale: number; filterPreset: string }) => void
+  onApply: (params: { fit: string }) => void
   onSaveToLocal: (wallpaper: WallpaperItem) => void
-  onAddToPlaylist: (wallpaper: WallpaperItem) => void
   onSearchTag: (tag: string) => void
+  onNotify: (msg: string) => void
 }
 
-export const WallpaperDrawer: React.FC<WallpaperDrawerProps> = ({
-  isOpen,
-  wallpaper,
-  source,
-  targetDisplay,
-  onClose,
-  onSetTargetDisplay,
-  onApply,
-  onSaveToLocal,
-  onAddToPlaylist,
-  onSearchTag,
-}) => {
-  const [fit, setFit] = useState('fill')
-  const [scale, setScale] = useState(1.2)
-  const [preset, setPreset] = useState<PresetKey>('none')
-  const [filters, setFilters] = useState<FilterValues>(PRESETS.none)
-
-  const [activeWp, setActiveWp] = useState<WallpaperItem | null>(wallpaper)
-
-  useEffect(() => {
-    if (wallpaper) {
-      setActiveWp(wallpaper)
-      setPreset('none')
-      setFilters(PRESETS.none)
-      setScale(1.2)
-    }
-  }, [wallpaper?.id])
-
-  if (!activeWp) return null
-  const displayWp = activeWp
-  const handlePresetChange = (p: PresetKey) => {
-    setPreset(p)
-    setFilters(PRESETS[p])
-  }
-
-  const handleFilterChange = (key: keyof FilterValues, val: number) => {
-    setFilters((prev) => ({ ...prev, [key]: val }))
-  }
-
-  const resetFilters = () => {
-    setPreset('none')
-    setFilters(PRESETS.none)
-  }
-
-  const calcTrackBg = (val: number, min: number, max: number) => {
-    const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100))
-    return `linear-gradient(to right, var(--m3-accent-purple) 0%, var(--m3-accent-purple) ${pct}%, var(--m3-surface-subtle) ${pct}%, var(--m3-surface-subtle) 100%)`
-  }
-
-  const scalePct = ((scale - 1.0) / (1.5 - 1.0)) * 100
-  const scaleTrackBg = `linear-gradient(to right, var(--m3-accent-purple) 0%, var(--m3-accent-purple) ${scalePct}%, var(--m3-surface-subtle) ${scalePct}%, var(--m3-surface-subtle) 100%)`
-
-  const imgFilterStyle = {
-    filter: `brightness(${filters.b}%) contrast(${filters.c}%) saturate(${filters.s}%) hue-rotate(${filters.h}deg)`,
-  }
+export function WallpaperDrawer({ isOpen, wallpaper, ...rest }: WallpaperDrawerProps) {
+  // Keep showing the last wallpaper while the drawer slides shut.
+  const [shown, setShown] = useState(wallpaper)
+  if (wallpaper && wallpaper !== shown) setShown(wallpaper)
 
   return (
-    <>
-      {/* 遮罩 */}
-      <div
-        className={`m3-drawer-scrim ${isOpen ? 'show' : ''}`}
-        onClick={onClose}
-      />
+    <Drawer
+      anchor="right"
+      open={isOpen}
+      onClose={rest.onClose}
+      slotProps={{ paper: { sx: { width: 440, maxWidth: '100%' } } }}
+    >
+      {/* Keyed so the fit starts over for each wallpaper. */}
+      {shown && <DrawerBody key={shown.id} wallpaper={shown} {...rest} />}
+    </Drawer>
+  )
+}
 
-      {/* 抽屉 */}
-      <aside className={`m3-drawer ${isOpen ? 'open' : ''}`}>
-        {/* 顶栏 */}
-        <div className="drawer-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 15, fontWeight: 800 }}>壁纸设置与应用</span>
-            <span
-              className="wh-quick-tag"
-              style={{
-                background: 'var(--m3-surface-container)',
-                color: 'var(--m3-accent-purple)',
-                fontWeight: 800,
-              }}
-            >
-              {source === 'wallhaven'
-                ? `Wallhaven #${displayWp.id}`
-                : '本地壁纸'}
-            </span>
-          </div>
-          <button
-            style={{
-              border: 'none',
-              background: 'var(--m3-surface-subtle)',
-              width: 32,
-              height: 32,
-              borderRadius: '50%',
-              cursor: 'pointer',
-              color: 'var(--m3-fg)',
-              fontSize: 14,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 800,
-            }}
-            onClick={onClose}
-          >
-            ✕
-          </button>
-        </div>
+function DrawerBody({
+  wallpaper: wp,
+  source,
+  outputs,
+  target,
+  onTargetChange,
+  onClose,
+  onApply,
+  onSaveToLocal,
+  onSearchTag,
+  onNotify,
+}: Omit<WallpaperDrawerProps, 'isOpen' | 'wallpaper'> & { wallpaper: WallpaperItem }) {
+  const config = useConfig(onNotify)
+  // Until the user picks one, the fit the daemon is already using.
+  const [pickedFit, setPickedFit] = useState<string | null>(null)
+  const fits = (() => {
+    const kind = config.key('fit')?.kind
+    return kind?.type === 'enum' ? kind.options : Object.keys(FIT_LABELS)
+  })()
+  const fit = pickedFit ?? (config.ready ? config.value<string>('fit') : 'fill')
 
-        {/* 内容 */}
-        <div className="drawer-body">
-          {/* 大图预览 */}
-          <div className="drawer-media-box">
-            {displayWp.kind === 'video' ? (
-              <video
-                src={toMediaSrc(displayWp.path || displayWp.thumb)}
-                controls
-                autoPlay
-                muted
-                loop
-                playsInline
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  display: 'block',
-                }}
-              />
-            ) : (
-              <img
-                id="drawer-img"
-                src={toMediaSrc(
-                  displayWp.full_url || displayWp.path || displayWp.thumb
-                )}
-                alt={displayWp.name}
-                style={imgFilterStyle}
-              />
-            )}
-            {filters.v > 0 && (
-              <div
-                id="drawer-vignette-overlay"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  pointerEvents: 'none',
-                  opacity: filters.v / 100,
-                  background:
-                    'radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.92) 100%)',
-                }}
-              />
-            )}
-            {filters.g > 0 && (
-              <div
-                id="drawer-grain-overlay"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  pointerEvents: 'none',
-                  opacity: filters.g / 100,
-                  backgroundImage:
-                    'radial-gradient(rgba(255,255,255,0.4) 1px, transparent 0)',
-                  backgroundSize: '3px 3px',
-                }}
-              />
-            )}
-            <span className="drawer-media-tag">
-              {displayWp.res || '2560×1440'} · {displayWp.aspect || '16:9'}
-            </span>
-          </div>
+  return (
+    <Stack sx={{ height: '100%' }}>
+      <Stack direction="row" sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 1.5 }}>
+        <Typography variant="h6" component="h2" sx={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
+          {wp.name}
+        </Typography>
+        <IconButton onClick={onClose} aria-label="关闭">
+          <CloseRounded />
+        </IconButton>
+      </Stack>
 
-          {/* 标题与信息 */}
-          <div>
-            <h3 style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.3 }}>
-              {displayWp.name}
-            </h3>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--m3-fg-muted)',
-                marginTop: 4,
-              }}
-            >
-              {source === 'wallhaven'
-                ? `${displayWp.res} · ${displayWp.ratio} · ❤️ ${displayWp.favs} 收藏 · ${displayWp.category} · ${displayWp.purity}`
-                : `${displayWp.res} · ${
-                    displayWp.kind === 'video'
-                      ? '动态视频壁纸'
-                      : '静态图像壁纸'
-                  }`}
-            </div>
-          </div>
-
-          {/* Wallhaven 5 色主色调 */}
-          {source === 'wallhaven' && displayWp.colors && (
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--m3-fg-muted)',
-                  marginBottom: 8,
-                  textTransform: 'uppercase',
-                }}
-              >
-                Wallhaven 5 色主色调:
-              </div>
-              <div className="palette-swatches">
-                {displayWp.colors.map((c, i) => (
-                  <div
-                    key={i}
-                    className="swatch"
-                    style={{ background: c }}
-                    title={`按色值 ${c} 搜索`}
-                    onClick={() => {
-                      onClose()
-                      onSearchTag(c)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
+      <Stack spacing={2.5} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2 }}>
+        <Box sx={{ borderRadius: 3, overflow: 'hidden', bgcolor: 'md.surface_container', aspectRatio: '16 / 9' }}>
+          {wp.kind === 'video' ? (
+            <Box
+              component="video"
+              src={toMediaSrc(wp.path || wp.thumb)}
+              controls
+              autoPlay
+              muted
+              loop
+              playsInline
+              sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+            />
+          ) : (
+            <Box
+              component="img"
+              src={toMediaSrc(wp.full_url || wp.path || wp.thumb)}
+              alt={wp.name}
+              sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+            />
           )}
+        </Box>
 
-          {/* 标签云 */}
-          {source === 'wallhaven' && displayWp.tags && (
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--m3-fg-muted)',
-                  marginBottom: 8,
-                  textTransform: 'uppercase',
-                }}
-              >
-                题材标签:
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {displayWp.tags.map((t, i) => (
-                  <button
-                    key={i}
-                    className="wh-quick-tag"
-                    onClick={() => {
-                      onClose()
-                      onSearchTag(t)
-                    }}
-                  >
-                    #{t}
-                  </button>
-                ))}
-              </div>
-            </div>
+        <Box>
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            {source === 'wallhaven'
+              ? [wp.res, wp.ratio, wp.favs && `${wp.favs} 收藏`, wp.category, wp.purity].filter(Boolean).join(' · ')
+              : [wp.res, wp.kind === 'video' ? '视频壁纸' : '图片壁纸'].filter(Boolean).join(' · ')}
+          </Typography>
+          {source === 'wallhaven' && (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Wallhaven #{wp.id}
+            </Typography>
           )}
+        </Box>
 
-          {/* 本地路径 */}
-          {source === 'local' && (
-            <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--m3-fg-muted)',
-                  marginBottom: 4,
-                  textTransform: 'uppercase',
-                }}
-              >
-                本地文件路径:
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontFamily: 'var(--font-mono)',
-                  color: 'var(--m3-fg)',
-                  background: 'var(--m3-surface-subtle)',
-                  padding: '8px 12px',
-                  borderRadius: 'var(--m3-radius-sm)',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {displayWp.path || `~/Pictures/Wallpapers/${displayWp.name}`}
-              </div>
-            </div>
-          )}
-          <hr
-            style={{
-              border: 'none',
-              borderTop: '1px solid var(--m3-outline-variant)',
-            }}
-          />
-
-          {/* 屏幕与渲染设置 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color: 'var(--m3-fg)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <span>⚙️ 屏幕与渲染参数设置</span>
-            </div>
-
-            {/* 目标显示器选择 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--m3-fg-muted)',
-                }}
-              >
-                目标显示器:
-              </span>
-              <div className="m3-seg-box" style={{ width: '100%' }}>
-                <button
-                  className={`m3-seg-btn ${
-                    targetDisplay === 'DP-1' ? 'active' : ''
-                  }`}
-                  style={{ flex: 1 }}
-                  onClick={() => onSetTargetDisplay('DP-1')}
-                >
-                  🖥️ DP-1 (主屏)
-                </button>
-                <button
-                  className={`m3-seg-btn ${
-                    targetDisplay === 'eDP-1' ? 'active' : ''
-                  }`}
-                  style={{ flex: 1 }}
-                  onClick={() => onSetTargetDisplay('eDP-1')}
-                >
-                  💻 eDP-1
-                </button>
-                <button
-                  className={`m3-seg-btn ${
-                    targetDisplay === '*' ? 'active' : ''
-                  }`}
-                  style={{ flex: 1 }}
-                  onClick={() => onSetTargetDisplay('*')}
-                >
-                  🌐 所有屏幕
-                </button>
-              </div>
-            </div>
-
-            {/* 填充方式与缩放 */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1.1fr 1fr',
-                gap: 14,
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: 'var(--m3-fg-muted)',
+        {source === 'wallhaven' && wp.colors && (
+          <Stack direction="row" spacing={1}>
+            {wp.colors.map((c) => (
+              <Tooltip key={c} title={`搜索颜色 ${c}`}>
+                <Box
+                  component="button"
+                  aria-label={`搜索颜色 ${c}`}
+                  onClick={() => {
+                    onClose()
+                    onSearchTag(c)
                   }}
-                >
-                  填充方式 (fit):
-                </span>
-                <div className="m3-select-wrapper">
-                  <select
-                    className="m3-select"
-                    value={fit}
-                    onChange={(e) => setFit(e.target.value)}
-                  >
-                    <option value="fill">fill (比例填满)</option>
-                    <option value="fit">fit (保留加黑边)</option>
-                    <option value="stretch">stretch (拉伸铺满)</option>
-                    <option value="center">center (居中不缩放)</option>
-                    <option value="tile">tile (平铺重复)</option>
-                  </select>
-                  <div className="m3-select-arrow">▼</div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: 11,
-                    fontWeight: 700,
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    p: 0,
+                    borderRadius: '50%',
+                    border: 1,
+                    borderColor: 'divider',
+                    bgcolor: c,
+                    cursor: 'pointer',
                   }}
-                >
-                  <span style={{ color: 'var(--m3-fg-muted)' }}>
-                    缩放 (scale):
-                  </span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="1.0"
-                      max="2.0"
-                      step="0.05"
-                      value={scale.toFixed(2)}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value)
-                        if (!isNaN(v)) setScale(v)
-                      }}
-                    />
-                    <span className="m3-num-badge-unit">x</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="1.0"
-                  max="1.5"
-                  step="0.05"
-                  value={scale}
-                  style={{ background: scaleTrackBg }}
-                  onChange={(e) => setScale(parseFloat(e.target.value))}
                 />
-              </div>
-            </div>
-          </div>
+              </Tooltip>
+            ))}
+          </Stack>
+        )}
 
-          <hr
-            style={{
-              border: 'none',
-              borderTop: '1px solid var(--m3-outline-variant)',
+        {source === 'wallhaven' && wp.tags && wp.tags.length > 0 && (
+          <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.75 }}>
+            {wp.tags.map((t) => (
+              <Chip
+                key={t}
+                label={t}
+                variant="outlined"
+                onClick={() => {
+                  onClose()
+                  onSearchTag(t)
+                }}
+              />
+            ))}
+          </Stack>
+        )}
+
+        {source === 'local' && wp.path && (
+          <Typography
+            variant="body2"
+            sx={{
+              fontFamily: 'monospace',
+              wordBreak: 'break-all',
+              p: 1.5,
+              borderRadius: 2,
+              bgcolor: 'md.surface_container',
+              color: 'text.secondary',
             }}
-          />
-
-          {/* 后期滤镜与色彩调优 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 800,
-                  color: 'var(--m3-fg)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <span>🎨 后期滤镜与色彩调优 (对标 WE)</span>
-              </div>
-              <button
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--m3-accent-purple)',
-                  cursor: 'pointer',
-                }}
-                onClick={resetFilters}
-              >
-                ↺ 重置滤镜
-              </button>
-            </div>
-
-            {/* 预设下拉 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--m3-fg-muted)',
-                }}
-              >
-                选择滤镜预设库:
-              </span>
-              <div className="m3-select-wrapper">
-                <select
-                  className="m3-select"
-                  value={preset}
-                  onChange={(e) => handlePresetChange(e.target.value as PresetKey)}
-                >
-                  {(Object.keys(PRESETS) as PresetKey[]).map((k) => (
-                    <option key={k} value={k}>
-                      {PRESETS[k].label}
-                    </option>
-                  ))}
-                </select>
-                <div className="m3-select-arrow">▼</div>
-              </div>
-            </div>
-
-            {/* 滑块清单 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {/* 亮度 */}
-              <div className="m3-slider-tile">
-                <div className="m3-tile-header">
-                  <span className="m3-tile-label">☀️ 亮度 (Brightness)</span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="50"
-                      max="150"
-                      value={filters.b}
-                      onChange={(e) => handleFilterChange('b', parseFloat(e.target.value) || 100)}
-                    />
-                    <span className="m3-num-badge-unit">%</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="50"
-                  max="150"
-                  value={filters.b}
-                  style={{ background: calcTrackBg(filters.b, 50, 150) }}
-                  onChange={(e) => handleFilterChange('b', parseFloat(e.target.value))}
-                />
-              </div>
-
-              {/* 对比度 */}
-              <div className="m3-slider-tile">
-                <div className="m3-tile-header">
-                  <span className="m3-tile-label">◐ 对比度 (Contrast)</span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="50"
-                      max="160"
-                      value={filters.c}
-                      onChange={(e) => handleFilterChange('c', parseFloat(e.target.value) || 100)}
-                    />
-                    <span className="m3-num-badge-unit">%</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="50"
-                  max="160"
-                  value={filters.c}
-                  style={{ background: calcTrackBg(filters.c, 50, 160) }}
-                  onChange={(e) => handleFilterChange('c', parseFloat(e.target.value))}
-                />
-              </div>
-
-              {/* 饱和度 */}
-              <div className="m3-slider-tile">
-                <div className="m3-tile-header">
-                  <span className="m3-tile-label">🎨 饱和度 (Saturation)</span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="0"
-                      max="220"
-                      value={filters.s}
-                      onChange={(e) => handleFilterChange('s', parseFloat(e.target.value) || 100)}
-                    />
-                    <span className="m3-num-badge-unit">%</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="0"
-                  max="220"
-                  value={filters.s}
-                  style={{ background: calcTrackBg(filters.s, 0, 220) }}
-                  onChange={(e) => handleFilterChange('s', parseFloat(e.target.value))}
-                />
-              </div>
-
-              {/* 色相偏移 */}
-              <div className="m3-slider-tile">
-                <div className="m3-tile-header">
-                  <span className="m3-tile-label">🌈 色相偏移 (Hue Shift)</span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="0"
-                      max="360"
-                      value={filters.h}
-                      onChange={(e) => handleFilterChange('h', parseFloat(e.target.value) || 0)}
-                    />
-                    <span className="m3-num-badge-unit">°</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="0"
-                  max="360"
-                  value={filters.h}
-                  style={{ background: calcTrackBg(filters.h, 0, 360) }}
-                  onChange={(e) => handleFilterChange('h', parseFloat(e.target.value))}
-                />
-              </div>
-
-              {/* 电影暗角 */}
-              <div className="m3-slider-tile">
-                <div className="m3-tile-header">
-                  <span className="m3-tile-label">🔲 电影暗角 (Vignette)</span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={filters.v}
-                      onChange={(e) => handleFilterChange('v', parseFloat(e.target.value) || 0)}
-                    />
-                    <span className="m3-num-badge-unit">%</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="0"
-                  max="100"
-                  value={filters.v}
-                  style={{ background: calcTrackBg(filters.v, 0, 100) }}
-                  onChange={(e) => handleFilterChange('v', parseFloat(e.target.value))}
-                />
-              </div>
-
-              {/* 胶片颗粒 */}
-              <div className="m3-slider-tile">
-                <div className="m3-tile-header">
-                  <span className="m3-tile-label">🎞️ 胶片颗粒 (Film Grain)</span>
-                  <div className="m3-num-badge">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={filters.g}
-                      onChange={(e) => handleFilterChange('g', parseFloat(e.target.value) || 0)}
-                    />
-                    <span className="m3-num-badge-unit">%</span>
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  className="m3-slider"
-                  min="0"
-                  max="100"
-                  value={filters.g}
-                  style={{ background: calcTrackBg(filters.g, 0, 100) }}
-                  onChange={(e) => handleFilterChange('g', parseFloat(e.target.value))}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 底部按钮 */}
-        <div className="drawer-footer">
-          <button
-            className="m3-act-btn"
-            style={{
-              background: 'var(--m3-accent-lime)',
-              color: '#1c192b',
-              height: 50,
-              fontSize: 14,
-              fontWeight: 900,
-              justifyContent: 'center',
-              boxShadow: '0 6px 18px rgba(214, 248, 88, 0.45)',
-              letterSpacing: '0.3px',
-            }}
-            onClick={() => onApply({ fit, scale, filterPreset: preset })}
           >
-            ⚡ 立即设为壁纸 (应用到目标屏)
-          </button>
+            {wp.path}
+          </Typography>
+        )}
 
-          <div style={{ display: 'flex', gap: 10 }}>
-            {source === 'wallhaven' && (
-              <button
-                className="m3-act-btn m3-act-tonal"
-                style={{
-                  flex: 1,
-                  height: 42,
-                  justifyContent: 'center',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  border: '1.5px solid var(--m3-outline-variant)',
-                }}
-                onClick={() => onSaveToLocal(displayWp)}
+        <Divider />
+
+        <Box>
+          <SettingRow
+            label="设置到"
+            description="这张壁纸用在哪个显示器上。"
+            control={<OutputSelect outputs={outputs} value={target} onChange={onTargetChange} />}
+          />
+          <SettingRow
+            label="填充方式"
+            description="壁纸与画布比例不同时的放置方式。"
+            control={
+              <Select
+                size="small"
+                value={fit}
+                onChange={(e) => setPickedFit(e.target.value)}
+                inputProps={{ 'aria-label': '填充方式' }}
+                sx={{ minWidth: 180 }}
               >
-                💾 保存到本地库
-              </button>
-            )}
-            <button
-              className="m3-act-btn m3-act-tonal"
-              style={{
-                flex: 1,
-                height: 42,
-                justifyContent: 'center',
-                fontSize: 13,
-                fontWeight: 700,
-                border: '1.5px solid var(--m3-outline-variant)',
-              }}
-              onClick={() => onAddToPlaylist(displayWp)}
-            >
-              ➕ 加入轮播列表
-            </button>
-          </div>
-        </div>
-      </aside>
-    </>
+                {fits.map((f) => (
+                  <MenuItem key={f} value={f}>
+                    {FIT_LABELS[f] ?? f}
+                  </MenuItem>
+                ))}
+              </Select>
+            }
+          />
+          {wp.kind === 'video' && config.ready && (
+            <SettingRow
+              label="视频帧率上限"
+              description="0 表示使用视频自身的帧率。下次载入视频时生效，对所有视频壁纸有效。"
+              modified={config.isSet('video_fps')}
+              onReset={() => void config.reset('video_fps')}
+              control={
+                <NumberInput
+                  value={config.value<number>('video_fps')}
+                  min={0}
+                  max={240}
+                  step={1}
+                  unit="fps"
+                  onCommit={(v) => void config.set('video_fps', v)}
+                />
+              }
+            />
+          )}
+        </Box>
+      </Stack>
+
+      <Stack spacing={1.25} sx={{ px: 3, py: 2, borderTop: 1, borderColor: 'divider' }}>
+        <Button variant="contained" size="large" onClick={() => onApply({ fit })}>
+          设为壁纸
+        </Button>
+        {source === 'wallhaven' && (
+          <Button variant="contained" color="secondary" onClick={() => onSaveToLocal(wp)}>
+            保存到本地库
+          </Button>
+        )}
+      </Stack>
+    </Stack>
   )
 }

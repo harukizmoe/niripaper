@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { Chip } from '@mui/material'
+import CheckRounded from '@mui/icons-material/CheckRounded'
+import PlayArrowRounded from '@mui/icons-material/PlayArrowRounded'
+import ImageNotSupportedRounded from '@mui/icons-material/ImageNotSupportedRounded'
 import type { WallpaperItem } from '../data/wallpapers'
+import { outputLabel } from '../hooks/useOutputs'
 
 interface WallpaperCardProps {
   wallpaper: WallpaperItem
@@ -21,9 +26,6 @@ interface WallpaperCardProps {
   onMouseLeave: () => void
   onClick: () => void
 }
-
-const FALLBACK_THUMB =
-  'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80'
 
 /// How far outside the scroll viewport a card starts loading. Scrolling one
 /// row takes far more than this, so the next row is always ready before it
@@ -65,6 +67,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   // 优先加载 thumb（静态缩略图或视频提取帧），视频源路径仅用于壁纸应用
   const mediaSource = toMediaSrc(wallpaper.thumb || wallpaper.path || '')
   const [imgSrc, setImgSrc] = useState(mediaSource)
+  const [broken, setBroken] = useState(false)
   // One state, not two. Splitting "the skeleton may go" (`loaded`) from "the
   // entrance may start" (`entering`) let a render land between them: the
   // skeleton was already removed while the image had not begun fading in, so
@@ -83,6 +86,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   useEffect(() => {
     setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
     setPlaced(false)
+    setBroken(false)
   }, [wallpaper.thumb, wallpaper.path])
 
   // Wait for the decoded bitmap, not merely `load`.
@@ -264,9 +268,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           // defer again would only add latency.
           loading="eager"
           decoding="async"
-          onError={() => {
-            setImgSrc(FALLBACK_THUMB)
-          }}
+          onError={() => setBroken(true)}
           // The entrance is scale only. `opacity` is used here purely as an
           // on/off gate for "decoded yet" — it is 0 or 1, never animated, so
           // the image is never shown blended with the card behind it.
@@ -288,32 +290,29 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
 
         <div ref={glareRef} className="card-glare"></div>
 
-        {/* 动态视频标记 */}
-        {wallpaper.kind === 'video' && (
-          <span
-            style={{
-              position: 'absolute',
-              bottom: 8,
-              left: 8,
-              background: 'rgba(0, 0, 0, 0.75)',
-              color: '#fff',
-              fontSize: 10,
-              fontWeight: 800,
-              padding: '2px 8px',
-              borderRadius: 'var(--m3-radius-full)',
-              zIndex: 6,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            ▶ 动态视频 {wallpaper.fps || ''}
-          </span>
+        {broken && (
+          <ImageNotSupportedRounded
+            sx={{ position: 'absolute', inset: 0, m: 'auto', fontSize: 40, color: 'text.secondary', zIndex: 2 }}
+          />
         )}
 
-        {/* 生效中指示器 */}
+        {wallpaper.kind === 'video' && (
+          <Chip
+            size="small"
+            icon={<PlayArrowRounded />}
+            label={wallpaper.fps ? `视频 · ${wallpaper.fps}` : '视频'}
+            sx={{ position: 'absolute', bottom: 8, left: 8, zIndex: 6, bgcolor: 'md.inverse_surface', color: 'md.inverse_on_surface', '& .MuiChip-icon': { color: 'inherit' } }}
+          />
+        )}
+
         {wallpaper.activeOn && (
-          <span className="badge-active">✓ {wallpaper.activeOn}</span>
+          <Chip
+            size="small"
+            color="primary"
+            icon={<CheckRounded />}
+            label={outputLabel(wallpaper.activeOn)}
+            sx={{ position: 'absolute', top: 10, right: 10, zIndex: 6 }}
+          />
         )}
       </div>
     </div>
