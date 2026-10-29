@@ -243,16 +243,28 @@ export function buildTheme(r: Roles, dark: boolean): Theme {
           },
         },
       },
-      MuiSnackbarContent: {
+      MuiAlert: {
         styleOverrides: {
-          root: {
-            backgroundColor: r.inverse_surface,
-            color: r.inverse_on_surface,
-            borderRadius: shape.xs,
-            minWidth: 0,
-          },
-          action: { color: r.inverse_primary },
+          root: { borderRadius: shape.md, padding: '4px 16px', fontSize: 14, alignItems: 'center' },
         },
+        variants: [
+          {
+            props: { severity: 'info', variant: 'filled' },
+            style: {
+              backgroundColor: r.surface_container_highest,
+              color: r.on_surface,
+              '& .MuiAlert-icon': { color: r.primary },
+            },
+          },
+          {
+            props: { severity: 'error', variant: 'filled' },
+            style: {
+              backgroundColor: r.error_container,
+              color: r.on_error_container,
+              '& .MuiAlert-icon': { color: r.error },
+            },
+          },
+        ],
       },
       MuiChip: {
         styleOverrides: {

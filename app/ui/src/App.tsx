@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Box, CssBaseline, Snackbar } from '@mui/material'
+import { Alert, Box, CssBaseline, Snackbar } from '@mui/material'
 import { ThemeProvider } from '@mui/material/styles'
 import { invoke } from './hooks/useDaemon'
 import { Rail, type NavTab } from './components/Rail'
@@ -131,9 +131,15 @@ export default function App() {
   }, [])
 
   // Snackbar. A new message replaces the current one; MUI handles the timeout.
-  const [snackbar, setSnackbar] = useState<{ key: number; message: string } | null>(null)
+  const [snackbar, setSnackbar] = useState<{ key: number; message: string; failed: boolean } | null>(null)
   const showSnackbar = useCallback((message: string) => {
-    setSnackbar({ key: Date.now(), message })
+    // A message that reports a failure is shown as one; a leading emoji from
+    // older call sites is dropped, the icon says what kind of message it is.
+    setSnackbar({
+      key: Date.now(),
+      message: message.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, ''),
+      failed: /失败/.test(message),
+    })
   }, [])
   // 2. 真实调用 Wallhaven API v1 检索壁纸
   const handleSearchWallhaven = useCallback(
@@ -561,11 +567,19 @@ export default function App() {
       <Snackbar
         key={snackbar?.key}
         open={snackbar !== null}
-        message={snackbar?.message}
         autoHideDuration={4000}
         onClose={(_, reason) => reason !== 'clickaway' && setSnackbar(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      />
+      >
+        <Alert
+          severity={snackbar?.failed ? 'error' : 'info'}
+          variant="filled"
+          onClose={() => setSnackbar(null)}
+          sx={{ alignItems: 'center', maxWidth: 560 }}
+        >
+          {snackbar?.message}
+        </Alert>
+      </Snackbar>
     </Box>
     </ThemeProvider>
   )
