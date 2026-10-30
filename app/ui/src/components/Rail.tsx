@@ -11,6 +11,8 @@ import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import SettingsRounded from '@mui/icons-material/SettingsRounded'
 import DarkModeOutlined from '@mui/icons-material/DarkModeOutlined'
 import LightModeOutlined from '@mui/icons-material/LightModeOutlined'
+import BrightnessAutoOutlined from '@mui/icons-material/BrightnessAutoOutlined'
+import type { ThemeMode } from '../App'
 import { shape } from '../theme/mui'
 
 export type NavTab = 'wallpapers' | 'transitions' | 'parallax' | 'settings'
@@ -25,12 +27,13 @@ const DESTINATIONS: { tab: NavTab; label: string; icon: ReactNode; active: React
 interface RailProps {
   currentTab: NavTab
   onTabChange: (tab: NavTab) => void
+  themeMode: ThemeMode
   isDark: boolean
-  onToggleTheme: () => void
+  onCycleTheme: () => void
 }
 
 /// M3 navigation rail: an indicator pill around the icon, the label below it.
-export function Rail({ currentTab, onTabChange, isDark, onToggleTheme }: RailProps) {
+export function Rail({ currentTab, onTabChange, themeMode, isDark, onCycleTheme }: RailProps) {
   return (
     <Box
       component="nav"
@@ -90,9 +93,24 @@ export function Rail({ currentTab, onTabChange, isDark, onToggleTheme }: RailPro
       })}
 
       <Box sx={{ mt: 'auto' }}>
-        <Tooltip title={isDark ? '切换到浅色' : '切换到深色'} placement="right">
-          <IconButton onClick={onToggleTheme} aria-label={isDark ? '切换到浅色' : '切换到深色'}>
-            {isDark ? <LightModeOutlined /> : <DarkModeOutlined />}
+        <Tooltip
+          title={
+            themeMode === 'system'
+              ? `外观：跟随系统（当前${isDark ? '深色' : '浅色'}）`
+              : themeMode === 'light'
+                ? '外观：浅色模式'
+                : '外观：深色模式'
+          }
+          placement="right"
+        >
+          <IconButton onClick={onCycleTheme} aria-label="切换外观模式">
+            {themeMode === 'system' ? (
+              <BrightnessAutoOutlined />
+            ) : isDark ? (
+              <DarkModeOutlined />
+            ) : (
+              <LightModeOutlined />
+            )}
           </IconButton>
         </Tooltip>
       </Box>

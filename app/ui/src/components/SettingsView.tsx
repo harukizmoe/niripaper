@@ -1,11 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Box, Button, IconButton, MenuItem, Select, Switch, Tooltip, Typography } from '@mui/material'
+import {
+  Box,
+  Button,
+  IconButton,
+  MenuItem,
+  Select,
+  Switch,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+  Typography,
+} from '@mui/material'
 import RefreshRounded from '@mui/icons-material/RefreshRounded'
 import { invoke } from '../hooks/useDaemon'
 import { SCHEME_LABELS, SCHEME_NAMES, DEFAULT_SCHEME, type SchemeName } from '../theme/color'
+import type { ThemeMode } from '../App'
 import { SettingRow, SettingsGroup, SettingsPage } from './settings'
 
 interface SettingsViewProps {
+  themeMode: ThemeMode
+  isDark: boolean
+  onThemeModeChange: (mode: ThemeMode) => void
   followWallpaper: boolean
   onToggleFollowWallpaper: () => void
   seedColor: string
@@ -31,6 +46,9 @@ interface DaemonStatusInfo {
 const mono = { fontFamily: '"Roboto Mono", monospace', fontSize: 13 }
 
 export function SettingsView({
+  themeMode,
+  isDark,
+  onThemeModeChange,
   followWallpaper,
   onToggleFollowWallpaper,
   seedColor,
@@ -141,6 +159,30 @@ export function SettingsView({
       </SettingsGroup>
 
       <SettingsGroup title="配色" description="本窗口的界面配色。">
+        <SettingRow
+          label="外观模式"
+          description={
+            themeMode === 'system'
+              ? `跟随系统设置（当前为${isDark ? '深色' : '浅色'}）。`
+              : themeMode === 'light'
+                ? '固定为浅色模式。'
+                : '固定为深色模式。'
+          }
+          modified={themeMode !== 'system'}
+          onReset={() => onThemeModeChange('system')}
+          control={
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={themeMode}
+              onChange={(_, v) => v && onThemeModeChange(v as ThemeMode)}
+            >
+              <ToggleButton value="system">跟随系统</ToggleButton>
+              <ToggleButton value="light">浅色</ToggleButton>
+              <ToggleButton value="dark">深色</ToggleButton>
+            </ToggleButtonGroup>
+          }
+        />
         <SettingRow
           label="从壁纸取色"
           description={

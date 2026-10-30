@@ -40,14 +40,36 @@ async function currentWallpaperPath(): Promise<string | null> {
   }
 }
 
+export type ThemeMode = 'system' | 'light' | 'dark'
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
   const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('local')
-  // Light/dark is remembered; the first run follows the desktop's preference.
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    const saved = localStorage.getItem('niripaper_dark')
-    return saved !== null ? saved === 'true' : matchMedia('(prefers-color-scheme: dark)').matches
+  // Theme mode: system (default), light, or dark.
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('niripaper_theme_mode') as ThemeMode | null
+    if (saved === 'system' || saved === 'light' || saved === 'dark') return saved
+    const oldDark = localStorage.getItem('niripaper_dark')
+    if (oldDark !== null) return oldDark === 'true' ? 'dark' : 'light'
+    return 'system'
   })
+  const [systemDark, setSystemDark] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches
+    }
+    return false
+  })
+
+  // Listen for live system dark/light mode changes.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
+
+  const isDark = themeMode === 'system' ? systemDark : themeMode === 'dark'
   const [followWallpaper, setFollowWallpaper] = useState<boolean>(
     () => localStorage.getItem('niripaper_follow_wallpaper') !== 'false',
   )
@@ -321,11 +343,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleToggleTheme = () => {
-    setIsDark((prev) => {
-      localStorage.setItem('niripaper_dark', String(!prev))
-      return !prev
-    })
+  const handleThemeModeChange = (mode: ThemeMode) => {
+    setThemeMode(mode)
+    localStorage.setItem('niripaper_theme_mode', mode)
+  }
+
+  const handleCycleTheme = () => {
+    const order: ThemeMode[] = ['system', 'light', 'dark']
+    const nextMode = order[(order.indexOf(themeMode) + 1) % order.length]
+    handleThemeModeChange(nextMode)
   }
 
   const handleToggleFollowWallpaper = () => {
@@ -478,8 +504,9 @@ export default function App() {
       <Rail
         currentTab={currentTab}
         onTabChange={handleTabChange}
+        themeMode={themeMode}
         isDark={isDark}
-        onToggleTheme={handleToggleTheme}
+        onCycleTheme={handleCycleTheme}
       />
 
       {/* 右侧工作区 */}
@@ -521,6 +548,9 @@ export default function App() {
 
         {currentTab === 'settings' && (
           <SettingsView
+            themeMode={themeMode}
+            isDark={isDark}
+            onThemeModeChange={handleThemeModeChange}
             followWallpaper={followWallpaper}
             onToggleFollowWallpaper={handleToggleFollowWallpaper}
             seedColor={themeSeed}
