@@ -285,41 +285,6 @@ export function WallpaperView({
           )}
         </Stack>
 
-        {/* Loading starts a few rows before the end, while the list's own bottom
-            is still off screen, so the indicator sticks to the visible bottom. */}
-        {currentSource === 'wallhaven' && whLoading && list.length > 0 && (
-          <Box
-            sx={{
-              position: 'sticky',
-              bottom: 20,
-              height: 0,
-              display: 'flex',
-              justifyContent: 'center',
-              overflow: 'visible',
-              zIndex: 30,
-              pointerEvents: 'none',
-            }}
-          >
-            <Stack
-              direction="row"
-              spacing={1.25}
-              sx={{
-                alignItems: 'center',
-                alignSelf: 'flex-end',
-                px: 2,
-                py: 1,
-                borderRadius: 6,
-                bgcolor: 'md.surface_container_high',
-                color: 'text.primary',
-                boxShadow: 3,
-              }}
-            >
-              <CircularProgress size={18} thickness={5} />
-              <Typography variant="body2">正在加载…</Typography>
-            </Stack>
-          </Box>
-        )}
-
         {scrolledDown && (
           <Fab
             size="medium"
