@@ -81,6 +81,8 @@ pub struct Options {
     pub fit: Fit,
     /// Post-processing wallpaper filter.
     pub filter: crate::config::Filter,
+    /// Wallpaper rotation playlist.
+    pub playlist: crate::config::Playlist,
     /// The command line's per-output overrides, and the configuration they are
     /// resolved against — see [`Options::resolve_output`].
     pub cli: CliOverrides,
@@ -109,6 +111,7 @@ impl Options {
             transition: crate::render::transition::Settings::default(),
             fit: Fit::Fill,
             filter: crate::config::Filter::default(),
+            playlist: crate::config::Playlist::default(),
             cli: CliOverrides::default(),
             config: None,
             trace: false,
@@ -161,6 +164,8 @@ enum Command {
     Set(PathBuf),
     /// What is on screen right now (`query`).
     Query(std::sync::mpsc::Sender<String>),
+    /// Rotate to the next playlist item (`next`).
+    Next(std::sync::mpsc::Sender<String>),
     /// The full snapshot for `state`.
     State(std::sync::mpsc::Sender<serde_json::Value>),
 }
@@ -196,6 +201,7 @@ fn pick<'a>(
 fn named_output(request: &crate::ipc::Request) -> Option<&str> {
     match request {
         crate::ipc::Request::Set { output, .. }
+        | crate::ipc::Request::Next { output }
         | crate::ipc::Request::Query { output }
         | crate::ipc::Request::State { output } => output.as_deref(),
         crate::ipc::Request::Schema | crate::ipc::Request::Kill => None,
@@ -347,6 +353,23 @@ pub fn run(options: &Options, running: Arc<dyn Fn() -> bool + Send + Sync>) -> R
                     "ok".to_owned()
                 } else {
                     format!("error no worker for {}", failed.join(", "))
+                })
+            }
+            crate::ipc::Request::Next { .. } => {
+                let mut lines = Vec::new();
+                for (name, tx) in targets {
+                    let (tx2, rx2) = std::sync::mpsc::channel();
+                    if tx.send(Command::Next(tx2)).is_ok() {
+                        match rx2.recv_timeout(REPLY_TIMEOUT) {
+                            Ok(line) => lines.push(format!("{name}: {line}")),
+                            Err(_) => lines.push(format!("{name}: no reply")),
+                        }
+                    }
+                }
+                Some(if lines.is_empty() {
+                    "error no workers".to_owned()
+                } else {
+                    lines.join("; ")
                 })
             }
             crate::ipc::Request::Query { .. } => {
@@ -535,6 +558,13 @@ fn run_output(
     // What is on screen, which is not always the configured wallpaper: `set`
     // swaps the picture without touching the file.
     let mut shown = media.as_ref().and(options.wallpaper.clone());
+    let mut playlist_index: usize = 0;
+    let mut next_rotation_at: Option<Instant> =
+        if options.playlist.enabled && !options.playlist.items.is_empty() {
+            Some(Instant::now() + Duration::from_secs(options.playlist.interval_mins as u64 * 60))
+        } else {
+            None
+        };
 
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
@@ -687,6 +717,48 @@ fn run_output(
             return Err(format!("poll: {err}"));
         }
 
+        if let Some(target) = next_rotation_at {
+            if Instant::now() >= target
+                && options.playlist.enabled
+                && !options.playlist.items.is_empty()
+            {
+                match options.playlist.order {
+                    crate::config::PlaylistOrder::Rotate => {
+                        playlist_index = (playlist_index + 1) % options.playlist.items.len();
+                    }
+                    crate::config::PlaylistOrder::Random => {
+                        if options.playlist.items.len() > 1 {
+                            let current = playlist_index;
+                            let seed = Instant::now().elapsed().as_nanos() as usize;
+                            let step = 1 + (seed % (options.playlist.items.len() - 1));
+                            playlist_index = (current + step) % options.playlist.items.len();
+                        }
+                    }
+                }
+                let target_path = &options.playlist.items[playlist_index];
+                match switch_wallpaper(
+                    target_path,
+                    canvas,
+                    options.video_fps,
+                    options.fit,
+                    &mut media,
+                    &mut transition,
+                    &pool,
+                    last_slot,
+                    screen,
+                ) {
+                    Ok(()) => {
+                        shown = Some(target_path.clone());
+                        next_rotation_at = Some(
+                            Instant::now()
+                                + Duration::from_secs(options.playlist.interval_mins as u64 * 60),
+                        );
+                    }
+                    Err(err) => log(&format!("playlist {}: {err}", target_path.display())),
+                }
+            }
+        }
+
         if fds[2].revents & libc::POLLIN != 0 {
             if let Some(media) = media.as_mut() {
                 // Decode into our texture; the next frame callback presents it.
@@ -823,6 +895,19 @@ fn run_output(
                     }
                     options.wallpaper = params.wallpaper;
                     options.fit = params.fit;
+                    options.playlist = reloaded.playlist.clone();
+                    if options.playlist.enabled && !options.playlist.items.is_empty() {
+                        if next_rotation_at.is_none() {
+                            next_rotation_at = Some(
+                                Instant::now()
+                                    + Duration::from_secs(
+                                        options.playlist.interval_mins as u64 * 60,
+                                    ),
+                            );
+                        }
+                    } else {
+                        next_rotation_at = None;
+                    }
                     let filter_changed = options.filter != params.filter;
                     options.filter = params.filter;
                     if filter_changed && !frame_pending {
@@ -913,6 +998,55 @@ fn run_output(
                     ) {
                         Ok(()) => shown = Some(path),
                         Err(err) => log(&format!("set {}: {err}", path.display())),
+                    }
+                }
+                Command::Next(reply) => {
+                    if options.playlist.items.is_empty() {
+                        let _ = reply.send("error playlist is empty".to_owned());
+                        continue;
+                    }
+                    match options.playlist.order {
+                        crate::config::PlaylistOrder::Rotate => {
+                            playlist_index = (playlist_index + 1) % options.playlist.items.len();
+                        }
+                        crate::config::PlaylistOrder::Random => {
+                            if options.playlist.items.len() > 1 {
+                                let current = playlist_index;
+                                let seed = Instant::now().elapsed().as_nanos() as usize;
+                                let step = 1 + (seed % (options.playlist.items.len() - 1));
+                                playlist_index = (current + step) % options.playlist.items.len();
+                            }
+                        }
+                    }
+                    let target_path = &options.playlist.items[playlist_index];
+                    match switch_wallpaper(
+                        target_path,
+                        canvas,
+                        options.video_fps,
+                        options.fit,
+                        &mut media,
+                        &mut transition,
+                        &pool,
+                        last_slot,
+                        screen,
+                    ) {
+                        Ok(()) => {
+                            shown = Some(target_path.clone());
+                            next_rotation_at = if options.playlist.enabled {
+                                Some(
+                                    Instant::now()
+                                        + Duration::from_secs(
+                                            options.playlist.interval_mins as u64 * 60,
+                                        ),
+                                )
+                            } else {
+                                None
+                            };
+                            let _ = reply.send(format!("ok {}", target_path.display()));
+                        }
+                        Err(err) => {
+                            let _ = reply.send(format!("error {err}"));
+                        }
                     }
                 }
                 Command::Query(reply) => {

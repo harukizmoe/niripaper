@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Button, Fab, LinearProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import ArrowUpwardRounded from '@mui/icons-material/ArrowUpwardRounded'
+import PlaylistPlayRounded from '@mui/icons-material/PlaylistPlayRounded'
 import type { WallpaperItem } from '../data/wallpapers'
 import { hexToRgb } from '../theme/color'
 import { EVERY_OUTPUT, type OutputInfo } from '../hooks/useOutputs'
@@ -10,6 +11,7 @@ import { WallhavenControls } from './WallhavenControls'
 import { DEFAULT_FILTERS, type WallhavenFilters } from './wallhavenFilters'
 import { MasonryGrid } from './MasonryGrid'
 import { WallpaperCard } from './WallpaperCard'
+import { PlaylistDialog } from './PlaylistDialog'
 
 export interface WallhavenQuery {
   q?: string
@@ -46,6 +48,7 @@ interface WallpaperViewProps {
   whFailed?: boolean
   enableBlur?: boolean
   lazyLoad?: boolean
+  onNotify?: (msg: string) => void
 }
 
 /// How far down the "back to top" button appears.
@@ -97,6 +100,7 @@ export function WallpaperView({
   whFailed = false,
   enableBlur = true,
   lazyLoad = true,
+  onNotify,
 }: WallpaperViewProps) {
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null)
   // `filters` is what the list on screen was searched with; `draft` is what is
@@ -105,6 +109,7 @@ export function WallpaperView({
   const [draft, setDraft] = useState('')
   const [localFilter, setLocalFilter] = useState<LocalFilter>('all')
   const [scrolledDown, setScrolledDown] = useState(false)
+  const [playlistOpen, setPlaylistOpen] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const gridWrapRef = useRef<HTMLDivElement>(null)
@@ -154,7 +159,7 @@ export function WallpaperView({
 
   return (
     <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <Stack direction="row" sx={{ alignItems: 'center', px: 3.5, py: 2 }}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'center', px: 3.5, py: 2 }}>
         <ToggleButtonGroup
           exclusive
           size="small"
@@ -164,9 +169,17 @@ export function WallpaperView({
           <ToggleButton value="local">本地 · {localList.length}</ToggleButton>
           <ToggleButton value="wallhaven">Wallhaven</ToggleButton>
         </ToggleButtonGroup>
-        <Box sx={{ ml: 'auto' }}>
+        <Stack direction="row" spacing={1.5} sx={{ ml: 'auto', alignItems: 'center' }}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<PlaylistPlayRounded />}
+            onClick={() => setPlaylistOpen(true)}
+          >
+            壁纸轮播
+          </Button>
           <OutputSelect outputs={outputs} value={target} onChange={onTargetChange} />
-        </Box>
+        </Stack>
       </Stack>
 
       {currentSource === 'wallhaven' ? (
@@ -267,6 +280,12 @@ export function WallpaperView({
           </Fab>
         )}
       </Box>
+
+      <PlaylistDialog
+        open={playlistOpen}
+        onClose={() => setPlaylistOpen(false)}
+        onNotify={onNotify ?? (() => {})}
+      />
     </Box>
   )
 }

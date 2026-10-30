@@ -118,6 +118,22 @@ function DrawerBody({
 
   const cssFilter = `brightness(${brightness}) contrast(${contrast}) saturate(${saturation}) hue-rotate(${hue}deg)`
 
+  const playlistItems = config.value<string[]>('playlist.items') ?? []
+  const currentPath = wp.path || ''
+  const inPlaylist = currentPath ? playlistItems.includes(currentPath) : false
+
+  const togglePlaylist = () => {
+    if (!currentPath) {
+      onNotify('无法加入轮播：当前壁纸无本地文件，请先保存到本地')
+      return
+    }
+    const nextItems = inPlaylist
+      ? playlistItems.filter((p) => p !== currentPath)
+      : [...playlistItems, currentPath]
+    void config.set('playlist.items', nextItems)
+    onNotify(inPlaylist ? '已从轮播列表中移出' : '已加入轮播列表')
+  }
+
   return (
     <Stack sx={{ height: '100%' }}>
       <Stack direction="row" sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 1.5 }}>
@@ -409,6 +425,11 @@ function DrawerBody({
         <Button variant="contained" size="large" onClick={() => onApply({ fit })}>
           设为壁纸
         </Button>
+        {currentPath && (
+          <Button variant="outlined" onClick={togglePlaylist}>
+            {inPlaylist ? '从轮播列表中移出' : '加入轮播列表'}
+          </Button>
+        )}
         {source === 'wallhaven' && (
           <Button variant="contained" color="secondary" onClick={() => onSaveToLocal(wp)}>
             保存到本地库

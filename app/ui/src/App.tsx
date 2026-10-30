@@ -535,6 +535,7 @@ export default function App() {
             whHasMore={whHasMore}
             localLoading={localLoading}
             whFailed={whFailed}
+            onNotify={showSnackbar}
           />
         )}
 

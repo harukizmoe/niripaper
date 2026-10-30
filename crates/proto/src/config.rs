@@ -77,6 +77,8 @@ pub struct Config {
     pub fit: Fit,
     /// Post-processing wallpaper filter.
     pub filter: Filter,
+    /// Wallpaper rotation playlist.
+    pub playlist: Playlist,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
     /// The transition when the wallpaper changes.
@@ -98,6 +100,7 @@ impl Default for Config {
             namespace: DEFAULT_NAMESPACE.to_owned(),
             fit: Fit::Fill,
             filter: Filter::default(),
+            playlist: Playlist::default(),
             animations: Animations::default(),
             transition: Settings::default(),
             wallpaper: None,
@@ -185,6 +188,55 @@ impl Filter {
             || self.hue.abs() > 0.001
             || self.vignette > 0.001
             || self.grain > 0.001
+    }
+}
+
+/// The order in which playlist wallpapers are rotated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistOrder {
+    #[default]
+    Rotate,
+    Random,
+}
+
+impl PlaylistOrder {
+    pub const NAMES: [&'static str; 2] = ["rotate", "random"];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Rotate => "rotate",
+            Self::Random => "random",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "rotate" => Ok(Self::Rotate),
+            "random" => Ok(Self::Random),
+            other => Err(format!("unknown order {other}, expected rotate or random")),
+        }
+    }
+}
+
+/// Wallpaper rotation playlist configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Playlist {
+    pub enabled: bool,
+    pub interval_mins: u32,
+    pub order: PlaylistOrder,
+    pub items: Vec<PathBuf>,
+}
+
+impl Default for Playlist {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_mins: 15,
+            order: PlaylistOrder::Rotate,
+            items: Vec::new(),
+        }
     }
 }
 
@@ -347,6 +399,7 @@ impl Config {
             config.fit = Fit::parse(fit).map_err(|e| format!("fit: {e}"))?;
         }
         config.filter = resolve_filter(&raw.filter)?;
+        config.playlist = resolve_playlist(&raw.playlist)?;
         // The global `off` is an animation switch, and the wallpaper transition
         // is an animation: turning everything off has to turn this off too.
         config.transition =
@@ -891,6 +944,42 @@ fn resolve_filter(raw: &Option<RawFilter>) -> Result<Filter, String> {
     Ok(filter)
 }
 
+fn resolve_playlist(raw: &Option<RawPlaylist>) -> Result<Playlist, String> {
+    let mut playlist = Playlist::default();
+    if let Some(raw) = raw {
+        if let Some(enabled) = raw.enabled {
+            playlist.enabled = enabled;
+        }
+        if let Some(mins) = raw.interval_mins {
+            if mins == 0 || mins > 1440 {
+                return Err("playlist.interval_mins must be between 1 and 1440".to_owned());
+            }
+            playlist.interval_mins = mins;
+        }
+        if let Some(order) = &raw.order {
+            playlist.order =
+                PlaylistOrder::parse(order).map_err(|e| format!("playlist.order: {e}"))?;
+        }
+        if let Some(items) = &raw.items {
+            playlist.items = items
+                .iter()
+                .map(|p| check_wallpaper("playlist.items", p.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+    }
+    Ok(playlist)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPlaylist {
+    enabled: Option<bool>,
+    interval_mins: Option<u32>,
+    order: Option<String>,
+    #[serde(default)]
+    items: Option<Vec<PathBuf>>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFilter {
@@ -922,6 +1011,7 @@ struct RawConfig {
     namespace: Option<String>,
     fit: Option<String>,
     filter: Option<RawFilter>,
+    playlist: Option<RawPlaylist>,
     #[serde(default)]
     animations: RawAnimations,
     #[serde(default)]
@@ -962,6 +1052,12 @@ mod tests {
             vignette = 0.3
             grain = 0.15
 
+            [playlist]
+            enabled = true
+            interval_mins = 30
+            order = "random"
+            items = ["/etc/os-release", "/etc/hostname"]
+
             [animations.parallax]
             duration_ms = 250
             curve = "ease-out-expo"
@@ -988,6 +1084,10 @@ mod tests {
         assert_eq!(config.filter.hue, 45.0);
         assert_eq!(config.filter.vignette, 0.3);
         assert_eq!(config.filter.grain, 0.15);
+        assert!(config.playlist.enabled);
+        assert_eq!(config.playlist.interval_mins, 30);
+        assert_eq!(config.playlist.order, PlaylistOrder::Random);
+        assert_eq!(config.playlist.items.len(), 2);
         assert_eq!(
             config.wallpaper.as_deref(),
             Some(Path::new("/etc/os-release"))

@@ -116,6 +116,18 @@ pub fn config_values(
     put("filter.hue", json!(filter.hue));
     put("filter.vignette", json!(filter.vignette));
     put("filter.grain", json!(filter.grain));
+    let playlist = &config.playlist;
+    put("playlist.enabled", json!(playlist.enabled));
+    put("playlist.interval_mins", json!(playlist.interval_mins));
+    put("playlist.order", json!(playlist.order.name()));
+    put(
+        "playlist.items",
+        json!(playlist
+            .items
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()),
+    );
     let animations = &config.animations;
     put("animations.follow_niri", json!(animations.follow_niri));
     put("animations.off", json!(animations.off));

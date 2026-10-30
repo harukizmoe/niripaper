@@ -43,6 +43,8 @@ pub enum Kind {
     },
     /// A path on disk.
     Path,
+    /// A list of paths on disk.
+    Paths,
     /// A free-form string.
     Text,
     /// One of `options`.
@@ -236,6 +238,48 @@ pub fn keys() -> Vec<Key> {
             unit: None,
             hot: true,
             about: "Post-processing film grain intensity (0 = none).",
+        },
+        Key {
+            name: "playlist.enabled",
+            kind: Kind::Bool,
+            default: json!(config.playlist.enabled),
+            unit: None,
+            hot: true,
+            about: "Whether automatic wallpaper playlist rotation is enabled.",
+        },
+        Key {
+            name: "playlist.interval_mins",
+            kind: Kind::Int {
+                min: 1,
+                max: Some(1440),
+            },
+            default: json!(config.playlist.interval_mins),
+            unit: Some("分钟"),
+            hot: true,
+            about: "Interval between wallpaper rotations, in minutes.",
+        },
+        Key {
+            name: "playlist.order",
+            kind: Kind::Enum {
+                options: names(&crate::config::PlaylistOrder::NAMES),
+            },
+            default: json!(config.playlist.order.name()),
+            unit: None,
+            hot: true,
+            about: "Rotation order: sequential (rotate) or randomized (random).",
+        },
+        Key {
+            name: "playlist.items",
+            kind: Kind::Paths,
+            default: json!(config
+                .playlist
+                .items
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()),
+            unit: None,
+            hot: true,
+            about: "List of wallpaper paths in the rotation playlist.",
         },
         Key {
             name: "animations.follow_niri",

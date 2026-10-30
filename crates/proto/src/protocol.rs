@@ -33,6 +33,10 @@ pub enum Request {
     Query {
         output: Option<String>,
     },
+    /// `next [<output>]` — rotate to the next playlist item.
+    Next {
+        output: Option<String>,
+    },
     /// The configuration's shape, so a panel never hardcodes a key name.
     Schema,
     /// Everything the daemon is doing: effective config, wallpaper, position.
@@ -78,6 +82,9 @@ impl Request {
                 })
             }
             "query" => Ok(Self::Query {
+                output: parts.next().and_then(output_name),
+            }),
+            "next" => Ok(Self::Next {
                 output: parts.next().and_then(output_name),
             }),
             "schema" => Ok(Self::Schema),

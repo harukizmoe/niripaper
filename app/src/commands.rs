@@ -51,6 +51,15 @@ pub fn daemon_set(
     })
 }
 
+/// Switch to the next wallpaper in the playlist.
+#[tauri::command]
+pub fn daemon_next(
+    connection: State<'_, Connection>,
+    output: Option<String>,
+) -> Result<String, String> {
+    connection.send(&Request::Next { output })
+}
+
 /// Shut the daemon down. Returns the daemon's reply. When stopped, the Wayland
 /// layer surface is destroyed and the desktop immediately reveals Noctalia.
 #[tauri::command]

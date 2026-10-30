@@ -16,6 +16,7 @@ export type Kind =
   | { type: 'int'; min: number; max: number | null }
   | { type: 'float'; min: number; max: number | null }
   | { type: 'path' }
+  | { type: 'paths' }
   | { type: 'text' }
   | { type: 'enum'; options: string[] }
   | { type: 'multi_enum'; options: string[] }

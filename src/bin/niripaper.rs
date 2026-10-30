@@ -54,6 +54,7 @@ fn main() -> ExitCode {
         "daemon" => daemon_command(&rest),
         "watch" => watch(&rest),
         "set" => control("set", &rest),
+        "next" => control("next", &rest),
         "query" => control("query", &rest),
         "schema" => control("schema", &rest),
         "state" => control("state", &rest),
@@ -138,6 +139,7 @@ fn usage() {
          \x20 watch [--output NAME]   print the parallax target as niri's layout changes\n\
          \n\
          \x20 set PATH [--output NAME] [--socket PATH]   switch the running daemon's wallpaper\n\
+         \x20 next     [--output NAME] [--socket PATH]   rotate to the next playlist wallpaper\n\
          \x20 query    [--output NAME] [--socket PATH]   what is on screen right now\n\
          \x20 schema   [--output NAME] [--socket PATH]   every config key a UI can offer (JSON)\n\
          \x20 state    [--output NAME] [--socket PATH]   what the daemon is doing right now (JSON)\n\
@@ -378,6 +380,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
 fn apply_config_only_settings(options: &mut Options, config: &Config) {
     options.animations = config.animations.clone();
     options.transition = config.transition.clone();
+    options.playlist = config.playlist.clone();
 }
 
 #[cfg(test)]
