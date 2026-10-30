@@ -207,6 +207,28 @@ pub fn keys() -> Vec<Key> {
             about: "Post-processing saturation multiplier (0 = grayscale).",
         },
         Key {
+            name: "filter.vibrance",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(2.0),
+            },
+            default: json!(config.filter.vibrance),
+            unit: Some("×"),
+            hot: true,
+            about: "Smart natural saturation preserving highlights and skin tones.",
+        },
+        Key {
+            name: "filter.temperature",
+            kind: Kind::Float {
+                min: -1.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.temperature),
+            unit: None,
+            hot: true,
+            about: "Color temperature: cool/blue (-1) to warm/golden (+1).",
+        },
+        Key {
             name: "filter.hue",
             kind: Kind::Float {
                 min: 0.0,
@@ -238,6 +260,17 @@ pub fn keys() -> Vec<Key> {
             unit: None,
             hot: true,
             about: "Post-processing film grain intensity (0 = none).",
+        },
+        Key {
+            name: "filter.aberration",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.aberration),
+            unit: None,
+            hot: true,
+            about: "Chromatic aberration optical lens dispersion at screen edges.",
         },
         Key {
             name: "playlist.enabled",

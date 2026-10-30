@@ -162,9 +162,12 @@ pub struct Filter {
     pub brightness: f32,
     pub contrast: f32,
     pub saturation: f32,
+    pub vibrance: f32,
+    pub temperature: f32,
     pub hue: f32,
     pub vignette: f32,
     pub grain: f32,
+    pub aberration: f32,
 }
 
 impl Default for Filter {
@@ -173,9 +176,12 @@ impl Default for Filter {
             brightness: 1.0,
             contrast: 1.0,
             saturation: 1.0,
+            vibrance: 1.0,
+            temperature: 0.0,
             hue: 0.0,
             vignette: 0.0,
             grain: 0.0,
+            aberration: 0.0,
         }
     }
 }
@@ -185,9 +191,12 @@ impl Filter {
         (self.brightness - 1.0).abs() > 0.001
             || (self.contrast - 1.0).abs() > 0.001
             || (self.saturation - 1.0).abs() > 0.001
+            || (self.vibrance - 1.0).abs() > 0.001
+            || self.temperature.abs() > 0.001
             || self.hue.abs() > 0.001
             || self.vignette > 0.001
             || self.grain > 0.001
+            || self.aberration > 0.001
     }
 }
 
@@ -897,6 +906,18 @@ fn validate_filter(filter: &Filter) -> Result<(), String> {
             filter.saturation
         ));
     }
+    if !(0.0..=3.0).contains(&filter.vibrance) {
+        return Err(format!(
+            "filter.vibrance must be between 0.0 and 3.0, got {}",
+            filter.vibrance
+        ));
+    }
+    if !(-1.0..=1.0).contains(&filter.temperature) {
+        return Err(format!(
+            "filter.temperature must be between -1.0 and 1.0, got {}",
+            filter.temperature
+        ));
+    }
     if !(0.0..=360.0).contains(&filter.hue) {
         return Err(format!(
             "filter.hue must be between 0.0 and 360.0, got {}",
@@ -915,6 +936,12 @@ fn validate_filter(filter: &Filter) -> Result<(), String> {
             filter.grain
         ));
     }
+    if !(0.0..=1.0).contains(&filter.aberration) {
+        return Err(format!(
+            "filter.aberration must be between 0.0 and 1.0, got {}",
+            filter.aberration
+        ));
+    }
     Ok(())
 }
 
@@ -930,6 +957,12 @@ fn resolve_filter(raw: &Option<RawFilter>) -> Result<Filter, String> {
         if let Some(v) = raw.saturation {
             filter.saturation = v;
         }
+        if let Some(v) = raw.vibrance {
+            filter.vibrance = v;
+        }
+        if let Some(v) = raw.temperature {
+            filter.temperature = v;
+        }
         if let Some(v) = raw.hue {
             filter.hue = v;
         }
@@ -938,6 +971,9 @@ fn resolve_filter(raw: &Option<RawFilter>) -> Result<Filter, String> {
         }
         if let Some(v) = raw.grain {
             filter.grain = v;
+        }
+        if let Some(v) = raw.aberration {
+            filter.aberration = v;
         }
     }
     validate_filter(&filter)?;
@@ -986,9 +1022,12 @@ struct RawFilter {
     brightness: Option<f32>,
     contrast: Option<f32>,
     saturation: Option<f32>,
+    vibrance: Option<f32>,
+    temperature: Option<f32>,
     hue: Option<f32>,
     vignette: Option<f32>,
     grain: Option<f32>,
+    aberration: Option<f32>,
 }
 
 /// The overview transition: an animation block plus its target zoom.

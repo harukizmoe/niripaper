@@ -348,9 +348,12 @@ struct Uniforms {
     brightness: i32,
     contrast: i32,
     saturation: i32,
+    vibrance: i32,
+    temperature: i32,
     hue: i32,
     vignette: i32,
     grain: i32,
+    aberration: i32,
 }
 
 /// What the shader needs to blend the previous frame in.
@@ -427,9 +430,12 @@ impl Renderer {
             brightness: uniform(program, "u_brightness"),
             contrast: uniform(program, "u_contrast"),
             saturation: uniform(program, "u_saturation"),
+            vibrance: uniform(program, "u_vibrance"),
+            temperature: uniform(program, "u_temperature"),
             hue: uniform(program, "u_hue"),
             vignette: uniform(program, "u_vignette"),
             grain: uniform(program, "u_grain"),
+            aberration: uniform(program, "u_aberration"),
         };
         Ok(Self {
             program,
@@ -462,9 +468,12 @@ impl Renderer {
                 glUniform1f(self.uniforms.brightness, filter.brightness);
                 glUniform1f(self.uniforms.contrast, filter.contrast);
                 glUniform1f(self.uniforms.saturation, filter.saturation);
+                glUniform1f(self.uniforms.vibrance, filter.vibrance);
+                glUniform1f(self.uniforms.temperature, filter.temperature);
                 glUniform1f(self.uniforms.hue, filter.hue);
                 glUniform1f(self.uniforms.vignette, filter.vignette);
                 glUniform1f(self.uniforms.grain, filter.grain);
+                glUniform1f(self.uniforms.aberration, filter.aberration);
             }
             match content {
                 Content::Wallpaper(texture) => {
@@ -556,9 +565,12 @@ uniform int u_filter_enabled;
 uniform float u_brightness;
 uniform float u_contrast;
 uniform float u_saturation;
+uniform float u_vibrance;
+uniform float u_temperature;
 uniform float u_hue;
 uniform float u_vignette;
 uniform float u_grain;
+uniform float u_aberration;
 out vec4 color;
 
 float hash(vec2 p) {
@@ -566,6 +578,21 @@ float hash(vec2 p) {
 }
 
 vec3 apply_filter(vec3 col, vec2 screen_uv, float aspect) {
+    // 1. Exposure / Brightness (soft exponential exposure)
+    if (abs(u_brightness - 1.0) > 0.001) {
+        float exposure = pow(2.0, (u_brightness - 1.0) * 1.5);
+        col = col * exposure;
+    }
+
+    // 2. White Balance / Temperature (cool teal -1.0 to warm golden +1.0)
+    if (abs(u_temperature) > 0.001) {
+        vec3 warm_tint = vec3(1.12, 1.03, 0.88);
+        vec3 cool_tint = vec3(0.88, 1.02, 1.14);
+        vec3 tint = mix(cool_tint, warm_tint, u_temperature * 0.5 + 0.5);
+        col = col * tint;
+    }
+
+    // 3. Hue rotation (luminance-preserving)
     if (abs(u_hue) > 0.001) {
         float angle = radians(u_hue);
         float cosA = cos(angle);
@@ -577,26 +604,45 @@ vec3 apply_filter(vec3 col, vec2 screen_uv, float aspect) {
         );
         col = clamp(hueMat * col, 0.0, 1.0);
     }
+
+    // 4. Vibrance & Saturation
+    float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
     if (abs(u_saturation - 1.0) > 0.001) {
-        float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
-        col = clamp(mix(vec3(luma), col, u_saturation), 0.0, 1.0);
+        col = mix(vec3(luma), col, u_saturation);
     }
-    if (abs(u_brightness - 1.0) > 0.001) {
-        col = clamp(col * u_brightness, 0.0, 1.0);
+    if (abs(u_vibrance - 1.0) > 0.001) {
+        float max_c = max(col.r, max(col.g, col.b));
+        float min_c = min(col.r, min(col.g, col.b));
+        float sat = max_c - min_c;
+        float factor = (1.0 - sat) * (u_vibrance - 1.0);
+        col = mix(vec3(luma), col, max(0.0, 1.0 + factor));
     }
+
+    // 5. Filmic S-curve Contrast (preserves shadow and highlight detail)
     if (abs(u_contrast - 1.0) > 0.001) {
-        col = clamp((col - 0.5) * u_contrast + 0.5, 0.0, 1.0);
+        vec3 c_c = clamp(col, 0.001, 0.999);
+        float k = u_contrast;
+        vec3 s_curve = pow(c_c, vec3(k)) / (pow(c_c, vec3(k)) + pow(1.0 - c_c, vec3(k)));
+        col = clamp(s_curve, 0.0, 1.0);
     }
+
+    // 6. Natural Vignette (quadratic cosine falloff from center)
     if (u_vignette > 0.001) {
         vec2 p = (screen_uv - vec2(0.5)) * vec2(aspect, 1.0);
         float dist = length(p);
-        float vig = 1.0 - smoothstep(0.4, 0.9, dist) * u_vignette;
-        col = col * clamp(vig, 0.0, 1.0);
+        float vig = clamp(1.0 - smoothstep(0.45, 1.05, dist) * u_vignette, 0.0, 1.0);
+        col = col * vig;
     }
+
+    // 7. Organic Film Grain (midtone-weighted organic film noise)
     if (u_grain > 0.001) {
-        float noise = (hash(screen_uv * u_screen) - 0.5) * u_grain * 0.15;
-        col = clamp(col + vec3(noise), 0.0, 1.0);
+        float grain_luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        float weight = 1.0 - abs(grain_luma - 0.45) * 1.5;
+        weight = max(0.2, weight);
+        float noise = (hash(screen_uv * u_screen) - 0.5) * 2.0;
+        col = clamp(col + vec3(noise * u_grain * 0.06 * weight), 0.0, 1.0);
     }
+
     return col;
 }
 
@@ -727,9 +773,19 @@ void main() {
 
     vec3 base;
     if (u_has_wallpaper == 1) {
-        // The texture is already canvas-sized and cover-cropped, so this is a
-        // straight 1:1 lookup.
-        base = texture(u_wallpaper, new_c).rgb;
+        if (u_filter_enabled == 1 && u_aberration > 0.001) {
+            vec2 dir = uv - vec2(0.5);
+            float d2 = dot(dir, dir);
+            vec2 offset = dir * d2 * u_aberration * 0.015 * u_scale;
+            float r = texture(u_wallpaper, new_c + offset).r;
+            float g = texture(u_wallpaper, new_c).g;
+            float b = texture(u_wallpaper, new_c - offset).b;
+            base = vec3(r, g, b);
+        } else {
+            // The texture is already canvas-sized and cover-cropped, so this is a
+            // straight 1:1 lookup.
+            base = texture(u_wallpaper, new_c).rgb;
+        }
     } else if (u_pattern == 1) {
         vec2 cell = floor(new_c * vec2(96.0, 54.0));
         float h = hash(cell);

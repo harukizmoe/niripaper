@@ -25,6 +25,9 @@ export function ParallaxView({ onNotify }: { onNotify: (msg: string) => void }) 
 function Settings({ config: c }: { config: Config }) {
   const parallax = c.value<boolean>('parallax') ?? true
   const scale = c.value<number>('scale')
+  // A scale of 1 leaves no room to move: the switch reads "on" but nothing
+  // moves. Older builds wrote exactly that to mean "off", so say so.
+  const stuck = parallax && scale <= 1.01
   const overviewZoom = c.value<number>('animations.overview-open-close.zoom') ?? 0.96
   const overviewEnabled = overviewZoom < 0.999
   const followNiri = c.value<boolean>('animations.follow_niri')
@@ -53,20 +56,29 @@ function Settings({ config: c }: { config: Config }) {
           control={
             <Switch
               checked={parallax}
-              onChange={() => void c.set('parallax', !parallax)}
+              onChange={() => {
+                const next = !parallax
+                // Turning it on with no room to move would look broken.
+                if (next && scale <= 1.01) void c.reset('scale')
+                void c.set('parallax', next)
+              }}
             />
           }
         />
         <SettingRow
           label="移动幅度"
-          description="壁纸放大的倍数。越大能移动得越远，四周裁掉的也越多。"
+          description={
+            stuck
+              ? '当前为 1×，壁纸没有可移动的余量，视差不会生效。拖动滑块或恢复默认。'
+              : '壁纸放大的倍数。越大能移动得越远，四周裁掉的也越多。'
+          }
           disabled={!parallax}
           modified={c.isSet('scale')}
           onReset={() => void c.reset('scale')}
         >
           <SliderField
             value={scale}
-            min={1.01}
+            min={1.05}
             max={1.35}
             step={0.01}
             unit="×"

@@ -113,9 +113,12 @@ pub fn config_values(
     put("filter.brightness", json!(filter.brightness));
     put("filter.contrast", json!(filter.contrast));
     put("filter.saturation", json!(filter.saturation));
+    put("filter.vibrance", json!(filter.vibrance));
+    put("filter.temperature", json!(filter.temperature));
     put("filter.hue", json!(filter.hue));
     put("filter.vignette", json!(filter.vignette));
     put("filter.grain", json!(filter.grain));
+    put("filter.aberration", json!(filter.aberration));
     let playlist = &config.playlist;
     put("playlist.enabled", json!(playlist.enabled));
     put("playlist.interval_mins", json!(playlist.interval_mins));
