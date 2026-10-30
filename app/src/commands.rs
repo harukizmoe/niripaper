@@ -900,7 +900,7 @@ fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
 }
 
 /// Wallhaven API search query parameters (matching Noctalia's official plugin).
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, Debug, Clone)]
 pub struct WallhavenQueryParams {
     pub q: Option<String>,
     pub categories: Option<String>,
@@ -952,8 +952,55 @@ pub async fn search_wallhaven(
         .map_err(|e| format!("检索线程异常: {e}"))?
 }
 
+/// The API's page size is fixed at 24 and `per_page` is ignored, so a batch is
+/// several pages asked for at once. Two pages ≈ 48 cards per scroll step.
+const PAGES_PER_BATCH: u32 = 2;
+
+/// One batch: pages `first`, `first + 1`, … up to [`PAGES_PER_BATCH`], fetched
+/// concurrently. The result reports the *last* page fetched, so the caller's
+/// "next page" is `current_page + 1`.
 fn search_wallhaven_blocking(
     params: WallhavenQueryParams,
+) -> Result<WallhavenSearchResult, String> {
+    let first_page = params.page.unwrap_or(1);
+    // The rest of the batch goes out alongside the first page, so a batch costs
+    // one request's latency rather than one per page.
+    let rest: Vec<_> = (1..PAGES_PER_BATCH)
+        .map(|offset| {
+            let params = params.clone();
+            std::thread::spawn(move || fetch_search_page(&params, first_page + offset))
+        })
+        .collect();
+
+    let WallhavenSearchResult {
+        wallpapers: mut items,
+        mut current_page,
+        mut last_page,
+        total,
+    } = fetch_search_page(&params, first_page)?;
+
+    for (offset, handle) in rest.into_iter().enumerate() {
+        // A page past the end answers 400: that is "no more", not a failure.
+        let Ok(Ok(next)) = handle.join() else { break };
+        if next.current_page != first_page + offset as u32 + 1 {
+            break;
+        }
+        items.extend(next.wallpapers);
+        current_page = next.current_page;
+        last_page = next.last_page;
+    }
+
+    Ok(WallhavenSearchResult {
+        wallpapers: items,
+        current_page,
+        last_page,
+        total,
+    })
+}
+
+fn fetch_search_page(
+    params: &WallhavenQueryParams,
+    page: u32,
 ) -> Result<WallhavenSearchResult, String> {
     let mut query_parts = Vec::new();
 
@@ -972,7 +1019,6 @@ fn search_wallhaven_blocking(
     if let Some(order) = params.order.as_deref() {
         query_parts.push(format!("order={order}"));
     }
-    let page = params.page.unwrap_or(1);
     query_parts.push(format!("page={page}"));
 
     if let Some(ratios) = params.ratios.as_deref().filter(|s| !s.is_empty()) {

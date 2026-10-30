@@ -186,7 +186,9 @@ export default function App() {
           return [...prev, ...items.filter((w) => !seen.has(w.id))]
         })
         setWhHasMore(items.length > 0 && res.current_page < res.last_page)
-        whLast.current = { params, page }
+        // The daemon fetches a whole batch of pages, so the next "load more"
+        // starts after the last page it actually returned.
+        whLast.current = { params, page: res.current_page ?? page }
       } catch (e) {
         if (id !== whRequest.current) return
         console.warn('检索 Wallhaven 失败:', e)
