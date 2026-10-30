@@ -722,19 +722,12 @@ fn run_output(
                 && options.playlist.enabled
                 && !options.playlist.items.is_empty()
             {
-                match options.playlist.order {
-                    crate::config::PlaylistOrder::Rotate => {
-                        playlist_index = (playlist_index + 1) % options.playlist.items.len();
-                    }
-                    crate::config::PlaylistOrder::Random => {
-                        if options.playlist.items.len() > 1 {
-                            let current = playlist_index;
-                            let seed = Instant::now().elapsed().as_nanos() as usize;
-                            let step = 1 + (seed % (options.playlist.items.len() - 1));
-                            playlist_index = (current + step) % options.playlist.items.len();
-                        }
-                    }
-                }
+                playlist_index = next_playlist_index(
+                    playlist_index,
+                    options.playlist.items.len(),
+                    options.playlist.order,
+                    entropy(),
+                );
                 let target_path = &options.playlist.items[playlist_index];
                 match switch_wallpaper(
                     target_path,
@@ -1005,19 +998,12 @@ fn run_output(
                         let _ = reply.send("error playlist is empty".to_owned());
                         continue;
                     }
-                    match options.playlist.order {
-                        crate::config::PlaylistOrder::Rotate => {
-                            playlist_index = (playlist_index + 1) % options.playlist.items.len();
-                        }
-                        crate::config::PlaylistOrder::Random => {
-                            if options.playlist.items.len() > 1 {
-                                let current = playlist_index;
-                                let seed = Instant::now().elapsed().as_nanos() as usize;
-                                let step = 1 + (seed % (options.playlist.items.len() - 1));
-                                playlist_index = (current + step) % options.playlist.items.len();
-                            }
-                        }
-                    }
+                    playlist_index = next_playlist_index(
+                        playlist_index,
+                        options.playlist.items.len(),
+                        options.playlist.order,
+                        entropy(),
+                    );
                     let target_path = &options.playlist.items[playlist_index];
                     match switch_wallpaper(
                         target_path,
@@ -1333,9 +1319,73 @@ fn log(message: &str) {
     let _ = out.flush();
 }
 
+/// Which playlist entry comes after `current`.
+///
+/// `current` may be stale: a config reload can shorten the list under it, so it
+/// is reduced first. Random never repeats the entry on screen (unless there is
+/// only one). `entropy` is a parameter so the choice can be tested.
+fn next_playlist_index(
+    current: usize,
+    len: usize,
+    order: crate::config::PlaylistOrder,
+    entropy: u64,
+) -> usize {
+    if len <= 1 {
+        return 0;
+    }
+    let current = current % len;
+    match order {
+        crate::config::PlaylistOrder::Rotate => (current + 1) % len,
+        crate::config::PlaylistOrder::Random => {
+            (current + 1 + (entropy % (len as u64 - 1)) as usize) % len
+        }
+    }
+}
+
+/// Cheap per-call entropy (SplitMix64 over the clock). Not for anything but
+/// shuffling a wallpaper list.
+fn entropy() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut z = nanos.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PlaylistOrder;
+
+    #[test]
+    fn rotate_wraps_and_survives_a_shorter_list() {
+        assert_eq!(next_playlist_index(0, 3, PlaylistOrder::Rotate, 0), 1);
+        assert_eq!(next_playlist_index(2, 3, PlaylistOrder::Rotate, 0), 0);
+        // The list shrank from 10 to 3 under an index of 7.
+        assert!(next_playlist_index(7, 3, PlaylistOrder::Rotate, 0) < 3);
+        assert_eq!(next_playlist_index(5, 0, PlaylistOrder::Rotate, 0), 0);
+    }
+
+    #[test]
+    fn random_never_repeats_the_current_entry() {
+        for len in 2..8 {
+            for current in 0..len {
+                for e in 0..50u64 {
+                    let next = next_playlist_index(current, len, PlaylistOrder::Random, e);
+                    assert!(next < len && next != current, "{len} {current} {e}");
+                }
+            }
+        }
+        assert_eq!(next_playlist_index(0, 1, PlaylistOrder::Random, 9), 0);
+    }
+
+    #[test]
+    fn entropy_varies() {
+        assert_ne!(entropy(), entropy());
+    }
 
     #[test]
     fn canvas_rounds_instead_of_ceiling() {

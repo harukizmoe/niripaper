@@ -99,6 +99,7 @@ The daemon listens on a small control socket, one for all of them
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # switch it, image or video
+niripaper next                        # advance the playlist now
 niripaper query                       # what is on screen right now
 niripaper schema                      # every config key, as JSON
 niripaper state                       # what the daemon is doing, as JSON
@@ -217,9 +218,12 @@ scale = 1.2
 | `wallpaper` | image or video to draw (PNG/JPEG/WebP, or mp4/webm/mkv/mov/m4v/avi/gif) |
 | `video_fps` | frame-rate cap for video wallpapers (default `0`, i.e. the source's) |
 | `scale` | canvas enlargement (default `1.1`, max `1.35`) |
+| `parallax` | whether the wallpaper follows focus and workspace changes (default `true`). With `false` it stays centred, but `scale` still applies, so the overview zoom keeps working |
 | `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |
 | `workspace_span` | fixed workspace span for the vertical parallax (default `6`, min `2`) |
 | `fit` | how a source that does not match the canvas aspect is placed: `fill` (default), `fit`, `stretch`, `center`, `tile` |
+| `[filter]` | post-processing, see below. Every key defaults to "no effect" and costs nothing until one is changed |
+| `[playlist] enabled`, `interval_mins`, `order`, `items` | rotate the wallpaper on a timer through a list (default off, `15` minutes, `rotate`; `random` never repeats the one on screen) |
 | `[animations] follow_niri` | take the overview transition's settings from niri (default `true`) |
 | `[animations] slowdown` | stretch every animation's timeline |
 | `[animations.parallax]` | how the wallpaper moves when you move |
@@ -306,6 +310,29 @@ A video is decoded in hardware and scaled to the canvas — the output size time
 presented: niri hands layer surfaces frame callbacks at 60 Hz, so a 60 fps source sits
 exactly on that edge. Measured here, 25 is smooth and drops no frames; raising it is
 worth trying on faster hardware.
+
+### Filters
+
+`[filter]` (and `[outputs."NAME".filter]` for one output) adjusts the picture on the GPU,
+for images and videos alike. Colour work is done in linear light.
+
+| Key | Range | Default | Meaning |
+| --- | --- | --- | --- |
+| `brightness` | `0.5`–`1.5` | `1.0` | exposure |
+| `contrast` | `0.5`–`1.6` | `1.0` | S-curve contrast |
+| `saturation` | `0`–`2` | `1.0` | colour strength |
+| `vibrance` | `0`–`2` | `1.0` | like saturation, but raises dull colours more than vivid ones |
+| `temperature` | `-1`–`1` | `0` | cool to warm; `0` changes nothing |
+| `hue` | `0`–`360` | `0` | rotate every hue, in degrees |
+| `vignette` | `0`–`1` | `0` | darken the corners |
+| `grain`, `grain_size` | `0`–`1`, `1`–`4` px | `0`, `1.5` | film grain, strongest in the midtones |
+| `aberration` | `0`–`1` | `0` | colour fringing towards the edges |
+| `tone_amount`, `tone_shadow`, `tone_highlight` | `0`–`1`, hues in degrees | `0` | split toning: tint the shadows and the highlights, keeping brightness |
+
+The desktop app offers presets (cinematic, black and white, cyberpunk, sunset, pastel,
+vintage, night). They are plain values of these keys, defined in `Filter::presets()` in
+`crates/proto`. `trprobe NODE OUT WALLPAPER` renders each one onto a picture, to look at
+without taking over the screen.
 
 ## Troubleshooting
 

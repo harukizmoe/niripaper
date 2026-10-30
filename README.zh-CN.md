@@ -88,6 +88,7 @@ niripaper watch                           # 只打印视差目标值，不绘制
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
+niripaper next                        # 立刻切到轮播列表的下一张
 niripaper query                       # 现在屏幕上是什么
 niripaper schema                      # 全部配置项，JSON
 niripaper state                       # 守护进程当前状态，JSON
@@ -194,9 +195,12 @@ scale = 1.2
 | `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi/gif） |
 | `video_fps` | 视频帧率上限（默认 `0`，即跟着源帧率走） |
 | `scale` | 画布放大倍数（默认 `1.1`，上限 `1.35`） |
+| `parallax` | 壁纸是否跟随焦点与工作区移动（默认 `true`）。设为 `false` 时壁纸居中不动，但 `scale` 仍然生效，总览缩放照常工作 |
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |
 | `workspace_span` | 纵向视差的固定工作区跨度（默认 `6`，最小 `2`） |
 | `fit` | 源与画布宽高比不一致时怎么放：`fill`（默认）、`fit`、`stretch`、`center`、`tile` |
+| `[filter]` | 后期滤镜，见下。每一项默认都是“无效果”，不改就没有开销 |
+| `[playlist] enabled`、`interval_mins`、`order`、`items` | 按定时器在列表里轮换壁纸（默认关闭、`15` 分钟、`rotate`；`random` 不会重复当前这张） |
 | `[animations] follow_niri` | 总览过渡的设置取自 niri（默认 `true`） |
 | `[animations] slowdown` | 把所有动画的时间轴拉长 |
 | `[animations.parallax]` | 移动时壁纸怎么动 |
@@ -271,6 +275,28 @@ niri 那五个缓动都是"开头快、结尾慢"，正好和一个"张开"想�
 视频会**硬件解码**，并缩放到画布（输出尺寸 × `scale`）—— 从不按源分辨率出图。
 `video_fps` 决定每秒呈现多少次：niri 给图层表面的帧回调是 60 Hz，所以 60 fps 的源
 正好卡在那个临界点上。本机实测 25 足够顺滑、不丢帧；换更快的硬件值得往上调。
+
+### 滤镜
+
+`[filter]`（单个输出用 `[outputs."NAME".filter]`）在 GPU 上调整画面，图片与视频通用。
+颜色相关的运算在线性光里进行。
+
+| 配置项 | 范围 | 默认 | 含义 |
+| --- | --- | --- | --- |
+| `brightness` | `0.5`–`1.5` | `1.0` | 曝光 |
+| `contrast` | `0.5`–`1.6` | `1.0` | S 曲线对比度 |
+| `saturation` | `0`–`2` | `1.0` | 颜色浓度 |
+| `vibrance` | `0`–`2` | `1.0` | 类似饱和度，但平淡的颜色提得多、鲜艳的提得少 |
+| `temperature` | `-1`–`1` | `0` | 偏冷到偏暖；`0` 不改变颜色 |
+| `hue` | `0`–`360` | `0` | 所有色相整体旋转，单位度 |
+| `vignette` | `0`–`1` | `0` | 压暗四角 |
+| `grain`、`grain_size` | `0`–`1`、`1`–`4` px | `0`、`1.5` | 胶片颗粒，中间调最明显 |
+| `aberration` | `0`–`1` | `0` | 靠近边缘的色散 |
+| `tone_amount`、`tone_shadow`、`tone_highlight` | `0`–`1`、色相（度） | `0` | 分离色调：给暗部和亮部各染一点色，不改变亮度 |
+
+桌面应用里有若干预设（电影质感、黑白胶片、赛博霓虹、暖阳日落、动漫清透、复古胶片、
+暗夜护眼）。它们只是这些配置项的取值，定义在 `crates/proto` 的 `Filter::presets()`。
+`trprobe NODE OUT WALLPAPER` 会把每个预设渲染到一张图上，不用占用屏幕就能看效果。
 
 ## 排查
 

@@ -70,6 +70,10 @@ mod tests {
                 output: Some("eDP-1".to_owned()),
             },
             Request::Query { output: None },
+            Request::Next { output: None },
+            Request::Next {
+                output: Some("DP-1".to_owned()),
+            },
             Request::Schema,
             Request::State { output: None },
             Request::State {

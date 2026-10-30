@@ -1634,4 +1634,44 @@ mod niri_follow_tests {
             "falls back to niri's own default, which is our default"
         );
     }
+
+    #[test]
+    fn every_filter_preset_passes_validation() {
+        for (id, _, preset) in Filter::presets() {
+            validate_filter(&preset).unwrap_or_else(|e| panic!("preset {id}: {e}"));
+        }
+        // "none" has to be a real no-op, or the shader would run for nothing.
+        assert!(!Filter::presets()[0].2.is_enabled());
+        // Presets are for choosing between, so no two may be the same look.
+        let all = Filter::presets();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.2, b.2, "{} and {} are identical", a.0, b.0);
+            }
+        }
+    }
+
+    #[test]
+    fn out_of_range_filter_and_playlist_values_are_rejected() {
+        for bad in [
+            "[filter]\nbrightness = 9.0",
+            "[filter]\ntemperature = 2.0",
+            "[filter]\ngrain_size = 0.2",
+            "[filter]\ntone_amount = 1.5",
+            "[outputs.\"DP-1\".filter]\nvignette = 3.0",
+            "[playlist]\ninterval_mins = 0",
+            "[playlist]\ninterval_mins = 5000",
+            "[playlist]\norder = \"shuffle\"",
+        ] {
+            assert!(Config::parse_without_niri(bad).is_err(), "accepted: {bad}");
+        }
+    }
+
+    #[test]
+    fn playlist_and_filter_defaults_cost_nothing() {
+        let config = Config::parse_without_niri("").unwrap();
+        assert!(!config.filter.is_enabled());
+        assert!(!config.playlist.enabled);
+        assert!(config.playlist.items.is_empty());
+    }
 }
