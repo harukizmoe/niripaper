@@ -1,4 +1,4 @@
-//! Layout-reactive parallax maths (`HANDOFF.md` §4).
+//! Layout-reactive parallax maths (§4).
 //!
 //! Pure logic: no IO, no clock, no GL. The compositor's event stream is applied
 //! through [`Motion::apply`], which maintains the workspace/window state and the

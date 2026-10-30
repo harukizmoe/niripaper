@@ -1,3 +1,20 @@
+[workspace]
+members = [".", "crates/proto", "app"]
+# The app pulls in webkit2gtk and a Node toolchain: keep the default commands
+# (`cargo test`, `cargo clippy`, `cargo build`) covering only the daemon and the
+# shared proto crate, so CI's GPU-free runner and the AGENTS.md checklist stay
+# exactly what they were. The app is built explicitly (`cargo build -p
+# niripaper-app`) with webkit2gtk present.
+default-members = [".", "crates/proto"]
+
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
 [package]
 name = "niripaper"
 version = "0.2.0"
@@ -6,12 +23,11 @@ license = "GPL-3.0-or-later"
 description = "A parallax wallpaper daemon for the niri compositor."
 
 [dependencies]
+niripaper-proto = { path = "crates/proto" }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
-kdl = { version = "6.7.1", features = ["v1-fallback"] }
 libc = "0.2.190"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-toml = "1.1.6"
 wayland-client = "0.31.15"
 wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

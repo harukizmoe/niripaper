@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use kdl::{KdlDocument, KdlNode};
 
-use crate::render::anim::{Animation, Curve};
+use crate::animation::{Animation, Curve};
 
 /// The parameters shared with niri. `None` means "niri's config says nothing
 /// about this", which is different from "niri says off".

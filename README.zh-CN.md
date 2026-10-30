@@ -18,7 +18,8 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 - **视差。** 在窗口之间、工作区之间移动时，壁纸朝同一方向移动几十像素。
 - **自己绘制壁纸。** 不需要 mpv，不需要 shell 脚本，也没有辅助进程：一个二进制，
   在 background 层放一个 layer-shell 表面，直接往里渲染。
-- **视频壁纸。** mp4、webm、mkv、mov、m4v、avi，**硬件解码**。
+- **视频壁纸。** mp4、webm、mkv、mov、m4v、avi、gif，**硬件解码**。
+  （gif 按视频播，所以会动 —— Wallpaper Engine 也是这么处理的。）
   [mpv](https://mpv.io) 在这里是**库**：没有 mpv 进程、没有窗口、没有 IPC、不读它自己的配置；
   它把解码好的帧画进我们自己的纹理，于是视频和静态图一样，按视差偏移采样。
 - **总览过渡跟随 niri。** 默认 `follow_niri = true`：它的弹簧或缓动曲线从 niri 的配置里读，
@@ -32,11 +33,11 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
 版本 0.2.0，早期。
 
 现在能用：静态图像（PNG / JPEG / WebP）、**视频壁纸**（硬件解码）、视差、总览过渡、
-换图过渡（九个效果）、`fit`（源与画布宽高比不一致时的五种放法）、带 `config.d` 目录
-与热重载的配置、按输出配置、给面板用的 `schema`/`state`，以及给运行中的守护进程换壁纸。
+换图过渡（九个效果）、`fit`（源与画布宽高比不一致时的五种放法）、单一配置文件
+与热重载、按输出配置、给前端用的 `schema`/`state`，以及给运行中的守护进程换壁纸。
 
-还没有：Noctalia 面板（**另开一个项目** —— 守护进程这侧的接口是 `schema`、`state` 和
-`config.d`，这些都已经有了）、AUR 包、预编译二进制。
+还没有：桌面应用（**另开一个程序**，通过守护进程的控制 socket 与它对话 —— 守护进程这侧的接口是
+`schema`、`state` 和那份配置文件，这些都已经有了）、AUR 包、预编译二进制。
 
 ## 环境要求
 
@@ -95,13 +96,13 @@ niripaper kill                        # 让它退出
 
 `set` 会**先加载成功再换** —— 路径写错就回报错误并保持原壁纸，而不是把屏幕搞空。
 
-`set` 是**临时覆盖**：它只改屏幕上是什么，不改配置；任何一次 `config.d` 或
-`config.toml` 的重载都会把配置里的壁纸放回来。想留住一张壁纸，就把它写进配置。
+`set` 是**临时覆盖**：它只改屏幕上是什么，不改配置；任何一次配置文件的重载都会
+把配置里的壁纸放回来。想留住一张壁纸，就把它写进配置。
 
-`schema` 与 `state` 是给面板（Noctalia 插件，或别的什么）用的。`schema` 列出每一个配置项
+`schema` 与 `state` 是给前端（面板，或桌面应用）用的。`schema` 列出每一个配置项
 及其类型、取值范围、默认值、单位、以及改动后能否即时生效；`state` 用**同一套名字**报出生效值，
-外加输出名、画布尺寸、**实际**在屏的壁纸与视差位置。面板启动时问一次 schema 来生成界面，
-之后只需要 `state` —— 所以在这里加一个配置项，面板不用改。
+外加输出名、画布尺寸、**实际**在屏的壁纸与视差位置。前端启动时问一次 schema 来生成界面，
+之后只需要 `state` —— 所以在这里加一个配置项，前端不用改。
 
 `state` 里的 `config.values` 是**配置里写的**，而 `wallpaper.path` 是**实际在屏的**：
 `set` 只换画面不动配置，所以两者本来就可能不一样。
@@ -116,13 +117,29 @@ spawn-at-startup "niripaper" "daemon"
 
 需要二进制在 `PATH` 上 —— 所以上面那行 `install` 是有必要的。
 
+### 让壁纸进总览的 backdrop
+
+不做任何额外配置时，壁纸是**工作区背景**：它随工作区一起滚动，总览里出现在各工作区的缩略图内。
+想让它静止不动、铺满整个总览背景，就在 niri 的配置里加一条 layer rule ——
+这是 niri 自己的机制，所有壁纸工具都这么用（`swaybg` 也一样）：
+
+```kdl
+layer-rule {
+    match namespace="^niripaper$"
+    place-within-backdrop true
+}
+```
+
+它匹配的命名空间固定是 `niripaper`，**不是设置项** —— 改了它，这条规则就匹配不上了。
+两种情况下的窗口模糊效果相同 —— 这条规则只改变总览显示什么、以及壁纸是否随工作区移动。
+
 ### 命令行参数
 
 | 参数 | 含义 |
 | --- | --- |
 | `--output NAME` | 只在某一个输出上绘制（默认：niri 报告的所有输出） |
 | `--config PATH` | 读取的配置文件（默认 `~/.config/niripaper/config.toml`） |
-| `--namespace NAME` | layer-shell 命名空间（默认 `niripaper`） |
+| `--namespace NAME` | layer-shell 命名空间（默认 `niripaper`；决定哪条 niri layer-rule 能匹配到） |
 | `--wallpaper PATH` | 要绘制的图像 |
 | `--scale F` | 画布放大倍数，`1.0`–`1.35` |
 | `--column-span N`、`--workspace-span N` | 视差铺开多少级 |
@@ -133,11 +150,9 @@ spawn-at-startup "niripaper" "daemon"
 
 ## 配置
 
-配置文件位于 `~/.config/niripaper/config.toml`。它是可选的：完全没有这个文件时，
-用内置默认值。它旁边的 `config.d/` 目录也会被读取 —— 里面每个 `*.toml` 按文件名
-顺序合并到主配置之上（靠后的覆盖靠前的）。工具把自己的设置放在这里，不用动你的
-配置：删掉文件即还原。**碎片文件要自己写表头**（`[transition]` 之类）——
-它是被合并的，不是文本拼接；键写错层级就是未知键，会直接报错。运行中改文件会即时生效；解析失败会报出原因并**继续用正在
+配置文件位于 `~/.config/niripaper/config.toml`，它就是**全部**配置 —— 只有这一个文件。
+它是可选的：完全没有这个文件时用内置默认值，此时画程序化测试图案。守护进程**只读**它；
+写它的是桌面应用（原地改写、保留那些逐键说明的注释）。运行中改文件会即时生效；解析失败会报出原因并**继续用
 运行的配置**。取值优先级是 **命令行 → 配置文件 → 内置默认值**，
 所以文件里只需要写和默认不同的部分。
 
@@ -148,7 +163,6 @@ video_fps = 25                       # 视频帧率上限（0 = 跟着源帧率�
 scale = 1.1           # 画布放大倍数；越大，可移动的余地越大
 column_span = 6       # 横向视差铺开多少列
 workspace_span = 6    # 纵向视差铺开多少工作区
-namespace = "niripaper"
 
 [animations]
 follow_niri = true    # 总览过渡的设置取自 niri
@@ -177,13 +191,12 @@ scale = 1.2
 
 | 配置项 | 含义 |
 | --- | --- |
-| `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi） |
+| `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi/gif） |
 | `video_fps` | 视频帧率上限（默认 `0`，即跟着源帧率走） |
 | `scale` | 画布放大倍数（默认 `1.1`，上限 `1.35`） |
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |
 | `workspace_span` | 纵向视差的固定工作区跨度（默认 `6`，最小 `2`） |
 | `fit` | 源与画布宽高比不一致时怎么放：`fill`（默认）、`fit`、`stretch`、`center`、`tile` |
-| `namespace` | layer-shell 命名空间（默认 `niripaper`） |
 | `[animations] follow_niri` | 总览过渡的设置取自 niri（默认 `true`） |
 | `[animations] slowdown` | 把所有动画的时间轴拉长 |
 | `[animations.parallax]` | 移动时壁纸怎么动 |
@@ -265,8 +278,9 @@ niri 那五个缓动都是"开头快、结尾慢"，正好和一个"张开"想�
 - **启动后立刻退出。** 配置文件解析失败 —— 报错会指明出问题的键和行号。
 - **壁纸不动。** 如果 niri 配置里全局关掉了动画（`animations { off }`），
   总览过渡在这里也是关的。视差不受影响 —— 它不是 niri 的动画之一。
-- **你的图层规则匹配的是别的名字。** 图层规则是按命名空间匹配的，
-  把 `namespace` 设成你现有规则已经在用的名字即可。
+- **你的图层规则匹配的是别的名字。** 图层规则按 layer-shell 命名空间匹配，
+  而它是固定的 `niripaper`（不是配置键 —— 改了它，你写的那条规则就匹配不上了）。
+  一次性运行可以用命令行覆盖：`--namespace NAME`。
 
 ## 许可证
 

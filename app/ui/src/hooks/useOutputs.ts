@@ -1,0 +1,51 @@
+import { useCallback, useEffect, useState } from 'react'
+import { invoke } from './useDaemon'
+
+/// One monitor the daemon draws on, with the size of its canvas.
+export interface OutputInfo {
+  name: string
+  width: number
+  height: number
+}
+
+/// How often the list is asked for again. The daemon may start after the app,
+/// and monitors come and go; a local socket round trip is cheap.
+const REFRESH_MS = 3000
+
+const same = (a: OutputInfo[], b: OutputInfo[]) => JSON.stringify(a) === JSON.stringify(b)
+
+/// The outputs the daemon manages. Empty while it is not running, so a page
+/// has to work without any: "every output" is always a valid target.
+export function useOutputs() {
+  const [outputs, setOutputs] = useState<OutputInfo[]>([])
+
+  const refresh = useCallback(async () => {
+    try {
+      const raw = await invoke<string>('daemon_state', { output: null })
+      const parsed = JSON.parse(raw) as {
+        outputs?: Record<string, { canvas?: { width?: number; height?: number } }>
+      }
+      const next = Object.entries(parsed.outputs ?? {})
+        .map(([name, o]) => ({ name, width: o.canvas?.width ?? 0, height: o.canvas?.height ?? 0 }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      // Only a real change re-renders the pages that read this.
+      setOutputs((prev) => (same(prev, next) ? prev : next))
+    } catch {
+      setOutputs((prev) => (prev.length === 0 ? prev : []))
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    const timer = setInterval(() => void refresh(), REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [refresh])
+
+  return { outputs, refresh }
+}
+
+/// "Every output" in the daemon's protocol.
+export const EVERY_OUTPUT = '*'
+
+/// What a target is called on screen.
+export const outputLabel = (target: string) => (target === EVERY_OUTPUT ? '所有显示器' : target)

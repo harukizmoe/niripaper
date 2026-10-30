@@ -1,4 +1,4 @@
-//! Video through libmpv's OpenGL render API (`HANDOFF.md` §2/§3, milestone V2).
+//! Video through libmpv's OpenGL render API (§2/§3).
 //!
 //! mpv is used as a **library**, not as a program: there is no `mpv` process, no
 //! window, no IPC, no config file. It decodes — hardware-accelerated, which is a
@@ -134,7 +134,7 @@ extern "C" fn get_proc_address(_ctx: *mut c_void, name: *const c_char) -> *mut c
 
 /// What mpv's update callback is handed: the flag the render path checks, and an
 /// eventfd that wakes the daemon's `poll()`. Without the fd the loop would have
-/// to poll mpv, which would cost the zero-idle design (§6, M0b criterion ④).
+/// to poll mpv, which would cost the zero-idle design (docs/verification.md).
 struct Signal {
     pending: AtomicBool,
     fd: RawFd,
@@ -360,7 +360,7 @@ impl Video {
             return Err(format!("mpv_render_context_render: {}", error(code)));
         }
         // Required after the frame has been shown; skipping it stalls mpv's
-        // frame pacing (`HANDOFF.md` §3).
+        // frame pacing (§3).
         unsafe { mpv_render_context_report_swap(self.render) };
         self.frames += 1;
         Ok(true)

@@ -1,4 +1,4 @@
-//! What is being drawn: a still image, or a video (`HANDOFF.md` §3).
+//! What is being drawn: a still image, or a video (§3).
 //!
 //! Keeping this in one place is what lets the rest of the daemon stay ignorant
 //! of the difference: it loads a path, asks for a [`gl::Content`] to draw, and
@@ -14,7 +14,7 @@ use crate::render::video::Video;
 use crate::render::Fit;
 
 /// A video's wakeup fd is polled; a still's is `-1`, which `poll()` ignores —
-/// that is what keeps the idle cost at zero for stills (§6, M0b criterion ④).
+/// that is what keeps the idle cost at zero for stills (docs/verification.md).
 pub const NO_WAKEUP: RawFd = -1;
 
 /// A wallpaper: what to draw, and where it came from.
@@ -132,13 +132,18 @@ impl Media {
 /// Video containers mpv handles and `image` does not. Routed by extension
 /// because guessing wrong is worse than a clear failure: a still handed to mpv
 /// plays as a one-frame video, while a video handed to `image` fails to decode.
+///
+/// `gif` is here rather than with the stills: `image` is built without its gif
+/// decoder, so an animated gif routed as a still is a hard error ("The image
+/// format Gif is not supported"), while mpv plays it — animation and all, the
+/// way Wallpaper Engine treats it.
 pub fn is_video(path: &Path) -> bool {
     matches!(
         path.extension()
             .and_then(|e| e.to_str())
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi")
+        Some("mp4" | "webm" | "mkv" | "mov" | "m4v" | "avi" | "gif")
     )
 }
 
@@ -149,7 +154,9 @@ mod tests {
 
     #[test]
     fn routes_by_extension() {
-        for video in ["a.mp4", "A.WEBM", "b.mkv", "c.mov", "d.m4v", "e.avi"] {
+        for video in [
+            "a.mp4", "A.WEBM", "b.mkv", "c.mov", "d.m4v", "e.avi", "f.gif", "G.GIF",
+        ] {
             assert!(is_video(&PathBuf::from(video)), "{video} is a video");
         }
         for still in ["a.png", "b.jpg", "c.webp", "no-extension", "d.mp4.txt"] {

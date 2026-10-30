@@ -1,0 +1,115 @@
+/* Page-level reset and the wallpaper card. Everything else is styled by the
+   MUI theme (theme/mui.ts); colours here come from the `--md-sys-color-*`
+   variables that applyRoleVars() writes onto <html>. */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+.main-workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+.gallery-viewport {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 28px 32px 28px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wallpaper-card {
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  /* No fill of its own: an opaque card painted a whole grid of unloaded cards
+     in the surface colour, which read as a flash. The image supplies the
+     colour once it is there. */
+  background: transparent;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+  transform: perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg);
+  transition: transform 0.15s ease-out, box-shadow 0.25s ease;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.wallpaper-card:hover {
+  box-shadow: 0 30px 60px -12px rgb(0 0 0 / 0.75);
+  z-index: 40;
+}
+.wallpaper-card:active {
+  transform: perspective(1000px) scale(1.02) translateY(-4px) !important;
+}
+.wallpaper-card.active-target {
+  box-shadow: 0 0 0 3px var(--md-sys-color-primary), 0 8px 24px -4px rgb(0 0 0 / 0.25);
+}
+
+.card-media {
+  width: 100%;
+  background: var(--md-sys-color-surface-container);
+  position: relative;
+  overflow: hidden;
+  border-radius: inherit;
+  display: block;
+}
+.card-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transition: transform 0.4s cubic-bezier(0.2, 0, 0, 1);
+  position: relative;
+  z-index: 1;
+}
+.wallpaper-card:hover .card-media img {
+  transform: scale(1.04);
+}
+
+/* The highlight follows the pointer: the card writes --glare-x/--glare-y. */
+.card-glare {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    circle at var(--glare-x, 50%) var(--glare-y, 50%),
+    rgb(255 255 255 / 0.35) 0%,
+    transparent 65%
+  );
+  transition: opacity 0.25s ease;
+  z-index: 5;
+}
+.wallpaper-card:hover .card-glare { opacity: 1; }
+
+/* The entrance is motion only — it never touches opacity. A fade starts at 0,
+   so for its first frames the image would be mixed with whatever is behind
+   it, which is what the "white flash" was. Scaling an opaque image has
+   nothing to show through. */
+@keyframes card-enter {
+  from { transform: scale(1.035); }
+  to { transform: none; }
+}
+.card-media img.card-enter {
+  animation: card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-media img.card-enter { animation: none; }
+}

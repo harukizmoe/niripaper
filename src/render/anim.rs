@@ -1,10 +1,9 @@
 //! Frame-callback-driven animation, using **niri's vocabulary**.
 //!
-//! Every animated quantity is an [`Animator`] driven by one of niri's animation
-//! types — `off`, an easing (`duration-ms` + `curve`), or a `spring`
-//! (`damping-ratio` + `stiffness` + `epsilon`, mass hardcoded to 1 like niri) —
-//! so the config file reads like niri's `animations { }` section and the motion
-//! can be tuned with the same tools.
+//! The value types (`Curve`, `Spring`, `Animation`, the curves' maths) live in
+//! `niripaper-proto::animation` — config files name them and the schema reports
+//! them, so the desktop app compiles against the same spellings. What stays
+//! here is the part only a renderer needs: the [`Animator`] state machine.
 //!
 //! Two rules come from §4.2.6 and are easy to get wrong, both very visible:
 //!
@@ -16,8 +15,7 @@
 
 use std::time::{Duration, Instant};
 
-/// §4.2.6: `durations.large` = 600 ms.
-pub const DEFAULT_DURATION: Duration = Duration::from_millis(600);
+use niripaper_proto::animation::Animation;
 
 /// Values the animator can interpolate.
 pub trait Lerp: Copy {
@@ -49,234 +47,14 @@ impl Lerp for crate::motion::Progress {
     }
 }
 
-/// niri's easing curves (`curve "…"`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Curve {
-    Linear,
-    EaseOutQuad,
-    EaseOutCubic,
-    EaseOutExpo,
-    /// CSS `cubic-bezier(x1, y1, x2, y2)`.
-    CubicBezier([f64; 4]),
+/// One of niri's animation types, with its normalized-progress evaluation —
+/// the piece of [`niripaper_proto::animation::Animation`] the state machine
+/// needs and the value types alone do not carry.
+trait Advance {
+    fn advance(&self, elapsed: Duration, distance: f64) -> (f64, bool);
 }
 
-impl Curve {
-    /// niri's five names; the last one takes four control points.
-    pub const NAMES: [&'static str; 5] = [
-        "linear",
-        "ease-out-quad",
-        "ease-out-cubic",
-        "ease-out-expo",
-        "cubic-bezier",
-    ];
-
-    pub fn parse(name: &str, control_points: Option<[f64; 4]>) -> Result<Self, String> {
-        Ok(match name {
-            "linear" => Self::Linear,
-            "ease-out-quad" => Self::EaseOutQuad,
-            "ease-out-cubic" => Self::EaseOutCubic,
-            "ease-out-expo" => Self::EaseOutExpo,
-            "cubic-bezier" => {
-                let points = control_points.ok_or(
-                    "curve \"cubic-bezier\" needs four control points, e.g. [0.05, 0.7, 0.1, 1]",
-                )?;
-                if points.iter().any(|p| !p.is_finite()) {
-                    return Err(format!(
-                        "cubic-bezier control points must be finite: {points:?}"
-                    ));
-                }
-                Self::CubicBezier(points)
-            }
-            other => {
-                return Err(format!(
-                    "unknown curve {other:?}; niri's curves are: {}",
-                    Self::NAMES.join(", ")
-                ))
-            }
-        })
-    }
-
-    /// The config-file spelling — the inverse of `parse`, indexed off the same
-    /// table so the two cannot drift (a bezier is always spelled `cubic-bezier`;
-    /// its control points live beside it).
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Linear => Self::NAMES[0],
-            Self::EaseOutQuad => Self::NAMES[1],
-            Self::EaseOutCubic => Self::NAMES[2],
-            Self::EaseOutExpo => Self::NAMES[3],
-            Self::CubicBezier(_) => Self::NAMES[4],
-        }
-    }
-
-    pub fn eval(&self, t: f64) -> f64 {
-        let t = t.clamp(0.0, 1.0);
-        match self {
-            Self::Linear => t,
-            Self::EaseOutQuad => 1.0 - (1.0 - t).powi(2),
-            Self::EaseOutCubic => 1.0 - (1.0 - t).powi(3),
-            Self::EaseOutExpo => {
-                if t >= 1.0 {
-                    1.0
-                } else {
-                    1.0 - 2f64.powf(-10.0 * t)
-                }
-            }
-            Self::CubicBezier(points) => cubic_bezier(*points, t),
-        }
-    }
-}
-
-/// `Easing.OutCubic` — kept as a named helper because §4.2.6 specifies it.
-pub fn out_cubic(t: f64) -> f64 {
-    Curve::EaseOutCubic.eval(t)
-}
-
-/// CSS `cubic-bezier(x1, y1, x2, y2)`: solve `x(u) = t` for `u`, then return
-/// `y(u)`. The curve is defined by the two control points with (0,0) and (1,1)
-/// fixed, exactly like the CSS timing function niri copies.
-fn cubic_bezier(points: [f64; 4], t: f64) -> f64 {
-    let [x1, y1, x2, y2] = points;
-    let bezier = |a: f64, b: f64, u: f64| {
-        // Bernstein form of a cubic with P0 = 0 and P3 = 1.
-        let v = 1.0 - u;
-        3.0 * v * v * u * a + 3.0 * v * u * u * b + u * u * u
-    };
-    let slope = |a: f64, b: f64, u: f64| {
-        let v = 1.0 - u;
-        3.0 * v * v * a + 6.0 * v * u * (b - a) + 3.0 * u * u * (1.0 - b)
-    };
-
-    // Newton first (fast), bisection as a fallback for the flat parts.
-    let mut u = t;
-    for _ in 0..8 {
-        let error = bezier(x1, x2, u) - t;
-        if error.abs() < 1e-9 {
-            return bezier(y1, y2, u);
-        }
-        let derivative = slope(x1, x2, u);
-        if derivative.abs() < 1e-6 {
-            break;
-        }
-        u -= error / derivative;
-    }
-    let (mut low, mut high) = (0.0, 1.0);
-    let mut u = t;
-    for _ in 0..32 {
-        let x = bezier(x1, x2, u);
-        if (x - t).abs() < 1e-9 {
-            break;
-        }
-        if x < t {
-            low = u;
-        } else {
-            high = u;
-        }
-        u = 0.5 * (low + high);
-    }
-    bezier(y1, y2, u)
-}
-
-/// niri's spring: mass is hardcoded to 1, so the angular frequency is
-/// `sqrt(stiffness)`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Spring {
-    pub damping_ratio: f64,
-    pub stiffness: f64,
-    pub epsilon: f64,
-}
-
-impl Spring {
-    /// Normalized progress of a unit spring released from rest: 0 at `t = 0`,
-    /// tending to 1. Closed form, so nothing accumulates per frame.
-    pub fn eval(&self, seconds: f64) -> f64 {
-        let zeta = self.damping_ratio;
-        let omega = self.stiffness.sqrt();
-        let t = seconds.max(0.0);
-        if zeta < 1.0 {
-            let damped = omega * (1.0 - zeta * zeta).sqrt();
-            let decay = (-zeta * omega * t).exp();
-            1.0 - decay * ((damped * t).cos() + (zeta * omega / damped) * (damped * t).sin())
-        } else if (zeta - 1.0).abs() < 1e-9 {
-            let decay = (-omega * t).exp();
-            1.0 - decay * (1.0 + omega * t)
-        } else {
-            // Overdamped: two real roots. niri warns against damping-ratio > 1.
-            let root = omega * (zeta * zeta - 1.0).sqrt();
-            let (r1, r2) = (-zeta * omega + root, -zeta * omega - root);
-            1.0 - (r2 * (r1 * t).exp() - r1 * (r2 * t).exp()) / (r2 - r1)
-        }
-    }
-
-    /// The decaying envelope of `|value - target|`, normalized to a unit step.
-    ///
-    /// The instantaneous error is **not** usable here: an underdamped spring
-    /// crosses its target every half period, so `|1 - eval(t)|` dips to zero at
-    /// the first crossing and the animation would be declared finished before
-    /// the overshoot it exists to produce. The envelope decays monotonically.
-    pub fn envelope(&self, seconds: f64) -> f64 {
-        let zeta = self.damping_ratio;
-        let omega = self.stiffness.sqrt();
-        let t = seconds.max(0.0);
-        if zeta < 1.0 {
-            (-zeta * omega * t).exp() / (1.0 - zeta * zeta).sqrt()
-        } else if (zeta - 1.0).abs() < 1e-9 {
-            (-omega * t).exp() * (1.0 + omega * t)
-        } else {
-            // Overdamped: `eval` approaches 1 monotonically, so it is already
-            // an envelope.
-            (1.0 - self.eval(t)).abs()
-        }
-    }
-
-    /// Settled once the remaining distance is within `epsilon` — niri's
-    /// "set epsilon to a lower value if the animation jumps at the end".
-    pub fn settled(&self, seconds: f64, distance: f64) -> bool {
-        self.envelope(seconds) * distance <= self.epsilon
-    }
-}
-
-/// One of niri's animation types.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Animation {
-    /// niri's `off`: jump straight to the target.
-    Off,
-    Easing {
-        duration: Duration,
-        curve: Curve,
-    },
-    Spring(Spring),
-}
-
-impl Animation {
-    pub fn easing(curve: Curve, duration: Duration) -> Self {
-        Self::Easing { duration, curve }
-    }
-
-    pub fn spring(damping_ratio: f64, stiffness: f64, epsilon: f64) -> Self {
-        Self::Spring(Spring {
-            damping_ratio,
-            stiffness,
-            epsilon,
-        })
-    }
-
-    /// One-line summary for the startup log: users tune these by feel, so they
-    /// need to see what is actually in effect.
-    pub fn describe(&self) -> String {
-        match self {
-            Self::Off => "off".to_owned(),
-            Self::Easing { duration, curve } => {
-                format!("{} {} ms", curve.name(), duration.as_millis())
-            }
-            Self::Spring(spring) => format!(
-                "spring {}/{}/{}",
-                spring.damping_ratio, spring.stiffness, spring.epsilon
-            ),
-        }
-    }
-
-    /// Normalized progress, and whether the animation is still running.
+impl Advance for Animation {
     fn advance(&self, elapsed: Duration, distance: f64) -> (f64, bool) {
         match self {
             Self::Off => (1.0, false),
@@ -398,6 +176,7 @@ impl<T: Lerp + PartialEq> Animator<T> {
 mod tests {
     use super::*;
     use crate::motion::Progress;
+    use niripaper_proto::animation::{out_cubic, Curve, Spring};
 
     /// A fixed origin, so `ms(n)` is always `n` ms after `ms(0)`.
     struct Clock(Instant);

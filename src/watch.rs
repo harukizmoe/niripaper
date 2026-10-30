@@ -1,13 +1,12 @@
-//! Watching the configuration for changes (`HANDOFF.md` §2).
+//! Watching the configuration for changes (§2).
 //!
 //! Raw inotify rather than a crate: the job is "tell me when something in these
 //! directories changed", and the fd drops straight into the daemon's existing
 //! `poll()` — the same shape as the niri socket and the control socket.
 //!
-//! **Directories are watched, not files.** Editors and tools write atomically
-//! (write a temp file, then rename it over the target), which a per-file watch
-//! would miss entirely, and a tool may create `config.d` long after the daemon
-//! started.
+//! **The directory is watched, not the file.** Editors and tools write
+//! atomically (write a temp file, then rename it over the target), which a
+//! per-file watch would miss entirely — and that is how the GUI saves.
 
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -29,7 +28,7 @@ pub struct Watcher {
     /// Directories currently watched, with the handle the kernel gave them. Only
     /// used to decide whether a watch is *new* (so it can be reported once): the
     /// watches themselves are re-added on every call, because a list that never
-    /// forgets a directory that went away is exactly how a `config.d` recreated
+    /// forgets a directory that went away is exactly how a directory recreated
     /// after an `rmdir` ends up silently unwatched.
     watched: Vec<(PathBuf, i32)>,
     buffer: Vec<u8>,
@@ -52,7 +51,7 @@ impl Watcher {
     }
 
     /// Watch every directory that exists and is not watched yet. Call it again
-    /// after each reload: that is how a `config.d` created later starts being
+    /// after each reload: that is how a directory recreated later starts being
     /// watched.
     pub fn watch(&mut self, dirs: &[PathBuf]) -> Result<(), String> {
         for dir in dirs {
@@ -76,8 +75,8 @@ impl Watcher {
             // because remembering is what broke this: `rmdir` makes the kernel drop
             // the watch, and a list that never forgets then skips re-adding it,
             // leaving the directory silently unwatched for good. (Found the hard
-            // way: a demo that created and removed `config.d` repeatedly left the
-            // daemon blind to every later write into it.)
+            // way: a directory created and removed repeatedly left the daemon
+            // blind to every later write into it.)
             if !self.watched.iter().any(|(known, _)| known == dir) {
                 self.watched.push((dir.clone(), handle));
                 crate::daemon::log_public(&format!("watching {}", dir.display()));
@@ -97,8 +96,8 @@ impl Watcher {
     /// is not a file being *finished*: reloading on `IN_CREATE` reads a file the
     /// writer has not written yet and reports a TOML error for a perfectly normal
     /// save. Waiting for `IN_CLOSE_WRITE` is the fix. A new *directory* has no
-    /// close to wait for, and is how `config.d` announces itself, so that one
-    /// counts on its own.
+    /// close to wait for, and is how a newly created directory announces
+    /// itself, so that one counts on its own.
     pub fn drain(&mut self) -> bool {
         // `struct inotify_event`: wd, mask, cookie, len, then a NUL-padded name.
         const HEADER: usize = 16;
@@ -143,8 +142,8 @@ mod tests {
     /// `rmdir` makes the kernel drop the watch on a directory. If `watch` trusts a
     /// list of what it has seen, it skips re-adding it — and the directory then
     /// stays silently unwatched for good. That is exactly what happened to a
-    /// `config.d` which a demo created and removed repeatedly: the daemon went
-    /// blind to every write into it, and only a restart brought it back.
+    /// config directory which was created and removed repeatedly: the daemon
+    /// went blind to every write into it, and only a restart brought it back.
     #[test]
     fn a_recreated_directory_is_watched_again() {
         let dir = std::env::temp_dir().join(format!("niripaper-watch-{}", std::process::id()));

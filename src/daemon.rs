@@ -15,7 +15,7 @@
 //!
 //! * **Nothing is drawn unless the layout is moving.** At rest the animator is
 //!   at its target, no frame callback is outstanding, and the process blocks in
-//!   `poll()` — idle cost is zero (`HANDOFF.md` §6, M0b criterion ④).
+//!   `poll()` — idle cost is zero (docs/verification.md).
 //! * **The animation is paced by the compositor**, not by a timer: a frame
 //!   callback arrives exactly when niri is ready to present, so a 180 Hz output
 //!   gets 180 Hz and a busy compositor does not get a backlog.
@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use crate::media::{self, Media};
 use crate::motion::{DEFAULT_COLUMN_SPAN, DEFAULT_WORKSPACE_SPAN};
 use crate::niri::Niri;
-use crate::render::anim::{Animator, Curve};
+use crate::render::anim::Animator;
 use crate::render::egl::{Egl, EglVendor};
 use crate::render::gbm;
 use crate::render::gl::{self, Pattern};
@@ -198,7 +198,7 @@ fn named_output(request: &crate::ipc::Request) -> Option<&str> {
 ///
 /// A thread per output, each with its own Wayland connection, EGL context and
 /// media — so the single-output loop below does not have to learn about several
-/// surfaces at once (`HANDOFF.md` §2 has the decision and the reasons). What is
+/// surfaces at once (§2 has the decision and the reasons). What is
 /// shared is the control socket and nothing else: a client names the output it
 /// means, this routes the request, and `state` answers for every output in one
 /// call. That is the shape a panel wants.
@@ -416,7 +416,7 @@ fn run_output(
 
     // --- which GPU ---------------------------------------------------------
     // The compositor's main device is the one it composites on; anywhere else
-    // means a cross-GPU copy per frame (§7.1).
+    // means a cross-GPU copy per frame (docs/adr/0002-follow-compositor-main-device.md).
     let node = match client.state.main_device {
         Some(device) => gpu::node_for_device_id(device)?,
         None => {
@@ -524,6 +524,9 @@ fn run_output(
         }
         None => None,
     };
+    // What is on screen, which is not always the configured wallpaper: `set`
+    // swaps the picture without touching the file.
+    let mut shown = media.as_ref().and(options.wallpaper.clone());
 
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
@@ -584,15 +587,12 @@ fn run_output(
         .as_ref()
         .map(|media| media.wakeup_fd())
         .unwrap_or(media::NO_WAKEUP);
-    // Watch the configuration (§2). Directories, not files: tools write
-    // atomically and may create `config.d` long after we started.
+    // Watch the configuration (§2). We watch the *directory*, not the file: a
+    // writer replacing it atomically (write a temp file, then rename) would be
+    // missed by a per-file watch, and that is how the GUI saves.
     let mut watcher = crate::watch::Watcher::new()?;
     let config_dirs: Vec<std::path::PathBuf> = match &options.config_path {
-        Some(path) => {
-            let dir = path.with_extension("d");
-            let parent = path.parent().map(|p| p.to_owned());
-            [parent, Some(dir)].into_iter().flatten().collect()
-        }
+        Some(path) => path.parent().map(|p| p.to_owned()).into_iter().collect(),
         None => Vec::new(),
     };
     watcher.watch(&config_dirs)?;
@@ -721,10 +721,9 @@ fn run_output(
             let Some(path) = options.config_path.clone() else {
                 continue;
             };
-            // Watch *before* reloading. A `config.d` created just now is only
-            // discovered by this reload, and inotify reports no past events — so
-            // adding the watch afterwards would miss anything written into it in
-            // the meantime (a tool's `mkdir -p config.d && write`).
+            // Watch *before* reloading: a watcher added afterwards would miss
+            // anything written in the meantime, and inotify reports no past
+            // events.
             watcher.watch(&config_dirs)?;
             match crate::config::Config::load_from(&path) {
                 // A failed reload keeps the running configuration: a tool
@@ -737,7 +736,7 @@ fn run_output(
                     // reload has to resolve the same way startup does. Reading the
                     // globals here dropped a per-output wallpaper — and its scale and
                     // spans — the moment anything touched the configuration, which is
-                    // exactly what a panel writes to (`config.d/noctalia.toml`).
+                    // exactly what an editor writing the file would trigger.
                     let params = reloaded.output(&options.output);
                     // `fit` changes how the media is placed and `scale` changes
                     // the canvas it is built at, so both need the same reload the
@@ -745,9 +744,8 @@ fn run_output(
                     // advertise it as hot while only half of it applied: the
                     // animators moved to the new scale, the texture did not.
                     let scale_changed = params.scale != options.scale;
-                    let reload_media = params.wallpaper != options.wallpaper
-                        || params.fit != options.fit
-                        || scale_changed;
+                    let placement_changed = params.fit != options.fit || scale_changed;
+                    let reload_media = params.wallpaper != options.wallpaper || placement_changed;
                     // The layer surface was created with a namespace and cannot
                     // change it without a restart, so `state` has to keep reporting
                     // the one actually in force. Saying so once is enough: the
@@ -773,16 +771,34 @@ fn run_output(
                     options.scale = params.scale;
                     options.column_span = params.column_span;
                     options.workspace_span = params.workspace_span;
+                    // Compared before the assignments below overwrite them.
+                    let transition_changed = reloaded.transition != options.transition
+                        || reloaded.animations.slowdown != options.animations.slowdown;
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
                     options.transition = reloaded.transition.clone();
+                    // `state` reports `config.values` straight out of this, so
+                    // a reload that does not store it leaves the panel showing
+                    // the values the daemon had at startup — the settings look
+                    // like they were ignored even though the renderer already
+                    // uses the new ones.
+                    options.config = Some(reloaded.clone());
                     // The transition owns its own settings, so a reload has to
                     // rebuild it — the same way the animators above are rebuilt
                     // rather than poked. Without this, editing `[transition]`
                     // while the daemon runs silently does nothing, which is
                     // exactly what a panel writes to.
-                    transition =
-                        Transition::new(options.transition.clone(), options.animations.slowdown);
+                    //
+                    // Only when it changed, though: the panel applies a wallpaper
+                    // by writing the file *and* sending `set`, so this reload
+                    // lands while the `set`'s transition is playing, and an
+                    // unconditional rebuild cut it to the new picture at once.
+                    if transition_changed {
+                        transition = Transition::new(
+                            options.transition.clone(),
+                            options.animations.slowdown,
+                        );
+                    }
                     options.wallpaper = params.wallpaper;
                     options.fit = params.fit;
                     niri.motion
@@ -805,22 +821,29 @@ fn run_output(
                     zoom.retarget(zoom_target, now);
                     if reload_media {
                         if let Some(path) = options.wallpaper.clone() {
-                            match switch_wallpaper(
-                                &path,
-                                canvas,
-                                options.video_fps,
-                                options.fit,
-                                &mut media,
-                                &mut transition,
-                                &pool,
-                                last_slot,
-                                screen,
-                            ) {
-                                Ok(()) => {}
-                                Err(err) => log(&format!("reloaded wallpaper: {err}")),
+                            // The panel writes the file *and* sends `set`; when
+                            // the `set` came first the picture is already up,
+                            // and loading it again would restart its transition
+                            // from a half-drawn frame.
+                            if placement_changed || shown.as_ref() != Some(&path) {
+                                match switch_wallpaper(
+                                    &path,
+                                    canvas,
+                                    options.video_fps,
+                                    options.fit,
+                                    &mut media,
+                                    &mut transition,
+                                    &pool,
+                                    last_slot,
+                                    screen,
+                                ) {
+                                    Ok(()) => shown = Some(path),
+                                    Err(err) => log(&format!("reloaded wallpaper: {err}")),
+                                }
                             }
                         } else {
                             media = None;
+                            shown = None;
                             log("wallpaper cleared");
                         }
                     }
@@ -834,6 +857,12 @@ fn run_output(
         for command in commands.try_iter() {
             match command {
                 Command::Set(path) => {
+                    // The panel writes the file before it sends `set`, so the
+                    // reload may already have switched to this picture; doing it
+                    // again would restart the transition from a half-drawn frame.
+                    if shown.as_ref() == Some(&path) {
+                        continue;
+                    }
                     // Load first, swap after: a bad path must leave the current
                     // wallpaper alone, not blank the screen.
                     match switch_wallpaper(
@@ -847,7 +876,7 @@ fn run_output(
                         last_slot,
                         screen,
                     ) {
-                        Ok(()) => {}
+                        Ok(()) => shown = Some(path),
                         Err(err) => log(&format!("set {}: {err}", path.display())),
                     }
                 }
@@ -958,12 +987,6 @@ fn run_output(
     Ok(())
 }
 
-/// One line of JSON. The protocol is one line in, one line out, so the compact
-/// form is the only one that fits.
-fn json_line(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|e| format!("error serializing: {e}"))
-}
-
 /// What `state` reports, gathered by the caller because only it has these.
 struct Snapshot<'a> {
     options: &'a Options,
@@ -973,129 +996,50 @@ struct Snapshot<'a> {
     zoom: f64,
 }
 
-/// The daemon's state, for `state` over the control socket.
-///
-/// Values are keyed by the same dotted names `schema` lists, so a client can zip
-/// the two together without knowing anything about either. `config.values` is
-/// what the configuration says; `wallpaper.path` is what is *actually* on
-/// screen — `set` swaps the media without touching the configuration, so the two
-/// can legitimately differ.
+/// The daemon's state, for `state` over the control socket. Delegates to
+/// `niripaper-proto::state` — the desktop app zips the same dotted keys against
+/// `schema`, so the shape has one definition.
 fn state_json(state: &Snapshot<'_>) -> serde_json::Value {
-    use serde_json::{json, Map, Value};
-
     let options = state.options;
-    let mut values = Map::new();
-    let mut put = |name: &str, value: Value| values.insert(name.to_owned(), value);
-    put(
-        "wallpaper",
-        json!(options
-            .wallpaper
+    let values = niripaper_proto::state::config_values(
+        options
+            .config
             .as_ref()
-            .map(|path| path.display().to_string())),
+            .unwrap_or(&crate::config::Config::default()),
+        options.wallpaper.as_deref(),
+        options.video_fps,
+        options.fit,
+        &options.namespace,
     );
-    put("video_fps", json!(options.video_fps));
-    put("scale", json!(options.scale));
-    put("column_span", json!(options.column_span));
-    put("workspace_span", json!(options.workspace_span));
-    put("namespace", json!(options.namespace));
-    put("fit", json!(options.fit.name()));
-    let animations = &options.animations;
-    put("animations.follow_niri", json!(animations.follow_niri));
-    put("animations.off", json!(animations.off));
-    put("animations.slowdown", json!(animations.slowdown));
-    put(
-        "animations.parallax",
-        crate::schema::animation_value(&animations.parallax),
-    );
-    put(
-        "animations.overview-open-close.zoom",
-        json!(animations.overview_open_close.zoom),
-    );
-    put(
-        "animations.overview-open-close",
-        crate::schema::animation_value(&animations.overview_open_close.animation),
-    );
-    let transition = &options.transition;
-    put("transition.selection", json!(transition.selection.name()));
-    put("transition.effect", json!(transition.effect.name()));
-    put(
-        "transition.effects",
-        json!(transition
-            .effects
-            .iter()
-            .map(|effect| effect.name())
-            .collect::<Vec<_>>()),
-    );
-    put(
-        "transition.duration_ms",
-        json!(transition.duration.as_millis() as u64),
-    );
-    put("transition.curve", json!(transition.curve.name()));
-    put(
-        "transition.cubic_bezier",
-        match transition.curve {
-            Curve::CubicBezier(points) => json!(points),
-            _ => Value::Null,
-        },
-    );
-    put(
-        "transition.allow_overshoot",
-        json!(transition.allow_overshoot),
-    );
-    put("transition.softness", json!(transition.softness));
-    put(
-        "transition.center",
-        json!([transition.center.0, transition.center.1]),
-    );
-    put("transition.direction", json!(transition.direction.name()));
-    put("transition.stripes", json!(transition.stripes));
-    put("transition.push", json!(transition.push));
-    put("transition.start_radius", json!(transition.start_radius));
-    put(
-        "transition.hold_ms",
-        json!(transition.hold.as_millis() as u64),
-    );
-    put("transition.on_start", json!(transition.on_start));
-
-    // Which files this configuration is made of: the main one plus every
-    // `config.d/*.toml` merged over it. A panel showing "where does this value
-    // come from" needs exactly this list.
-    let files: Vec<String> = options
+    let wallpaper = state
+        .media
+        .map(|media| niripaper_proto::state::WallpaperState {
+            path: media.path().to_path_buf(),
+            kind: media.kind(),
+            hwdec: media.hwdec(),
+            fit: media.fit().name(),
+        });
+    let config_files = options
         .config_path
         .as_deref()
         .and_then(|path| crate::config::Config::config_files(path).ok())
-        .unwrap_or_default()
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect();
-
-    json!({
-        "output": options.output,
-        "namespace": options.namespace,
-        "canvas": { "width": state.canvas.0, "height": state.canvas.1 },
-        "config": {
-            "source": crate::config::describe_source(options.config_path.as_deref()),
-            "files": files,
-            "values": values,
-            "from_niri": animations.from_niri,
-        },
-        "wallpaper": match state.media {
-            Some(media) => json!({
-                "path": media.path().display().to_string(),
-                "kind": media.kind(),
-                "hwdec": media.hwdec(),
-                // The *effective* fit: a video cannot be tiled, so `tile` shows
-                // up here as `fill` even when the configuration says otherwise.
-                "fit": media.fit().name(),
-            }),
-            None => Value::Null,
-        },
-        "position": {
-            "horizontal": state.position.0,
-            "vertical": state.position.1,
-        },
-        "zoom": state.zoom,
+        .unwrap_or_default();
+    niripaper_proto::state::state_json(&niripaper_proto::state::Snapshot {
+        output: options.output.clone(),
+        namespace: options.namespace.clone(),
+        config_values: values,
+        config_path: options.config_path.clone(),
+        from_niri: !options.animations.from_niri.is_empty(),
+        config_files,
+        canvas: state.canvas,
+        wallpaper,
+        position: state.position,
+        zoom: state.zoom,
     })
+}
+
+fn json_line(value: &serde_json::Value) -> String {
+    niripaper_proto::state::json_line(value)
 }
 
 /// The canvas: the output enlarged by `scale` (§4.1). A wallpaper is fitted to

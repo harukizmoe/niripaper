@@ -80,7 +80,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Talk to the running daemon over its control socket (`HANDOFF.md` §3).
+/// Talk to the running daemon over its control socket (§3).
 fn control(command: &str, args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut output = None;
@@ -320,10 +320,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
     let (config, config_path) = match &over.config {
         Some(path) => (Config::load_from(path)?, Some(path.clone())),
         None => {
-            // A `config.d` with no main file beside it is a valid setup — that is
-            // exactly where a tool writes — so it counts as "there is one".
-            let path = niripaper::config::default_path()
-                .filter(|path| path.exists() || path.with_extension("d").is_dir());
+            let path = niripaper::config::default_path().filter(|path| path.exists());
             match path {
                 Some(path) => (Config::load_from(&path)?, Some(path)),
                 None => (Config::load()?, None),

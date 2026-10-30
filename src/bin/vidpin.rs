@@ -1,5 +1,5 @@
 //! Probe: can libmpv decode — and **hardware-accelerate** — a video on a given
-//! GPU, and draw a frame into a GL texture of ours? (`HANDOFF.md` §2/§3, V2)
+//! GPU, and draw a frame into a GL texture of ours? (§2/§3, V2)
 //!
 //! ```sh
 //! cargo build --release

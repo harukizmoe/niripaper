@@ -1,0 +1,2351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>niripaper — 桌面管理端 (Material 3 Expressive)</title>
+  <style>
+    /* ==========================================================================
+       Google Material 3 (Material You) 核心色彩与几何系统
+       ========================================================================== */
+    :root {
+      /* M3 Expressive 浅色调（参考图 1 & 3：温润丁香紫基底 + 高对比深紫侧栏 + 鲜活柠绿点睛） */
+      --m3-bg: #ece8f6;
+      --m3-canvas: #f4f2fb;
+      --m3-surface: #ffffff;
+      --m3-surface-subtle: #eae6f7;
+      --m3-surface-container: #e3deff;
+      --m3-surface-high: #fbfaff;
+
+      /* 深色侧栏 (参考图 3 Eduplex) */
+      --m3-rail-bg: #221c35;
+      --m3-rail-item-hover: rgba(255, 255, 255, 0.08);
+      --m3-rail-text: #cbc4de;
+      --m3-rail-text-active: #1c192b;
+
+      /* 点睛色 */
+      --m3-accent-lime: #d6f858;       /* 鲜活柠黄绿 */
+      --m3-accent-purple: #624b89;     /* 优雅浓紫 */
+      --m3-accent-lavender: #dcd4fa;   /* 柔和薰衣草 */
+      --m3-accent-mint: #cbeada;       /* 薄荷 */
+      --m3-accent-coral: #f7a8a2;      /* 珊瑚粉 */
+
+      --m3-fg: #1d192b;
+      --m3-fg-muted: #6e6783;
+      --m3-outline: #ccc6de;
+      --m3-outline-variant: rgba(0, 0, 0, 0.06);
+
+      /* 形状 */
+      --m3-radius-xs: 6px;
+      --m3-radius-sm: 10px;
+      --m3-radius-md: 16px;
+      --m3-radius-lg: 22px;
+      --m3-radius-xl: 32px;
+      --m3-radius-full: 9999px;
+
+      /* 阴影 */
+      --m3-shadow-sm: 0 2px 8px rgba(34, 28, 53, 0.06);
+      --m3-shadow-md: 0 8px 24px -4px rgba(34, 28, 53, 0.10);
+      --m3-shadow-float: 0 20px 40px -10px rgba(34, 28, 53, 0.22);
+
+      --font-m3: "Google Sans", "Plus Jakarta Sans", "Roboto", -apple-system, sans-serif;
+      --font-mono: "Roboto Mono", monospace;
+    }
+
+    /* M3 夜间深色模式 (参考图 2 的 Android 14 Material You 夜间调色板) */
+    html.dark {
+      --m3-bg: #0f0c18;
+      --m3-canvas: #161222;
+      --m3-surface: #221c33;
+      --m3-surface-subtle: #2d2542;
+      --m3-surface-container: #392f54;
+      --m3-surface-high: #463b65;
+
+      --m3-rail-bg: #1a1529;
+      --m3-rail-item-hover: rgba(255, 255, 255, 0.08);
+      --m3-rail-text: #a89fc0;
+      --m3-rail-text-active: #0f0c18;
+
+      --m3-accent-lime: #c8ed45;
+      --m3-accent-purple: #d1b8fc;
+      --m3-accent-lavender: #4c3d69;
+      --m3-accent-mint: #9ad7b2;
+      --m3-accent-coral: #ffb4ab;
+
+      --m3-fg: #f4effa;
+      --m3-fg-muted: #aca3c5;
+      --m3-outline: #463c5e;
+      --m3-outline-variant: rgba(255, 255, 255, 0.08);
+
+      --m3-shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.35);
+      --m3-shadow-md: 0 10px 30px rgba(0, 0, 0, 0.50);
+      --m3-shadow-float: 0 24px 50px -10px rgba(0, 0, 0, 0.75);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-m3);
+      background: var(--m3-bg);
+      color: var(--m3-fg);
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      transition: background 0.3s ease;
+    }
+
+    /* 桌面视口与主窗口 (整体界面大尺寸扩展) */
+    .desktop-viewport {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      position: relative;
+    }
+
+    .m3-window {
+      width: min(1560px, 98vw);
+      height: min(940px, 97vh);
+      background: var(--m3-canvas);
+      border-radius: var(--m3-radius-xl);
+      box-shadow: var(--m3-shadow-float), 0 0 0 1px rgba(255,255,255,0.06);
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ==========================================================================
+       左侧导航栏 (M3 Navigation Rail)
+       ========================================================================== */
+    .m3-rail {
+      width: 180px;
+      background: var(--m3-rail-bg);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      padding: 28px 16px;
+      user-select: none;
+      z-index: 10;
+    }
+
+    .rail-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px;
+      margin-bottom: 32px;
+    }
+    .logo-diamond {
+      width: 44px;
+      height: 28px;
+      border: 2px solid var(--m3-accent-lime);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 1.2px;
+      color: var(--m3-accent-lime);
+      background: rgba(214, 248, 88, 0.12);
+    }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+
+    .rail-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .rail-pill {
+      height: 48px;
+      border-radius: var(--m3-radius-full);
+      border: none;
+      background: transparent;
+      color: var(--m3-rail-text);
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      padding: 0 18px;
+      gap: 14px;
+      cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .rail-pill:hover {
+      background: var(--m3-rail-item-hover);
+      color: #fff;
+    }
+    .rail-pill:active { transform: scale(0.96); }
+    .rail-pill.active {
+      background: var(--m3-accent-lime);
+      color: var(--m3-rail-text-active);
+      font-weight: 800;
+      box-shadow: 0 8px 18px rgba(214, 248, 88, 0.35);
+    }
+    .rail-pill svg { width: 20px; height: 20px; }
+
+    .rail-bottom-card {
+      margin-top: auto;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: var(--m3-radius-lg);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .daemon-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--m3-accent-lime);
+      box-shadow: 0 0 10px var(--m3-accent-lime);
+    }
+
+    /* 主题取色开关与种子色（侧栏底部） */
+    .rail-theme-btn {
+      margin-top: 8px;
+      height: 34px;
+      border-radius: var(--m3-radius-full);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--m3-rail-text);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .rail-theme-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
+    .rail-theme-btn.active {
+      background: var(--m3-accent-lime);
+      border-color: transparent;
+      color: var(--m3-rail-text-active);
+      font-weight: 800;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
+    }
+    .rail-theme-seed {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9px;
+      font-family: var(--font-mono);
+      color: var(--m3-rail-text);
+      margin-top: 2px;
+    }
+    .rail-theme-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #8b5cf6;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      transition: background 0.4s ease;
+    }
+
+    /* 主题换色时的平滑过渡（Material You 的配色是"流动"的） */
+    body, .m3-window, .m3-rail, .m3-drawer, .wallpaper-top-bar,
+    .wallhaven-control-box, .wallpaper-card, .m3-slider-tile,
+    .source-segmented-switch, .m3-display-capsule, .drawer-footer {
+      transition: background-color 0.45s cubic-bezier(0.2, 0, 0, 1),
+                  color 0.35s ease,
+                  border-color 0.35s ease,
+                  box-shadow 0.35s ease;
+    }
+    .rail-pill, .source-seg-btn, .m3-seg-btn, .wh-toggle-pill, .m3-select, .m3-num-badge {
+      transition: background-color 0.45s cubic-bezier(0.2, 0, 0, 1),
+                  color 0.35s ease,
+                  border-color 0.35s ease,
+                  box-shadow 0.25s ease;
+    }
+
+    /* ==========================================================================
+       主工作区
+       ========================================================================== */
+    .main-workspace {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      position: relative;
+      background: var(--m3-canvas);
+    }
+
+    .view-page {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .view-page.active { display: flex; }
+
+    /* 壁纸视图顶部工具栏 */
+    .wallpaper-top-bar {
+      height: 72px;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .source-segmented-switch {
+      display: inline-flex;
+      background: var(--m3-surface);
+      padding: 4px;
+      border-radius: var(--m3-radius-full);
+      box-shadow: var(--m3-shadow-sm);
+    }
+    .source-seg-btn {
+      height: 38px;
+      padding: 0 20px;
+      border-radius: var(--m3-radius-full);
+      border: none;
+      background: transparent;
+      color: var(--m3-fg-muted);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .source-seg-btn:hover { color: var(--m3-fg); }
+    .source-seg-btn.active {
+      background: var(--m3-accent-purple);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(98, 75, 137, 0.35);
+    }
+
+    .m3-display-capsule {
+      height: 42px;
+      padding: 0 20px;
+      border-radius: var(--m3-radius-full);
+      border: none;
+      background: var(--m3-surface);
+      color: var(--m3-fg);
+      font-size: 13px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      box-shadow: var(--m3-shadow-sm);
+      transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .m3-display-capsule:hover {
+      background: var(--m3-surface-subtle);
+      box-shadow: var(--m3-shadow-md);
+    }
+
+    /* Wallhaven 控制盒 */
+    .wallhaven-control-box {
+      background: var(--m3-surface);
+      margin: 0 28px 16px 28px;
+      border-radius: var(--m3-radius-lg);
+      padding: 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: var(--m3-shadow-sm);
+      user-select: none;
+    }
+
+    .wh-search-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .wh-search-input-wrap {
+      flex: 1;
+      height: 44px;
+      background: var(--m3-surface-subtle);
+      border-radius: var(--m3-radius-full);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 10px;
+      transition: all 0.2s ease;
+    }
+    .wh-search-input-wrap:focus-within {
+      box-shadow: 0 0 0 2px var(--m3-accent-purple);
+      background: var(--m3-surface);
+    }
+    .wh-search-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      outline: none;
+      color: var(--m3-fg);
+      font-size: 14px;
+      font-family: inherit;
+      font-weight: 500;
+    }
+    .wh-search-input::placeholder { color: var(--m3-fg-muted); }
+
+    .wh-search-btn {
+      height: 44px;
+      padding: 0 24px;
+      border-radius: var(--m3-radius-full);
+      background: var(--m3-accent-purple);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 800;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(98, 75, 137, 0.35);
+      transition: all 0.18s;
+    }
+    .wh-search-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+    .wh-tags-quick-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .wh-quick-tag {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 14px;
+      border-radius: var(--m3-radius-full);
+      background: var(--m3-surface-subtle);
+      color: var(--m3-fg-muted);
+      cursor: pointer;
+      border: none;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .wh-quick-tag:hover {
+      background: var(--m3-surface-container);
+      color: var(--m3-fg);
+    }
+
+    .wh-filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--m3-outline-variant);
+      font-size: 12px;
+    }
+    .wh-filter-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .wh-group-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--m3-fg-muted);
+      margin-right: 4px;
+    }
+
+    .wh-toggle-pill {
+      height: 32px;
+      padding: 0 14px;
+      border-radius: var(--m3-radius-full);
+      background: var(--m3-surface-subtle);
+      color: var(--m3-fg-muted);
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.18s;
+    }
+    .wh-toggle-pill:hover { background: var(--m3-surface-container); color: var(--m3-fg); }
+    .wh-toggle-pill.active {
+      background: var(--m3-accent-purple);
+      color: #fff;
+    }
+
+    .wh-purity-pill.active-sfw {
+      background: rgba(120, 220, 119, 0.25);
+      color: #2e7d32;
+    }
+    html.dark .wh-purity-pill.active-sfw {
+      background: rgba(120, 220, 119, 0.2);
+      color: #a5f2a2;
+    }
+    .wh-purity-pill.active-sketchy {
+      background: rgba(245, 158, 11, 0.25);
+      color: #b45309;
+    }
+    html.dark .wh-purity-pill.active-sketchy {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fcd34d;
+    }
+
+    .wh-match-screen-btn {
+      height: 32px;
+      padding: 0 14px;
+      border-radius: var(--m3-radius-full);
+      background: rgba(214, 248, 88, 0.25);
+      color: #4d6006;
+      border: 1px solid rgba(214, 248, 88, 0.6);
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.18s;
+    }
+    html.dark .wh-match-screen-btn {
+      background: rgba(200, 237, 69, 0.18);
+      color: var(--m3-accent-lime);
+      border-color: rgba(200, 237, 69, 0.4);
+    }
+    .wh-match-screen-btn:hover {
+      background: var(--m3-accent-lime);
+      color: #000;
+    }
+
+    .wh-clear-btn {
+      height: 32px;
+      padding: 0 14px;
+      border-radius: var(--m3-radius-full);
+      background: rgba(247, 168, 162, 0.25);
+      color: #b91c1c;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    html.dark .wh-clear-btn {
+      background: rgba(255, 180, 171, 0.15);
+      color: #ffb4ab;
+    }
+    .wh-clear-btn:hover {
+      background: var(--m3-accent-coral);
+      color: #7a100a;
+    }
+
+    /* ==========================================================================
+       瀑布流主体 (3D 视差微翘 + 景深微模糊聚焦)
+       ========================================================================== */
+    .gallery-viewport {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 28px 32px 28px;
+    }
+
+    .gallery-masonry {
+      column-count: 4;
+      column-gap: 18px;
+    }
+    @media (max-width: 1100px) { .gallery-masonry { column-count: 3; } }
+
+    /* 悬停景深微模糊聚焦 */
+    .gallery-masonry:hover .wallpaper-card:not(:hover) {
+      filter: blur(2.5px) brightness(0.86);
+      opacity: 0.82;
+      transition: filter 0.32s cubic-bezier(0.2, 0, 0, 1), opacity 0.32s ease;
+    }
+
+    .wallpaper-card {
+      break-inside: avoid;
+      -webkit-column-break-inside: avoid;
+      page-break-inside: avoid;
+      margin-bottom: 20px;
+      border-radius: var(--m3-radius-lg);
+      overflow: hidden;
+      cursor: pointer;
+      position: relative;
+      background: var(--m3-surface);
+      box-shadow: var(--m3-shadow-sm);
+      transform: perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg);
+      transition: transform 0.12s ease-out, box-shadow 0.25s ease, filter 0.3s ease, opacity 0.3s ease;
+      will-change: transform, box-shadow;
+      isolation: isolate;
+      -webkit-mask-image: -webkit-radial-gradient(white, black);
+      mask-image: radial-gradient(white, black);
+    }
+    .wallpaper-card:hover {
+      box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.75), 0 0 24px rgba(168, 199, 250, 0.25);
+      z-index: 40;
+    }
+    .wallpaper-card:active {
+      transform: perspective(1000px) scale(1.02) translateY(-4px) !important;
+    }
+    .wallpaper-card.active-target {
+      box-shadow: 0 0 0 4px var(--m3-accent-lime), var(--m3-shadow-md);
+    }
+
+    .card-media {
+      width: 100%;
+      background: var(--m3-surface-subtle);
+      position: relative;
+      overflow: hidden;
+      border-radius: inherit;
+      -webkit-mask-image: -webkit-radial-gradient(white, black);
+      mask-image: radial-gradient(white, black);
+      display: block;
+    }
+    .card-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      border-radius: inherit;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
+      transform: translateZ(0);
+      transition: transform 0.5s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .wallpaper-card:hover .card-media img { transform: scale(1.04) translateZ(0); }
+
+    .card-glare {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      opacity: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.3) 0%, transparent 60%);
+      mix-blend-mode: overlay;
+      transition: opacity 0.25s ease;
+      z-index: 5;
+    }
+    .wallpaper-card:hover .card-glare { opacity: 1; }
+
+    .badge-active {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: var(--m3-accent-lime);
+      color: var(--m3-rail-text-active);
+      font-size: 11px;
+      font-weight: 900;
+      padding: 4px 12px;
+      border-radius: var(--m3-radius-full);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      box-shadow: 0 4px 12px rgba(214, 248, 88, 0.4);
+      z-index: 6;
+    }
+
+    /* 底部分页 */
+    .wh-pagination-bar {
+      margin: 16px 28px 24px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      user-select: none;
+    }
+    .wh-page-pill {
+      background: var(--m3-surface);
+      box-shadow: var(--m3-shadow-sm);
+      border-radius: var(--m3-radius-full);
+      padding: 6px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .wh-page-nav-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      background: var(--m3-surface-subtle);
+      color: var(--m3-fg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-weight: 800;
+      transition: all 0.15s;
+    }
+    .wh-page-nav-btn:hover { background: var(--m3-surface-container); }
+
+    /* ==========================================================================
+       真正的 Material 3 (M3) 原生高质感控件套件
+       ========================================================================== */
+    /* M3 分段选择器 (Segmented Control) */
+    .m3-seg-box {
+      display: flex;
+      background: var(--m3-surface-subtle);
+      padding: 4px;
+      border-radius: var(--m3-radius-full);
+      border: 1px solid var(--m3-outline-variant);
+      gap: 4px;
+      user-select: none;
+    }
+    .m3-seg-btn {
+      height: 38px;
+      border-radius: var(--m3-radius-full);
+      border: none;
+      background: transparent;
+      color: var(--m3-fg-muted);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .m3-seg-btn:hover {
+      color: var(--m3-fg);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .m3-seg-btn.active {
+      background: var(--m3-surface);
+      color: var(--m3-fg);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      font-weight: 800;
+    }
+
+    /* M3 自定义下拉框 (带 SVG 箭头) */
+    .m3-select-wrapper {
+      position: relative;
+      width: 100%;
+    }
+    .m3-select {
+      width: 100%;
+      height: 44px;
+      background: var(--m3-surface);
+      border: 1.5px solid var(--m3-outline);
+      border-radius: var(--m3-radius-md);
+      color: var(--m3-fg);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 0 38px 0 16px;
+      outline: none;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+      box-shadow: var(--m3-shadow-sm);
+    }
+    .m3-select:hover {
+      background: var(--m3-surface-high);
+      border-color: var(--m3-fg);
+    }
+    .m3-select:focus {
+      border-color: var(--m3-accent-purple);
+      box-shadow: 0 0 0 3px rgba(98, 75, 137, 0.25);
+    }
+    .m3-select-arrow {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--m3-fg-muted);
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+    }
+
+    /* M3 饱满胶囊滑块 (Android 14 风格加粗滑轨) */
+    .m3-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 12px;
+      background: var(--m3-surface-subtle);
+      border-radius: var(--m3-radius-full);
+      outline: none;
+      cursor: pointer;
+      margin: 8px 0;
+      position: relative;
+      transition: background 0.15s ease;
+    }
+    .m3-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--m3-accent-purple);
+      border: 3px solid #ffffff;
+      box-shadow: 0 3px 10px rgba(98, 75, 137, 0.45);
+      cursor: grab;
+      transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.15s ease;
+    }
+    .m3-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.18);
+      box-shadow: 0 4px 16px rgba(98, 75, 137, 0.65);
+    }
+    .m3-slider::-webkit-slider-thumb:active {
+      cursor: grabbing;
+      transform: scale(1.25);
+      box-shadow: 0 0 0 8px rgba(98, 75, 137, 0.22);
+    }
+    .m3-slider::-moz-range-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--m3-accent-purple);
+      border: 3px solid #ffffff;
+      box-shadow: 0 3px 10px rgba(98, 75, 137, 0.45);
+      cursor: grab;
+    }
+
+    /* M3 数字药丸徽章 (隐藏原生上下箭头，支持手动高精输入) */
+    .m3-num-badge {
+      display: inline-flex;
+      align-items: center;
+      background: var(--m3-surface);
+      border: 1.5px solid var(--m3-outline);
+      border-radius: var(--m3-radius-full);
+      padding: 3px 10px;
+      gap: 3px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      transition: all 0.15s;
+    }
+    .m3-num-badge:focus-within {
+      border-color: var(--m3-accent-purple);
+      box-shadow: 0 0 0 2px rgba(98, 75, 137, 0.22);
+      background: var(--m3-surface-high);
+    }
+    .m3-num-badge input[type=number] {
+      width: 44px;
+      border: none;
+      background: transparent;
+      color: var(--m3-fg);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 800;
+      text-align: right;
+      outline: none;
+      padding: 0;
+      -moz-appearance: textfield;
+    }
+    .m3-num-badge input[type=number]::-webkit-inner-spin-button,
+    .m3-num-badge input[type=number]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .m3-num-badge-unit {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--m3-fg-muted);
+      font-family: var(--font-mono);
+    }
+
+    /* 每一个滤镜控制行 (M3 Tile Card) */
+    .m3-slider-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 14px;
+      background: var(--m3-surface);
+      border-radius: var(--m3-radius-md);
+      box-shadow: var(--m3-shadow-sm);
+      border: 1px solid var(--m3-outline-variant);
+    }
+    .m3-tile-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .m3-tile-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--m3-fg);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ==========================================================================
+       右侧滑出抽屉 (M3 Side Sheet / Drawer)
+       ========================================================================== */
+    .m3-drawer-scrim {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 8, 16, 0.45);
+      backdrop-filter: blur(4px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.28s ease;
+      z-index: 45;
+    }
+    .m3-drawer-scrim.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .m3-drawer {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 480px;
+      height: 100%;
+      background: var(--m3-surface);
+      border-left: 1px solid var(--m3-outline-variant);
+      border-radius: var(--m3-radius-xl) 0 0 var(--m3-radius-xl);
+      box-shadow: -14px 0 40px rgba(0, 0, 0, 0.45);
+      transform: translateX(100%);
+      transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .m3-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      height: 64px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--m3-outline-variant);
+      flex-shrink: 0;
+      background: var(--m3-surface);
+    }
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .drawer-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--m3-outline-variant);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--m3-surface);
+      flex-shrink: 0;
+    }
+
+    .drawer-media-box {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      border-radius: var(--m3-radius-md);
+      overflow: hidden;
+      background: #0d0c13;
+      position: relative;
+      box-shadow: var(--m3-shadow-md);
+    }
+    .drawer-media-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .drawer-media-tag {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(18, 14, 28, 0.85);
+      backdrop-filter: blur(10px);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: var(--m3-radius-full);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .palette-swatches {
+      display: flex;
+      gap: 8px;
+    }
+    .swatch {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--m3-radius-full);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+    .swatch:hover { transform: scale(1.18); }
+
+    .m3-act-btn {
+      height: 40px;
+      padding: 0 20px;
+      border-radius: var(--m3-radius-full);
+      font-size: 13px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      transition: all 0.18s;
+    }
+    .m3-act-tonal { background: var(--m3-surface-container); color: var(--m3-accent-purple); }
+    .m3-act-primary { background: var(--m3-accent-purple); color: #fff; box-shadow: 0 6px 18px rgba(98, 75, 137, 0.4); }
+
+    /* 主题切换与提示 */
+    .theme-toggle-btn {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: var(--m3-radius-full);
+      background: var(--m3-surface);
+      color: var(--m3-fg);
+      font-size: 12px;
+      font-weight: 700;
+      border: none;
+      box-shadow: var(--m3-shadow-md);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 999;
+    }
+    .m3-snackbar {
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      background: #231c33;
+      color: #fff;
+      box-shadow: var(--m3-shadow-float);
+      padding: 12px 24px;
+      border-radius: var(--m3-radius-md);
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 3000;
+      opacity: 0;
+      transform: translateY(16px);
+      pointer-events: none;
+      transition: all 0.24s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .m3-snackbar.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+
+  <!-- 主题切换 -->
+  <button class="theme-toggle-btn" onclick="toggleTheme()">
+    <span id="theme-icon">🌙</span>
+    <span id="theme-text">切换夜间深色</span>
+  </button>
+
+  <div class="desktop-viewport">
+    <div class="m3-window">
+
+      <!-- 左侧深紫高反差导航栏 (M3 Rail) -->
+      <aside class="m3-rail">
+        <div class="rail-brand">
+          <div class="logo-diamond">NIRI</div>
+          <span class="brand-title">niripaper</span>
+        </div>
+
+        <nav class="rail-menu">
+          <button class="rail-pill active" id="tab-btn-wallpapers" onclick="switchNav('wallpapers')">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54-1.96-2.36L6.5 17h11l-3.54-4.71z"/>
+            </svg>
+            <span>壁纸库</span>
+          </button>
+
+          <button class="rail-pill" id="tab-btn-transitions" onclick="switchNav('transitions')">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
+            </svg>
+            <span>过渡动画</span>
+          </button>
+
+          <button class="rail-pill" id="tab-btn-settings" onclick="switchNav('settings')">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+            </svg>
+            <span>系统设置</span>
+          </button>
+        </nav>
+
+        <div class="rail-bottom-card">
+          <div class="daemon-indicator">
+            <div class="pulse-dot"></div>
+            <span>daemon 53023</span>
+          </div>
+          <div style="font-size: 10px; color: var(--m3-rail-text);">NVIDIA · DP-1 渲染中</div>
+
+          <!-- 主题取色：跟随当前壁纸 / 固定默认 -->
+          <button class="rail-theme-btn active" id="follow-theme-btn" onclick="setFollowWallpaper(!followWallpaper)">
+            🎨 跟随壁纸取色
+          </button>
+          <div class="rail-theme-seed">
+            <span class="rail-theme-dot" id="theme-seed-dot"></span>
+            <span id="theme-seed-hex">#8B5CF6</span>
+            <span style="opacity: 0.7;">取色种子</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 右侧主工作区 -->
+      <main class="main-workspace">
+
+        <!-- ====================================================================
+             视图 1：壁纸库总页 (本地壁纸 / Wallhaven 公共库二合一)
+             ==================================================================== -->
+        <div class="view-page active" id="view-wallpapers">
+          <!-- 顶栏：壁纸来源切换 [本地壁纸 | 🌐 Wallhaven 公共源] + 显示器下拉 -->
+          <header class="wallpaper-top-bar">
+            <!-- 来源切换器 -->
+            <div class="source-segmented-switch">
+              <button class="source-seg-btn active" id="btn-source-wh" onclick="switchWallpaperSource('wallhaven')">
+                <span>🌐 Wallhaven 公共源</span>
+              </button>
+              <button class="source-seg-btn" id="btn-source-local" onclick="switchWallpaperSource('local')">
+                <span>📁 本地壁纸库 (12)</span>
+              </button>
+            </div>
+
+            <!-- 显示器切换胶囊 -->
+            <button class="m3-display-capsule" onclick="cycleDisplay()">
+              <span>🖥️</span>
+              <span id="current-display-label">DP-1 (主屏)</span>
+              <span style="font-size: 11px; opacity: 0.6;">▼</span>
+            </button>
+          </header>
+
+          <!-- 模式 A：Wallhaven 在线专属控制区 -->
+          <div class="wallhaven-control-box" id="wh-control-panel">
+            <!-- 搜索框行 -->
+            <div class="wh-search-row">
+              <div class="wh-search-input-wrap">
+                <span style="font-size: 16px; opacity: 0.6;">🔍</span>
+                <input type="text" class="wh-search-input" id="wh-query-input" placeholder="在 Wallhaven 数百万壁纸中搜索标签（如 anime, cyberpunk, landscape, night...）" onkeydown="if(event.key==='Enter') executeWhSearch()">
+                <span style="cursor: pointer; opacity: 0.5; font-size: 13px;" onclick="document.getElementById('wh-query-input').value=''; executeWhSearch();">✕</span>
+              </div>
+              <button class="wh-search-btn" onclick="executeWhSearch()">
+                <span>搜 索</span>
+              </button>
+            </div>
+
+            <!-- 热门标签快捷胶囊 -->
+            <div class="wh-tags-quick-bar">
+              <span style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted); margin-right: 4px;">热门灵感:</span>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Cyberpunk')">#Cyberpunk</button>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Anime')">#AnimeGirl</button>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Landscape')">#Landscape</button>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Pixel Art')">#PixelArt</button>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Fantasy')">#FantasyArt</button>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Sci-Fi')">#Sci-Fi</button>
+              <button class="wh-quick-tag" onclick="quickTagSearch('Minimalism')">#Minimalism</button>
+            </div>
+
+            <!-- 筛选行：分类 / 内容 / 排序 / 智能匹配当前屏 -->
+            <div class="wh-filter-row">
+              <div class="wh-filter-group">
+                <span class="wh-group-label">分类:</span>
+                <button class="wh-toggle-pill active" onclick="this.classList.toggle('active')">综合</button>
+                <button class="wh-toggle-pill active" onclick="this.classList.toggle('active')">动漫</button>
+                <button class="wh-toggle-pill" onclick="this.classList.toggle('active')">人物</button>
+              </div>
+
+              <div class="wh-filter-group">
+                <span class="wh-group-label">分级:</span>
+                <button class="wh-toggle-pill wh-purity-pill active-sfw">SFW (安全)</button>
+                <button class="wh-toggle-pill wh-purity-pill">敏感 (Sketchy)</button>
+              </div>
+
+              <div class="wh-filter-group">
+                <span class="wh-group-label">排序:</span>
+                <select style="background: var(--m3-surface-subtle); border: none; padding: 6px 14px; border-radius: var(--m3-radius-full); font-size: 12px; font-weight: 700; color: var(--m3-fg); outline: none;">
+                  <option>🔥 热门 Toplist</option>
+                  <option>🎲 随机探索</option>
+                  <option>⭐ 收藏最多</option>
+                  <option>⏱️ 最新发布</option>
+                </select>
+              </div>
+
+              <!-- 智能屏幕匹配按钮 -->
+              <div class="wh-filter-group">
+                <button class="wh-match-screen-btn" onclick="matchScreenPreset()">
+                  <span>🖥️ 匹配当前 DP-1 (16:9 · ≥2K)</span>
+                </button>
+                <button class="wh-clear-btn" onclick="resetWhFilters()">重置</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 模式 B：本地壁纸专属工具条 (默认隐藏) -->
+          <div style="display: none; padding: 0 28px 12px 28px; gap: 8px;" id="local-control-panel">
+            <button class="wh-toggle-pill active" onclick="setLocalFilter(this, 'all')">全部本地 (12)</button>
+            <button class="wh-toggle-pill" onclick="setLocalFilter(this, 'static')">静态图片</button>
+            <button class="wh-toggle-pill" onclick="setLocalFilter(this, 'video')">动态视频</button>
+            <button class="wh-toggle-pill" onclick="setLocalFilter(this, 'dark')">暗色系</button>
+            <button class="wh-toggle-pill" onclick="setLocalFilter(this, 'light')">亮色系</button>
+          </div>
+
+          <!-- 纯视觉大瀑布流 (无文件名，22px 柔和大圆角) -->
+          <div class="gallery-viewport">
+            <div class="gallery-masonry" id="wallpaper-grid">
+              <!-- 动态注入壁纸卡片 -->
+            </div>
+
+            <!-- Wallhaven 分页控制器 -->
+            <div class="wh-pagination-bar" id="wh-pagination">
+              <div class="wh-page-pill">
+                <button class="wh-page-nav-btn" onclick="changeWhPage(-1)">◀</button>
+                <span>第 <strong style="color: var(--m3-accent-purple);" id="wh-current-page">1</strong> 页 / 共 26,116 页</span>
+                <button class="wh-page-nav-btn" onclick="changeWhPage(1)">▶</button>
+              </div>
+              <button class="wh-toggle-pill" style="height: 40px; padding: 0 18px;" onclick="changeWhPage(1)">
+                🎲 换一批随机
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 视图 2：换图过渡页 (全局生效) -->
+        <div class="view-page" id="view-transitions">
+          <header class="wallpaper-top-bar" style="border-bottom: 1px solid var(--m3-outline-variant);">
+            <div class="page-title-box">
+              <h2 style="font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 10px;">
+                <span>换图过渡效果 (Transitions)</span>
+                <span style="font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 9999px; background: var(--m3-accent-lavender); color: var(--m3-accent-purple);">仅全局配置</span>
+              </h2>
+              <p style="font-size: 12px; color: var(--m3-fg-muted); margin-top: 2px;">GPU 屏幕空间着色器混合。多显示器换图时全局生效，不按显示器划分。</p>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <button class="wh-search-btn" style="height: 38px;" onclick="snackbar('⚡ 触发全局换图过渡测试播演 (1200 ms)')">
+                ▶ 预览过渡
+              </button>
+            </div>
+          </header>
+
+          <div style="flex: 1; overflow-y: auto; padding: 24px 28px; display: flex; flex-direction: column; gap: 24px;">
+            <div style="font-size: 13px; font-weight: 800; color: var(--m3-fg-muted); text-transform: uppercase;">9 款 Shader 转场效果</div>
+            <div class="gallery-masonry" style="column-count: 3;" id="transition-grid">
+              <!-- 过渡卡片 -->
+            </div>
+          </div>
+        </div>
+
+        <!-- 视图 3：系统设置页 (全局设置) -->
+        <div class="view-page" id="view-settings">
+          <header class="wallpaper-top-bar" style="border-bottom: 1px solid var(--m3-outline-variant);">
+            <div>
+              <h2 style="font-size: 18px; font-weight: 800;">系统与动画设置</h2>
+              <p style="font-size: 12px; color: var(--m3-fg-muted);">全局配置文件：~/.config/niripaper/config.toml</p>
+            </div>
+          </header>
+          <div style="padding: 28px;">
+            <div class="wallhaven-control-box" style="margin: 0;">
+              <div style="font-weight: 800; font-size: 14px;">跟随与渲染控制</div>
+              <div style="font-size: 12px; color: var(--m3-fg-muted);">视差动画已跟随 Niri 工作区配置；窗口完全遮挡时自动暂停 GPU 渲染。</div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+
+      <!-- 抽屉暗色遮罩 (点击收起抽屉) -->
+      <div class="m3-drawer-scrim" id="drawer-scrim" onclick="closeDrawer()"></div>
+
+      <!-- 右侧滑出抽屉 (M3 Side Sheet / Drawer) -->
+      <aside class="m3-drawer" id="m3-drawer">
+        <!-- 抽屉顶栏 -->
+        <div class="drawer-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 15px; font-weight: 800;">壁纸设置与应用</span>
+            <span class="wh-quick-tag" style="background: var(--m3-surface-container); color: var(--m3-accent-purple); font-weight: 800;" id="drawer-source-badge">Wallhaven #wh-1</span>
+          </div>
+          <button style="border: none; background: var(--m3-surface-subtle); width: 32px; height: 32px; border-radius: 50%; cursor: pointer; color: var(--m3-fg); font-size: 14px; display: flex; align-items: center; justify-content: center; font-weight: 800;" onclick="closeDrawer()">✕</button>
+        </div>
+
+        <!-- 抽屉滚动内容 -->
+        <div class="drawer-body">
+          <!-- 大图预览 (支持滤镜与暗角颗粒实时渲染) -->
+          <div class="drawer-media-box" id="drawer-media-box" style="position: relative;">
+            <img id="drawer-img" src="" alt="大图预览" style="transition: filter 0.1s ease;">
+            <div id="drawer-vignette-overlay" style="position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.92) 100%); transition: opacity 0.15s ease;"></div>
+            <div id="drawer-grain-overlay" style="position: absolute; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: overlay; background-image: radial-gradient(rgba(255,255,255,0.4) 1px, transparent 0); background-size: 3px 3px; transition: opacity 0.15s ease;"></div>
+            <span class="drawer-media-tag" id="drawer-media-badge">3840×2160 · 16:9</span>
+          </div>
+
+          <!-- 标题与次要信息 -->
+          <div>
+            <h3 id="drawer-title" style="font-size: 16px; font-weight: 800; line-height: 1.3;">Wallpaper Title</h3>
+            <div id="drawer-sub" style="font-size: 12px; font-weight: 600; color: var(--m3-fg-muted); margin-top: 4px;">
+              3840×2160 · 16:9 · SFW
+            </div>
+          </div>
+
+          <!-- Wallhaven 专属 5 色 dominant 色板（仅在线壁纸显示） -->
+          <div id="drawer-swatches-box">
+            <div style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted); margin-bottom: 8px; text-transform: uppercase;">Wallhaven 5 色主色调:</div>
+            <div class="palette-swatches" id="drawer-swatches"></div>
+          </div>
+
+          <!-- 标签云（仅在线壁纸显示） -->
+          <div id="drawer-tags-box">
+            <div style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted); margin-bottom: 8px; text-transform: uppercase;">题材标签:</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;" id="drawer-tags"></div>
+          </div>
+
+          <!-- 本地文件路径（仅本地壁纸显示） -->
+          <div id="drawer-local-path-box" style="display: none;">
+            <div style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted); margin-bottom: 4px; text-transform: uppercase;">本地文件路径:</div>
+            <div id="drawer-local-path" style="font-size: 11px; font-family: var(--font-mono); color: var(--m3-fg); background: var(--m3-surface-subtle); padding: 8px 12px; border-radius: var(--m3-radius-sm); word-break: break-all;">~/Pictures/Wallpapers/kobeni_gun.webp</div>
+          </div>
+
+          <hr style="border: none; border-top: 1px solid var(--m3-outline-variant);">
+
+          <!-- 核心设置区：目标屏幕、fit、scale (本地与在线完全一致) -->
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="font-size: 12px; font-weight: 800; color: var(--m3-fg); display: flex; align-items: center; gap: 6px;">
+              <span>⚙️ 屏幕与渲染参数设置</span>
+            </div>
+
+            <!-- 目标屏幕选择 (真 M3 Segmented Control) -->
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted);">目标显示器:</span>
+              <div class="m3-seg-box" style="width: 100%;">
+                <button class="m3-seg-btn active" id="drawer-btn-dp1" style="flex: 1;" onclick="setDrawerTarget('DP-1')">🖥️ DP-1 (主屏)</button>
+                <button class="m3-seg-btn" id="drawer-btn-edp1" style="flex: 1;" onclick="setDrawerTarget('eDP-1')">💻 eDP-1</button>
+                <button class="m3-seg-btn" id="drawer-btn-all" style="flex: 1;" onclick="setDrawerTarget('*')">🌐 所有屏幕</button>
+              </div>
+            </div>
+
+            <!-- 填充模式 (fit) 与 缩放 (scale) -->
+            <div style="display: grid; grid-template-columns: 1.1fr 1fr; gap: 14px;">
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted);">填充方式 (fit):</span>
+                <div class="m3-select-wrapper">
+                  <select id="drawer-fit-select" class="m3-select">
+                    <option value="cover">cover (比例填满)</option>
+                    <option value="fill">fill (拉伸铺满)</option>
+                    <option value="fit">fit (保留加黑边)</option>
+                    <option value="center">center (居中不缩放)</option>
+                  </select>
+                  <div class="m3-select-arrow">▼</div>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700;">
+                  <span style="color: var(--m3-fg-muted);">缩放 (scale):</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="drawer-scale-num" min="1.0" max="2.0" step="0.05" value="1.20" oninput="syncScaleFromNum(this.value)">
+                    <span class="m3-num-badge-unit">x</span>
+                  </div>
+                </div>
+                <input type="range" id="drawer-scale-range" class="m3-slider" min="1.0" max="1.5" step="0.05" value="1.20" oninput="syncScaleFromSlider(this.value)">
+              </div>
+            </div>
+          </div>
+
+          <hr style="border: none; border-top: 1px solid var(--m3-outline-variant);">
+
+          <!-- 🎨 画面调色与后期滤镜 (对标 Wallpaper Engine 滤镜系统) -->
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style="font-size: 12px; font-weight: 800; color: var(--m3-fg); display: flex; align-items: center; gap: 6px;">
+                <span>🎨 后期滤镜与色彩调优 (对标 WE)</span>
+              </div>
+              <button style="border: none; background: transparent; font-size: 11px; font-weight: 700; color: var(--m3-accent-purple); cursor: pointer;" onclick="resetDrawerFilters()">↺ 重置滤镜</button>
+            </div>
+
+            <!-- 滤镜预设下拉列表 (M3 Custom Select) -->
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 11px; font-weight: 700; color: var(--m3-fg-muted);">选择滤镜预设库:</span>
+              <div class="m3-select-wrapper">
+                <select id="filter-preset-select" class="m3-select" onchange="applyFilterPreset(this.value)">
+                  <option value="none">原画 (None · 无后期调色)</option>
+                  <option value="vivid">鲜艳 (Vivid · 增强对比高饱和)</option>
+                  <option value="film">复古胶片 (Film · 胶片颗粒与暗角)</option>
+                  <option value="mono">黑白单色 (Mono · 高反差黑白)</option>
+                  <option value="cyber">赛博霓虹 (Cyber · 紫粉色相偏转)</option>
+                  <option value="warm">暖调夕阳 (Warm · 温暖金暮)</option>
+                  <option value="cool">冷冽电影 (Cool · 青蓝冷调)</option>
+                  <option value="invert">负片反相 (Invert · 颠倒色彩)</option>
+                </select>
+                <div class="m3-select-arrow">▼</div>
+              </div>
+            </div>
+
+            <!-- 详细微调滑块 (M3 Slider List + M3 Num Badges) -->
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <!-- 亮度 Brightness -->
+              <div class="m3-slider-tile">
+                <div class="m3-tile-header">
+                  <span class="m3-tile-label">☀️ 亮度 (Brightness)</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="filter-num-brightness" min="50" max="150" value="100" oninput="syncFromNum('brightness', this.value)">
+                    <span class="m3-num-badge-unit">%</span>
+                  </div>
+                </div>
+                <input type="range" id="filter-input-brightness" class="m3-slider" min="50" max="150" value="100" oninput="syncFromSlider('brightness', this.value)">
+              </div>
+
+              <!-- 对比度 Contrast -->
+              <div class="m3-slider-tile">
+                <div class="m3-tile-header">
+                  <span class="m3-tile-label">◐ 对比度 (Contrast)</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="filter-num-contrast" min="50" max="160" value="100" oninput="syncFromNum('contrast', this.value)">
+                    <span class="m3-num-badge-unit">%</span>
+                  </div>
+                </div>
+                <input type="range" id="filter-input-contrast" class="m3-slider" min="50" max="160" value="100" oninput="syncFromSlider('contrast', this.value)">
+              </div>
+
+              <!-- 饱和度 Saturation -->
+              <div class="m3-slider-tile">
+                <div class="m3-tile-header">
+                  <span class="m3-tile-label">🎨 饱和度 (Saturation)</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="filter-num-saturation" min="0" max="220" value="100" oninput="syncFromNum('saturation', this.value)">
+                    <span class="m3-num-badge-unit">%</span>
+                  </div>
+                </div>
+                <input type="range" id="filter-input-saturation" class="m3-slider" min="0" max="220" value="100" oninput="syncFromSlider('saturation', this.value)">
+              </div>
+
+              <!-- 色相偏移 Hue-Rotate -->
+              <div class="m3-slider-tile">
+                <div class="m3-tile-header">
+                  <span class="m3-tile-label">🌈 色相偏移 (Hue Shift)</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="filter-num-hue" min="0" max="360" value="0" oninput="syncFromNum('hue', this.value)">
+                    <span class="m3-num-badge-unit">°</span>
+                  </div>
+                </div>
+                <input type="range" id="filter-input-hue" class="m3-slider" min="0" max="360" value="0" oninput="syncFromSlider('hue', this.value)">
+              </div>
+
+              <!-- 边缘暗角 Vignette -->
+              <div class="m3-slider-tile">
+                <div class="m3-tile-header">
+                  <span class="m3-tile-label">🔲 电影暗角 (Vignette)</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="filter-num-vignette" min="0" max="100" value="0" oninput="syncFromNum('vignette', this.value)">
+                    <span class="m3-num-badge-unit">%</span>
+                  </div>
+                </div>
+                <input type="range" id="filter-input-vignette" class="m3-slider" min="0" max="100" value="0" oninput="syncFromSlider('vignette', this.value)">
+              </div>
+
+              <!-- 胶片噪点/颗粒 Grain -->
+              <div class="m3-slider-tile">
+                <div class="m3-tile-header">
+                  <span class="m3-tile-label">🎞️ 胶片颗粒 (Film Grain)</span>
+                  <div class="m3-num-badge">
+                    <input type="number" id="filter-num-grain" min="0" max="100" value="0" oninput="syncFromNum('grain', this.value)">
+                    <span class="m3-num-badge-unit">%</span>
+                  </div>
+                </div>
+                <input type="range" id="filter-input-grain" class="m3-slider" min="0" max="100" value="0" oninput="syncFromSlider('grain', this.value)">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 抽屉底栏：操作按钮组 -->
+        <div class="drawer-footer">
+          <button class="m3-act-btn" style="background: var(--m3-accent-lime); color: #1c192b; height: 50px; font-size: 14px; font-weight: 900; justify-content: center; box-shadow: 0 6px 18px rgba(214, 248, 88, 0.45); letter-spacing: 0.3px;" onclick="applyFromDrawer()">
+            ⚡ 立即设为壁纸 (应用到目标屏)
+          </button>
+
+          <div style="display: flex; gap: 10px;" id="drawer-secondary-actions">
+            <button class="m3-act-btn m3-act-tonal" style="flex: 1; height: 42px; justify-content: center; font-size: 13px; font-weight: 700; border: 1.5px solid var(--m3-outline-variant);" id="drawer-btn-save" onclick="saveFromDrawer()">
+              💾 保存到本地库
+            </button>
+            <button class="m3-act-btn m3-act-tonal" style="flex: 1; height: 42px; justify-content: center; font-size: 13px; font-weight: 700; border: 1.5px solid var(--m3-outline-variant);" onclick="addToPlaylistFromDrawer()">
+              ➕ 加入轮播列表
+            </button>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+
+  <!-- M3 Snackbar -->
+  <div class="m3-snackbar" id="snackbar">提示信息</div>
+
+  <script>
+    // Wallhaven 在线公共源数据桩 (12 张高分辨率壁纸，带分辨率、收藏数、色板、标签)
+    const whWallpapers = [
+      {
+        id: "wh-1",
+        name: "Cyberpunk Geisha Cyber City",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "Anime",
+        purity: "SFW",
+        favs: "3.8k",
+        aspect: "16 / 9",
+        colors: ["#0f172a", "#f43f5e", "#06b6d4", "#8b5cf6", "#e2e8f0"],
+        thumb: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=700&auto=format&fit=crop&q=80",
+        tags: ["Cyberpunk", "AnimeGirl", "Neon", "Sci-Fi", "Night"]
+      },
+      {
+        id: "wh-2",
+        name: "Rainy Shinjuku Neon Crossing",
+        res: "2560×1440",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "2.1k",
+        aspect: "9 / 14",
+        colors: ["#18181b", "#3b82f6", "#e11d48", "#f59e0b", "#64748b"],
+        thumb: "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?w=700&auto=format&fit=crop&q=80",
+        tags: ["Tokyo", "Rain", "Night", "Cityscape", "Japan"]
+      },
+      {
+        id: "wh-3",
+        name: "Ethereal Mountain Milky Way",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "4.5k",
+        aspect: "16 / 9",
+        colors: ["#0f172a", "#38bdf8", "#818cf8", "#f472b6", "#f8fafc"],
+        thumb: "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=700&auto=format&fit=crop&q=80",
+        tags: ["Landscape", "Stars", "Night", "Galaxy", "Peak"]
+      },
+      {
+        id: "wh-4",
+        name: "Raiden Shogun Electro Shrine",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "Anime",
+        purity: "SFW",
+        favs: "6.2k",
+        aspect: "4 / 3",
+        colors: ["#2e1065", "#7e22ce", "#a855f7", "#e9d5ff", "#fbbf24"],
+        thumb: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=700&auto=format&fit=crop&q=80",
+        tags: ["Genshin", "Anime", "Raiden", "Purple", "Fantasy"]
+      },
+      {
+        id: "wh-5",
+        name: "Nordic Lake Cabin Sunset Glow",
+        res: "2560×1440",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "1.8k",
+        aspect: "16 / 10",
+        colors: ["#1e293b", "#ea580c", "#f97316", "#38bdf8", "#f1f5f9"],
+        thumb: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=700&auto=format&fit=crop&q=80",
+        tags: ["Sunset", "Lake", "Cabin", "Nature", "Calm"]
+      },
+      {
+        id: "wh-6",
+        name: "Retro Synthwave Outrun Sunset",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "5.1k",
+        aspect: "16 / 9",
+        colors: ["#180026", "#ff007f", "#7928ca", "#00dfd8", "#ffffff"],
+        thumb: "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=700&auto=format&fit=crop&q=80",
+        tags: ["Synthwave", "Retro", "Outrun", "Grid", "80s"]
+      },
+      {
+        id: "wh-7",
+        name: "Dark Knight Bloodmoon Armor",
+        res: "2560×1440",
+        ratio: "16:9",
+        category: "People",
+        purity: "SFW",
+        favs: "2.9k",
+        aspect: "4 / 5",
+        colors: ["#09090b", "#71717a", "#b91c1c", "#f43f5e", "#fafafa"],
+        thumb: "https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=700&auto=format&fit=crop&q=80",
+        tags: ["Knight", "Armor", "DarkFantasy", "Sword"]
+      },
+      {
+        id: "wh-8",
+        name: "Minimalist Fluid Aurora 5K",
+        res: "5120×2880",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "7.4k",
+        aspect: "16 / 10",
+        colors: ["#020617", "#06b6d4", "#3b82f6", "#6366f1", "#f8fafc"],
+        thumb: "https://images.unsplash.com/photo-1557683316-973673baf926?w=700&auto=format&fit=crop&q=80",
+        tags: ["Abstract", "Fluid", "Aurora", "5K", "Minimalism"]
+      },
+      {
+        id: "wh-9",
+        name: "Anime Samurai Sakura Falling",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "Anime",
+        purity: "SFW",
+        favs: "3.3k",
+        aspect: "16 / 9",
+        colors: ["#1c1917", "#f43f5e", "#fda4af", "#78716c", "#fff1f2"],
+        thumb: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=700&auto=format&fit=crop&q=80",
+        tags: ["Samurai", "CherryBlossom", "Anime", "Japan"]
+      },
+      {
+        id: "wh-10",
+        name: "Cozy Lofi Pixel Study Rain",
+        res: "2560×1440",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "4.1k",
+        aspect: "1 / 1",
+        colors: ["#1e1b4b", "#4338ca", "#a5b4fc", "#fde047", "#f5f3ff"],
+        thumb: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=700&auto=format&fit=crop&q=80",
+        tags: ["PixelArt", "Cozy", "Lofi", "Rain", "Room"]
+      },
+      {
+        id: "wh-11",
+        name: "Fantasy Floating Castle Islands",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "5.8k",
+        aspect: "3 / 4",
+        colors: ["#082f49", "#0284c7", "#38bdf8", "#facc15", "#f0f9ff"],
+        thumb: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=700&auto=format&fit=crop&q=80",
+        tags: ["Fantasy", "Castle", "Sky", "Islands"]
+      },
+      {
+        id: "wh-12",
+        name: "Minimalist Red Torii Gate Fog",
+        res: "3840×2160",
+        ratio: "16:9",
+        category: "General",
+        purity: "SFW",
+        favs: "3.6k",
+        aspect: "16 / 9",
+        colors: ["#18181b", "#dc2626", "#ef4444", "#a1a1aa", "#ffffff"],
+        thumb: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?w=700&auto=format&fit=crop&q=80",
+        tags: ["Torii", "Japan", "Fog", "Minimalism", "Red"]
+      }
+    ];
+
+    // 本地壁纸数据
+    const localWallpapers = [
+      { id: "loc-1", name: "kobeni_gun.webp", res: "2560×1440", kind: "static", activeOn: "DP-1", aspect: "4/3", colors: ["#3b2a63", "#8b5cf6", "#d8b4fe", "#f0abfc", "#1e1b4b"], thumb: "https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-2", name: "蔚蓝档案_白洲梓无模糊版2.mp4", res: "3072×1728", kind: "video", fps: "25 FPS", aspect: "16/9", colors: ["#1e3a5f", "#4a7dd6", "#93c5fd", "#e0f2fe", "#0f172a"], thumb: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-3", name: "anime_car_sunset.webp", res: "3840×2160", kind: "static", aspect: "9/14", colors: ["#7c2d12", "#e8734a", "#fb923c", "#fcd34d", "#fed7aa"], thumb: "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-4", name: "c45动态壁纸循环.mp4", res: "1920×1080", kind: "video", fps: "30 FPS", activeOn: "eDP-1", aspect: "1/1", colors: ["#0c4a6e", "#2d6a8f", "#38bdf8", "#7dd3fc", "#082f49"], thumb: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-5", name: "cyberpunk_city_rain.mp4", res: "2560×1440", kind: "video", fps: "24 FPS", aspect: "4/5", colors: ["#2e1065", "#7c3aed", "#22d3ee", "#f472b6", "#18181b"], thumb: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-6", name: "minimalist_mountain.webp", res: "2560×1440", kind: "static", aspect: "3/4", colors: ["#334155", "#6b7f95", "#94a3b8", "#e2e8f0", "#1e293b"], thumb: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-7", name: "nordic_deep_forest.webp", res: "2560×1440", kind: "static", aspect: "4/5", colors: ["#14532d", "#86efac", "#22c55e", "#166534", "#052e16"], thumb: "https://images.unsplash.com/photo-1448375240586-882707db888b?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-8", name: "retro_synthwave_grid.mp4", res: "1920×1080", kind: "video", fps: "60 FPS", aspect: "16/9", colors: ["#180026", "#ff007f", "#e879f9", "#7000ff", "#2b0040"], thumb: "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-9", name: "sakura_torii_fog.webp", res: "3840×2160", kind: "static", aspect: "16/10", colors: ["#18181b", "#fca5a5", "#dc2626", "#f87171", "#7f1d1d"], thumb: "https://images.unsplash.com/photo-1528164344705-475426879c0d?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-10", name: "lofi_study_room.mp4", res: "1920×1080", kind: "video", fps: "30 FPS", aspect: "1/1", colors: ["#1e1b4b", "#fde047", "#6366f1", "#4338ca", "#312e81"], thumb: "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-11", name: "aurora_fluid_5k.webp", res: "5120×2880", kind: "static", aspect: "16/10", colors: ["#020617", "#22d3ee", "#3b82f6", "#06b6d4", "#0f172a"], thumb: "https://images.unsplash.com/photo-1579033461380-adb47c3eb938?w=600&auto=format&fit=crop&q=80" },
+      { id: "loc-12", name: "neon_alley_night.mp4", res: "2560×1440", kind: "video", fps: "24 FPS", aspect: "9/16", colors: ["#0f172a", "#f472b6", "#38bdf8", "#ec4899", "#1e293b"], thumb: "https://images.unsplash.com/photo-1514565131-fce0801e5785?w=600&auto=format&fit=crop&q=80" }
+    ];
+
+    let currentSource = "wallhaven";
+    let currentDrawerWp = null;
+
+    /* ==========================================================================
+       Material You 动态配色引擎
+       --------------------------------------------------------------------------
+       从壁纸种子色推导整套 M3 色板。官方 Material You 用 HCT (CAM16)，
+       这里用 OKLCH 近似：同样把「色相」与「明度」解耦，中性色也带种子的色相
+       （这正是 Material You 最可辨认的特征：蓝壁纸 → 偏蓝的灰面）。
+       越出 sRGB 色域的色值会被逐步降彩度拉回来，不会出现被裁剪的脏色。
+       ========================================================================== */
+    const THEME_SEED_FALLBACK = "#624b89";
+
+    function hexToRgb(hex) {
+      const h = String(hex).replace("#", "");
+      const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+      const n = parseInt(full, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    function srgbToLinear(c) {
+      c /= 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+    function linearToSrgb(c) {
+      return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+    }
+    function rgbToOklab(r, g, b) {
+      const R = srgbToLinear(r), G = srgbToLinear(g), B = srgbToLinear(b);
+      const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+      const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+      const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+      return {
+        L: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+        a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+        b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+      };
+    }
+    function oklabToRgb(L, a, b) {
+      const l = Math.pow(L + 0.3963377774 * a + 0.2158037573 * b, 3);
+      const m = Math.pow(L - 0.1055613458 * a - 0.0638541728 * b, 3);
+      const s = Math.pow(L - 0.0894841775 * a - 1.2914855480 * b, 3);
+      return {
+        r: linearToSrgb( 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s) * 255,
+        g: linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s) * 255,
+        b: linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s) * 255
+      };
+    }
+    function rgbToHex(rgb) {
+      const f = v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+      return "#" + f(rgb.r) + f(rgb.g) + f(rgb.b);
+    }
+    // 指定 OKLCH 明度/彩度/色相，落回 sRGB（越界就降彩度，直到进入色域）
+    function oklchToHex(L, C, hDeg) {
+      const h = (hDeg * Math.PI) / 180;
+      let c = C;
+      for (let i = 0; i < 32; i++) {
+        const rgb = oklabToRgb(L, c * Math.cos(h), c * Math.sin(h));
+        if (rgb.r >= -0.6 && rgb.r <= 255.6 && rgb.g >= -0.6 && rgb.g <= 255.6 && rgb.b >= -0.6 && rgb.b <= 255.6) {
+          return rgbToHex(rgb);
+        }
+        c *= 0.93;
+      }
+      return rgbToHex(oklabToRgb(L, 0, 0));
+    }
+    function seedToOklch(hex) {
+      const { r, g, b } = hexToRgb(hex);
+      const lab = rgbToOklab(r, g, b);
+      return {
+        L: lab.L,
+        C: Math.hypot(lab.a, lab.b),
+        h: ((Math.atan2(lab.b, lab.a) * 180) / Math.PI + 360) % 360
+      };
+    }
+
+    // 从种子色推导整套 M3 色板（dark = 是否夜间模式）
+    function buildM3Scheme(seedHex, dark) {
+      const seed = seedToOklch(seedHex);
+      const hue = seed.h;
+      // Material 3 的彩度区间：主色比种子收敛，避免刺眼
+      const primaryC = Math.min(Math.max(seed.C, 0.075), 0.155);
+      const tertiaryHue = (hue + 62) % 360;
+      const tertiaryC = Math.min(Math.max(seed.C * 0.85, 0.07), 0.145);
+      // 中性色仍带种子色相 —— Material You 的签名
+      const neutralC = Math.min(seed.C * 0.10, 0.022) + 0.006;
+
+      const s = {};
+      if (dark) {
+        s["--m3-canvas"]            = oklchToHex(0.155, neutralC, hue);
+        s["--m3-surface"]           = oklchToHex(0.215, neutralC, hue);
+        s["--m3-surface-subtle"]    = oklchToHex(0.275, neutralC, hue);
+        s["--m3-surface-container"] = oklchToHex(0.335, neutralC * 1.6, hue);
+        s["--m3-surface-high"]      = oklchToHex(0.395, neutralC * 1.6, hue);
+        s["--m3-bg"]                = oklchToHex(0.115, neutralC, hue);
+
+        s["--m3-fg"]                = oklchToHex(0.945, neutralC * 0.5, hue);
+        s["--m3-fg-muted"]          = oklchToHex(0.735, neutralC * 0.8, hue);
+        s["--m3-outline"]           = oklchToHex(0.545, neutralC, hue);
+
+        s["--m3-accent-purple"]     = oklchToHex(0.795, primaryC, hue);
+        s["--m3-accent-lavender"]   = oklchToHex(0.375, primaryC * 0.75, hue);
+        s["--m3-accent-lime"]       = oklchToHex(0.885, tertiaryC, tertiaryHue);
+        s["--m3-accent-mint"]       = oklchToHex(0.815, tertiaryC * 0.5, (hue + 150) % 360);
+        s["--m3-accent-coral"]      = oklchToHex(0.800, 0.115, (hue + 205) % 360);
+        s["--m3-rail-bg"]           = oklchToHex(0.145, neutralC * 2.2, hue);
+        s["--m3-rail-text"]         = oklchToHex(0.760, neutralC, hue);
+        s["--m3-rail-text-active"]  = oklchToHex(0.205, primaryC, hue);
+      } else {
+        s["--m3-canvas"]            = oklchToHex(0.965, neutralC, hue);
+        s["--m3-surface"]           = oklchToHex(0.995, neutralC * 0.4, hue);
+        s["--m3-surface-subtle"]    = oklchToHex(0.930, neutralC, hue);
+        s["--m3-surface-container"] = oklchToHex(0.895, neutralC * 1.8, hue);
+        s["--m3-surface-high"]      = oklchToHex(1.000, 0, hue);
+        s["--m3-bg"]                = oklchToHex(0.935, neutralC, hue);
+
+        s["--m3-fg"]                = oklchToHex(0.245, neutralC * 1.2, hue);
+        s["--m3-fg-muted"]          = oklchToHex(0.520, neutralC * 1.4, hue);
+        s["--m3-outline"]           = oklchToHex(0.790, neutralC, hue);
+
+        s["--m3-accent-purple"]     = oklchToHex(0.455, primaryC, hue);
+        s["--m3-accent-lavender"]   = oklchToHex(0.890, primaryC * 0.55, hue);
+        s["--m3-accent-lime"]       = oklchToHex(0.880, tertiaryC, tertiaryHue);
+        s["--m3-accent-mint"]       = oklchToHex(0.880, tertiaryC * 0.45, (hue + 150) % 360);
+        s["--m3-accent-coral"]      = oklchToHex(0.760, 0.105, (hue + 205) % 360);
+        s["--m3-rail-bg"]           = oklchToHex(0.235, neutralC * 2.4, hue);
+        s["--m3-rail-text"]         = oklchToHex(0.800, neutralC, hue);
+        s["--m3-rail-text-active"]  = oklchToHex(0.205, primaryC, hue);
+      }
+      return s;
+    }
+
+    // 挑种子：取壁纸色板里彩度最高的那一色（最有辨识度），退化为第一色
+    function pickSeedColor(wp) {
+      if (!wp) return THEME_SEED_FALLBACK;
+      const list = (wp.colors || []).filter(Boolean);
+      if (!list.length) return wp.seed || THEME_SEED_FALLBACK;
+      let best = list[0], bestC = -1;
+      list.forEach(c => {
+        const o = seedToOklch(c);
+        if (o.C > bestC) { bestC = o.C; best = c; }
+      });
+      return best;
+    }
+
+    let followWallpaper = true;      // 主题是否跟随壁纸取色
+    let currentThemeSeed = null;     // 当前生效的种子色
+
+    function applyThemeFromSeed(seedHex) {
+      const dark = document.documentElement.classList.contains("dark");
+      const scheme = buildM3Scheme(seedHex, dark);
+      const root = document.documentElement.style;
+      Object.keys(scheme).forEach(k => root.setProperty(k, scheme[k]));
+      currentThemeSeed = seedHex;
+      const swatch = document.getElementById("theme-seed-dot");
+      if (swatch) swatch.style.background = seedHex;
+      const label = document.getElementById("theme-seed-hex");
+      if (label) label.innerText = seedHex.toUpperCase();
+    }
+
+    // 壁纸变化时调用：把主题切到这张壁纸的种子色
+    function themeFromWallpaper(wp) {
+      if (!followWallpaper) return;
+      applyThemeFromSeed(pickSeedColor(wp));
+    }
+
+    function setFollowWallpaper(on, silent) {
+      followWallpaper = on;
+      const btn = document.getElementById("follow-theme-btn");
+      if (btn) {
+        btn.classList.toggle("active", on);
+        btn.innerText = on ? "🎨 跟随壁纸取色" : "🎨 固定配色";
+      }
+      if (on) {
+        const active = localWallpapers.find(w => w.activeOn) || whWallpapers[0];
+        applyThemeFromSeed(pickSeedColor(active));
+        if (!silent) snackbar("主题配色已跟随当前壁纸取色");
+      } else {
+        applyThemeFromSeed(THEME_SEED_FALLBACK);
+        if (!silent) snackbar("主题配色已固定为默认紫");
+      }
+    }
+
+    let currentDrawerSource = 'wallhaven';
+    let drawerTargetDisplay = 'DP-1';
+    let whPage = 1;
+    let displays = ["DP-1 (主屏)", "eDP-1 (内屏)", "全部显示器 (*)"];
+    let displayIdx = 0;
+    let currentFilterPreset = 'none';
+
+    // 3D 悬浮视差与随鼠标四向翘起引擎
+    function attach3DParallax(card) {
+      const glare = card.querySelector('.card-glare');
+      let rafId = null;
+
+      card.addEventListener('mousemove', (e) => {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          const rect = card.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+          const mouseX = e.clientX - centerX;
+          const mouseY = e.clientY - centerY;
+
+          const px = mouseX / (rect.width / 2);
+          const py = mouseY / (rect.height / 2);
+
+          const maxTilt = 14;
+          const rotateY = px * maxTilt;
+          const rotateX = -py * maxTilt;
+
+          card.style.transform = `perspective(1000px) translateY(-8px) scale(1.08) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
+
+          if (glare) {
+            const percentX = ((e.clientX - rect.left) / rect.width) * 100;
+            const percentY = ((e.clientY - rect.top) / rect.height) * 100;
+            glare.style.background = `radial-gradient(circle at ${percentX.toFixed(1)}% ${percentY.toFixed(1)}%, rgba(255, 255, 255, 0.35) 0%, transparent 65%)`;
+          }
+        });
+      });
+
+      card.addEventListener('mouseleave', () => {
+        if (rafId) cancelAnimationFrame(rafId);
+        card.style.transition = 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, filter 0.35s ease';
+        card.style.transform = 'perspective(1000px) translateY(0) scale(1) rotateX(0deg) rotateY(0deg)';
+        setTimeout(() => {
+          card.style.transition = 'transform 0.12s ease-out, box-shadow 0.25s ease, filter 0.35s ease';
+        }, 450);
+      });
+
+      card.addEventListener('mouseenter', () => {
+        card.style.transition = 'transform 0.12s ease-out, box-shadow 0.25s ease';
+      });
+    }
+
+    // 渲染 Wallhaven 瀑布流
+    function renderWallhavenGrid(items) {
+      const grid = document.getElementById("wallpaper-grid");
+      grid.innerHTML = "";
+
+      items.forEach(wp => {
+        const card = document.createElement("div");
+        card.className = "wallpaper-card";
+        card.innerHTML = `
+          <div class="card-media" style="aspect-ratio: ${wp.aspect};" onclick="openWallpaperDrawer('${wp.id}', 'wallhaven')">
+            <img src="${wp.thumb}" alt="${wp.name}" loading="lazy">
+            <div class="card-glare"></div>
+          </div>
+        `;
+        grid.appendChild(card);
+        attach3DParallax(card);
+      });
+    }
+
+    // 9 种换图过渡效果数据
+    const transitions = [
+      { id: "portal", name: "Portal 传送门", desc: "空间推挤折叠，伴随景深收缩，默认配置 0.55 push。" },
+      { id: "iris", name: "Iris 圆环光圈", desc: "以画面焦点展开圆形视野，start_radius 与 center 可配。" },
+      { id: "zoom", name: "Zoom 径向变焦", desc: "画面从纵深疾速拉近覆盖，经典电影级转场。" },
+      { id: "slide", name: "Slide 平滑推移", desc: "跟随桌面平铺方向水平滑入，极其克制工整。" },
+      { id: "fade", name: "Fade 柔和淡入", desc: "最稳健优雅的淡入淡出，零侵略感。" },
+      { id: "dissolve", name: "Dissolve 溶解粒子", desc: "像素矩阵轻微解离渐变，带胶片质感。" },
+      { id: "wipe", name: "Wipe 线性擦除", desc: "单向扫光换图，斜角擦除。" },
+      { id: "stripes", name: "Stripes 百叶窗", desc: "多条等距切带并行展开。" },
+      { id: "push", name: "Push 弹性推挤", desc: "带轻微 spring 物理惯性的位移覆盖。" }
+    ];
+
+    function renderTransitions() {
+      const grid = document.getElementById("transition-grid");
+      if (!grid) return;
+      grid.innerHTML = "";
+      transitions.forEach((tr, i) => {
+        const card = document.createElement("div");
+        card.className = `tr-card ${i === 0 ? 'selected' : ''}`;
+        card.style.background = "var(--m3-surface)";
+        card.style.borderRadius = "var(--m3-radius-lg)";
+        card.style.padding = "16px";
+        card.style.marginBottom = "14px";
+        card.style.breakInside = "avoid";
+        card.style.cursor = "pointer";
+        card.style.boxShadow = "var(--m3-shadow-sm)";
+        card.onclick = () => {
+          document.querySelectorAll(".tr-card").forEach(c => c.classList.remove("selected"));
+          card.classList.add("selected");
+          snackbar(`已选过渡效果：${tr.name}`);
+        };
+        card.innerHTML = `
+          <div style="font-weight: 800; font-size: 14px; display: flex; justify-content: space-between;">
+            <span>${tr.name}</span>
+            <span style="font-size: 11px; font-weight:800; color: var(--m3-accent-purple);">${i === 0 ? '生效中' : ''}</span>
+          </div>
+          <div style="font-size: 12px; color: var(--m3-fg-muted); margin-top: 6px; line-height: 1.4;">${tr.desc}</div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    // 渲染本地库网格
+    function renderLocalGrid(items) {
+      const list = items || localWallpapers;
+      const grid = document.getElementById("wallpaper-grid");
+      grid.innerHTML = "";
+
+      list.forEach(wp => {
+        const card = document.createElement("div");
+        card.className = "wallpaper-card";
+        card.innerHTML = `
+          <div class="card-media" style="aspect-ratio: ${wp.aspect};" onclick="openWallpaperDrawer('${wp.id}', 'local')">
+            <img src="${wp.thumb}" alt="${wp.name}" loading="lazy">
+            <div class="card-glare"></div>
+            ${wp.activeOn ? `<span class="badge-active">✓ ${wp.activeOn}</span>` : ''}
+          </div>
+        `;
+        grid.appendChild(card);
+        attach3DParallax(card);
+      });
+    }
+
+    // 本地库筛选实现
+    let currentLocalFilter = 'all';
+    function setLocalFilter(btn, filter) {
+      currentLocalFilter = filter;
+      document.querySelectorAll("#local-control-panel .wh-toggle-pill").forEach(b => b.classList.remove("active"));
+      if (btn) btn.classList.add("active");
+
+      let filtered = localWallpapers;
+      if (filter === 'static') {
+        filtered = localWallpapers.filter(w => w.kind === 'static');
+      } else if (filter === 'video') {
+        filtered = localWallpapers.filter(w => w.kind === 'video');
+      } else if (filter === 'dark') {
+        filtered = localWallpapers.filter(w => {
+          const c = hexToRgb(w.colors[0]);
+          return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) < 65;
+        });
+      } else if (filter === 'light') {
+        filtered = localWallpapers.filter(w => {
+          const c = hexToRgb(w.colors[0]);
+          return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) >= 65;
+        });
+      }
+      renderLocalGrid(filtered);
+      snackbar(`筛选本地壁纸：找到 ${filtered.length} 张`);
+    }
+
+    // 切换壁纸源
+    function switchWallpaperSource(source) {
+      currentSource = source;
+      document.getElementById("btn-source-wh").classList.toggle("active", source === "wallhaven");
+      document.getElementById("btn-source-local").classList.toggle("active", source === "local");
+
+      document.getElementById("wh-control-panel").style.display = source === "wallhaven" ? "flex" : "none";
+      document.getElementById("local-control-panel").style.display = source === "local" ? "flex" : "none";
+      document.getElementById("wh-pagination").style.display = source === "wallhaven" ? "flex" : "none";
+
+      if (source === "wallhaven") {
+        renderWallhavenGrid(whWallpapers);
+        snackbar("已切换至 Wallhaven 在线公共壁纸库");
+      } else {
+        renderLocalGrid();
+        snackbar("已切换至本地壁纸库 (~/Pictures/Wallpapers)");
+      }
+    }
+
+    function executeWhSearch() {
+      const q = document.getElementById("wh-query-input").value.trim().toLowerCase();
+      if (!q) {
+        renderWallhavenGrid(whWallpapers);
+        snackbar("重置为 Wallhaven 热门壁纸");
+        return;
+      }
+      const filtered = whWallpapers.filter(w => 
+        w.name.toLowerCase().includes(q) || 
+        w.tags.some(t => t.toLowerCase().includes(q)) ||
+        w.category.toLowerCase().includes(q)
+      );
+      renderWallhavenGrid(filtered.length ? filtered : whWallpapers);
+      snackbar(`搜索「${q}」：找到 ${filtered.length ? filtered.length : whWallpapers.length} 张壁纸`);
+    }
+
+    function quickTagSearch(tag) {
+      document.getElementById("wh-query-input").value = tag;
+      executeWhSearch();
+    }
+
+    function matchScreenPreset() {
+      document.getElementById("wh-query-input").value = "";
+      const matched = whWallpapers.filter(w => w.ratio === "16:9");
+      renderWallhavenGrid(matched);
+      snackbar("已开启屏幕专属过滤：16:9 比例 · ≥2K 分辨率 (完美适配 DP-1)");
+    }
+
+    function resetWhFilters() {
+      document.getElementById("wh-query-input").value = "";
+      renderWallhavenGrid(whWallpapers);
+      snackbar("已重置所有 Wallhaven 过滤条件");
+    }
+
+    function changeWhPage(delta) {
+      whPage = Math.max(1, whPage + delta);
+      document.getElementById("wh-current-page").innerText = whPage;
+      const shuffled = [...whWallpapers].sort(() => Math.random() - 0.5);
+      renderWallhavenGrid(shuffled);
+      snackbar(`加载 Wallhaven 第 ${whPage} 页`);
+    }
+
+    function quickApplyWh(id) {
+      const wp = whWallpapers.find(w => w.id === id);
+      const target = displays[displayIdx];
+      snackbar(`⚡ [${target}] 正在下载并设为当前壁纸：${wp.name}`);
+    }
+
+    function saveToLocal(id) {
+      const wp = whWallpapers.find(w => w.id === id);
+      snackbar(`💾 已成功保存到本地：~/Pictures/Wallpapers/${wp.name}`);
+    }
+
+    function setDrawerTarget(target) {
+      drawerTargetDisplay = target;
+      document.getElementById('drawer-btn-dp1').classList.toggle('active', target === 'DP-1');
+      document.getElementById('drawer-btn-edp1').classList.toggle('active', target === 'eDP-1');
+      document.getElementById('drawer-btn-all').classList.toggle('active', target === '*');
+      snackbar(`目标显示器设为：${target === '*' ? '所有屏幕' : target}`);
+    }
+
+    // 打开右侧滑出抽屉
+    function openWallpaperDrawer(id, source) {
+      currentDrawerSource = source;
+      if (source === 'wallhaven') {
+        currentDrawerWp = whWallpapers.find(w => w.id === id) || whWallpapers[0];
+      } else {
+        currentDrawerWp = localWallpapers.find(w => w.id === id) || localWallpapers[0];
+      }
+      const wp = currentDrawerWp;
+
+      document.getElementById('drawer-img').src = wp.thumb;
+      document.getElementById('drawer-media-badge').innerText = `${wp.res || '2560×1440'} · ${wp.aspect || '16:9'}`;
+      document.getElementById('drawer-title').innerText = wp.name;
+
+      if (source === 'wallhaven') {
+        document.getElementById('drawer-source-badge').innerText = `Wallhaven #${wp.id}`;
+        document.getElementById('drawer-sub').innerText = `${wp.res} · ${wp.ratio} · ❤️ ${wp.favs} 收藏 · ${wp.category} · ${wp.purity}`;
+        document.getElementById('drawer-swatches-box').style.display = 'block';
+        document.getElementById('drawer-tags-box').style.display = 'block';
+        document.getElementById('drawer-local-path-box').style.display = 'none';
+        document.getElementById('drawer-btn-save').style.display = 'inline-flex';
+
+        const swatches = document.getElementById('drawer-swatches');
+        swatches.innerHTML = '';
+        (wp.colors || []).forEach(c => {
+          const d = document.createElement('div');
+          d.className = 'swatch';
+          d.style.background = c;
+          d.title = `按色值 ${c} 搜索`;
+          d.onclick = () => { closeDrawer(); quickTagSearch(c); };
+          swatches.appendChild(d);
+        });
+
+        const tagsBox = document.getElementById('drawer-tags');
+        tagsBox.innerHTML = '';
+        (wp.tags || []).forEach(t => {
+          const btn = document.createElement('button');
+          btn.className = 'wh-quick-tag';
+          btn.innerText = `#${t}`;
+          btn.onclick = () => { closeDrawer(); quickTagSearch(t); };
+          tagsBox.appendChild(btn);
+        });
+      } else {
+        document.getElementById('drawer-source-badge').innerText = '本地壁纸';
+        document.getElementById('drawer-sub').innerText = `${wp.res} · ${wp.kind === 'video' ? '动态视频壁纸' : '静态图像壁纸'}`;
+        document.getElementById('drawer-swatches-box').style.display = 'none';
+        document.getElementById('drawer-tags-box').style.display = 'none';
+        document.getElementById('drawer-local-path-box').style.display = 'block';
+        document.getElementById('drawer-local-path').innerText = wp.path || `~/Pictures/Wallpapers/${wp.name}`;
+        document.getElementById('drawer-btn-save').style.display = 'none';
+      }
+
+      // 重置后期滤镜为原画，缩放重置为 1.20x
+      applyFilterPreset('none');
+      document.getElementById('drawer-scale-range').value = 1.20;
+      document.getElementById('drawer-scale-num').value = '1.20';
+      syncScaleFromSlider(1.20);
+
+      document.getElementById('drawer-scrim').classList.add('show');
+      document.getElementById('m3-drawer').classList.add('open');
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawer-scrim').classList.remove('show');
+      document.getElementById('m3-drawer').classList.remove('open');
+    }
+
+    function applyFromDrawer() {
+      if (!currentDrawerWp) return;
+      const fit = document.getElementById('drawer-fit-select').value;
+      const scale = document.getElementById('drawer-scale-num').value + 'x';
+
+      if (currentDrawerSource === 'local') {
+        localWallpapers.forEach(w => {
+          if (w.activeOn === drawerTargetDisplay) w.activeOn = null;
+        });
+        currentDrawerWp.activeOn = drawerTargetDisplay;
+        renderLocalGrid();
+      }
+
+      snackbar(`⚡ [${drawerTargetDisplay}] 已设为当前壁纸：${currentDrawerWp.name} (${fit}, ${scale}, 滤镜: ${currentFilterPreset})`);
+      // 应用壁纸后，主题配色跟着这张壁纸的取色走
+      themeFromWallpaper(currentDrawerWp);
+      closeDrawer();
+    }
+
+    function saveFromDrawer() {
+      if (!currentDrawerWp) return;
+      saveToLocal(currentDrawerWp.id);
+      closeDrawer();
+    }
+
+    function addToPlaylistFromDrawer() {
+      if (!currentDrawerWp) return;
+      snackbar(`➕ 已将「${currentDrawerWp.name}」加入 [${drawerTargetDisplay}] 轮播队列`);
+      closeDrawer();
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDrawer();
+    });
+
+    // 滤镜双向同步与 M3 滑轨填充引擎
+    function syncFromSlider(key, val) {
+      document.getElementById(`filter-input-${key}`).value = val;
+      document.getElementById(`filter-num-${key}`).value = val;
+      updateLiveFilter();
+    }
+
+    function syncFromNum(key, val) {
+      val = parseFloat(val);
+      if (isNaN(val)) return;
+      document.getElementById(`filter-input-${key}`).value = val;
+      updateLiveFilter();
+    }
+
+    function syncScaleFromSlider(val) {
+      document.getElementById('drawer-scale-num').value = parseFloat(val).toFixed(2);
+      const slider = document.getElementById('drawer-scale-range');
+      if (slider) {
+        const pct = ((val - 1.0) / (1.5 - 1.0)) * 100;
+        slider.style.background = `linear-gradient(to right, var(--m3-accent-purple) 0%, var(--m3-accent-purple) ${pct}%, var(--m3-surface-subtle) ${pct}%, var(--m3-surface-subtle) 100%)`;
+      }
+    }
+
+    function syncScaleFromNum(val) {
+      val = parseFloat(val);
+      if (isNaN(val)) return;
+      document.getElementById('drawer-scale-range').value = val;
+      syncScaleFromSlider(val);
+    }
+
+    function updateLiveFilter() {
+      const b = document.getElementById('filter-input-brightness').value;
+      const c = document.getElementById('filter-input-contrast').value;
+      const s = document.getElementById('filter-input-saturation').value;
+      const h = document.getElementById('filter-input-hue').value;
+      const v = document.getElementById('filter-input-vignette').value;
+      const g = document.getElementById('filter-input-grain').value;
+
+      document.getElementById('filter-num-brightness').value = b;
+      document.getElementById('filter-num-contrast').value = c;
+      document.getElementById('filter-num-saturation').value = s;
+      document.getElementById('filter-num-hue').value = h;
+      document.getElementById('filter-num-vignette').value = v;
+      document.getElementById('filter-num-grain').value = g;
+
+      // 更新 M3 滑轨进度色
+      [
+        ['brightness', b, 50, 150],
+        ['contrast', c, 50, 160],
+        ['saturation', s, 0, 220],
+        ['hue', h, 0, 360],
+        ['vignette', v, 0, 100],
+        ['grain', g, 0, 100]
+      ].forEach(([key, val, min, max]) => {
+        const pct = ((val - min) / (max - min)) * 100;
+        const slider = document.getElementById(`filter-input-${key}`);
+        if (slider) {
+          slider.style.background = `linear-gradient(to right, var(--m3-accent-purple) 0%, var(--m3-accent-purple) ${pct}%, var(--m3-surface-subtle) ${pct}%, var(--m3-surface-subtle) 100%)`;
+        }
+      });
+
+      const img = document.getElementById('drawer-img');
+      img.style.filter = `brightness(${b}%) contrast(${c}%) saturate(${s}%) hue-rotate(${h}deg)`;
+      document.getElementById('drawer-vignette-overlay').style.opacity = (v / 100).toFixed(2);
+      document.getElementById('drawer-grain-overlay').style.opacity = (g / 100).toFixed(2);
+    }
+
+    function applyFilterPreset(preset) {
+      currentFilterPreset = preset;
+      const sel = document.getElementById('filter-preset-select');
+      if (sel) sel.value = preset;
+
+      const presets = {
+        none: { b: 100, c: 100, s: 100, h: 0, v: 0, g: 0 },
+        vivid: { b: 105, c: 120, s: 145, h: 0, v: 15, g: 0 },
+        film: { b: 95, c: 110, s: 80, h: 10, v: 45, g: 45 },
+        mono: { b: 100, c: 130, s: 0, h: 0, v: 30, g: 25 },
+        cyber: { b: 110, c: 135, s: 170, h: 290, v: 35, g: 0 },
+        warm: { b: 105, c: 105, s: 125, h: 25, v: 20, g: 10 },
+        cool: { b: 100, c: 115, s: 110, h: 190, v: 30, g: 15 },
+        invert: { b: 100, c: 100, s: 100, h: 180, v: 0, g: 0 }
+      };
+
+      const p = presets[preset] || presets.none;
+      document.getElementById('filter-input-brightness').value = p.b;
+      document.getElementById('filter-input-contrast').value = p.c;
+      document.getElementById('filter-input-saturation').value = p.s;
+      document.getElementById('filter-input-hue').value = p.h;
+      document.getElementById('filter-input-vignette').value = p.v;
+      document.getElementById('filter-input-grain').value = p.g;
+
+      updateLiveFilter();
+      if (preset !== 'none' && sel) {
+        snackbar(`已应用滤镜预设：${sel.options[sel.selectedIndex].text}`);
+      }
+    }
+
+    function resetDrawerFilters() {
+      applyFilterPreset('none');
+      snackbar('已重置后期滤镜为原画');
+    }
+
+    function cycleDisplay() {
+      displayIdx = (displayIdx + 1) % displays.length;
+      document.getElementById("current-display-label").innerText = displays[displayIdx];
+      snackbar(`切换当前目标屏幕为：${displays[displayIdx]}`);
+    }
+
+    function switchNav(tab) {
+      document.querySelectorAll(".rail-pill").forEach(p => p.classList.remove("active"));
+      document.getElementById(`tab-btn-${tab}`).classList.add("active");
+
+      document.getElementById("view-wallpapers").classList.toggle('active', tab === 'wallpapers');
+      document.getElementById("view-transitions").classList.toggle('active', tab === 'transitions');
+      document.getElementById("view-settings").classList.toggle('active', tab === 'settings');
+
+      if (tab === 'transitions') renderTransitions();
+
+      snackbar(`切换至：${tab === 'wallpapers' ? '壁纸库' : tab === 'transitions' ? '过渡动画' : '系统设置'}`);
+    }
+
+    function toggleTheme() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      document.getElementById('theme-icon').innerText = isDark ? '☀️' : '🌙';
+      document.getElementById('theme-text').innerText = isDark ? '切换浅色模式' : '切换夜间深色';
+      // 明暗切换后，同一颗种子要重新推导一整套色板（两套模式各自一套）
+      applyThemeFromSeed(currentThemeSeed || THEME_SEED_FALLBACK);
+      snackbar(`已切换为 ${isDark ? '夜间深色' : '浅色'} 模式（配色仍取自当前壁纸）`);
+    }
+
+    let snackbarTimer = null;
+    function snackbar(msg) {
+      const el = document.getElementById("snackbar");
+      el.innerText = msg;
+      el.classList.add("show");
+      if (snackbarTimer) clearTimeout(snackbarTimer);
+      snackbarTimer = setTimeout(() => el.classList.remove("show"), 2200);
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      // 启动时：主题取自当前正在生效的那张壁纸
+      const active = localWallpapers.find(w => w.activeOn) || whWallpapers[0];
+      applyThemeFromSeed(pickSeedColor(active));
+      setFollowWallpaper(true, true);
+      switchWallpaperSource("wallhaven");
+      renderTransitions();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+[package]
+name = "niripaper-proto"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Shared pure logic for niripaper: config, schema, control protocol, socket client."
+
+[dependencies]
+kdl = { version = "6.7.1", features = ["v1-fallback"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.1.6"

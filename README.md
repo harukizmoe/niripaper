@@ -22,7 +22,8 @@ with the workspaces.
 - **It draws the wallpaper itself.** No mpv, no shell scripts, no helper processes:
   a single binary puts a layer-shell surface on the background layer and renders
   into it.
-- **Video wallpapers.** mp4, webm, mkv, mov, m4v and avi, hardware-decoded.
+- **Video wallpapers.** mp4, webm, mkv, mov, m4v, avi and gif, hardware-decoded.
+  (A gif is played as a video, so it animates — Wallpaper Engine treats it the same way.)
   [mpv](https://mpv.io) is used as a *library* — no `mpv` process, no window, no IPC,
   no config file of its own — and it draws the decoded frame into a texture this
   daemon owns, so a video is sampled with the parallax offset exactly like a still.
@@ -40,13 +41,13 @@ Version 0.2.0, early.
 
 Working today: static images (PNG, JPEG, WebP), **video wallpapers** (hardware-decoded),
 parallax, the overview transition, the wallpaper transition (nine effects), `fit` for
-sources that do not match the canvas, configuration with a `config.d` directory and hot
-reload, per-output settings, `schema`/`state` for a panel to build its UI from, and
+sources that do not match the canvas, a single configuration file with hot reload,
+per-output settings, `schema`/`state` for a front end to build its UI from, and
 changing the wallpaper of a running daemon.
 
-Not here yet: the Noctalia panel (a separate project — the daemon side of the interface
-is `schema`, `state` and `config.d`, all of which are here), an AUR package, and prebuilt
-binaries.
+Not here yet: the desktop app (a separate program talking to the daemon's control socket —
+the daemon side of the interface is `schema`, `state` and the config file, all of
+which are here), an AUR package, and prebuilt binaries.
 
 ## Requirements
 
@@ -108,15 +109,15 @@ niripaper kill                        # shut it down
 and leaves the current one on screen instead of blanking it.
 
 `set` is a **temporary override**: it changes what is on screen, not the configuration,
-and any reload of `config.d` or `config.toml` puts the configured wallpaper back. To keep
+and any reload of the config file puts the configured wallpaper back. To keep
 a wallpaper, put it in the configuration.
 
-`schema` and `state` are what a panel (the Noctalia plugin, or anything else) talks to.
+`schema` and `state` are what a front end (a panel, or a desktop app) talks to.
 `schema` lists every configuration key with its type, bounds, default, unit and whether
 a reload picks it up; `state` reports the effective values under the same names, plus
 the output, the canvas, the wallpaper actually on screen and the parallax position. A
-panel asks for the schema once to build its widgets, and afterwards only needs `state` —
-so adding a key here never requires a panel change.
+front end asks for the schema once to build its widgets, and afterwards only needs
+`state` — so adding a key here never requires a front-end change.
 
 `state`'s `config.values` is what the configuration says, while `wallpaper.path` is what
 is *actually* on screen: `set` swaps the media without touching the configuration, so
@@ -132,13 +133,33 @@ spawn-at-startup "niripaper" "daemon"
 
 The binary has to be on `PATH` for that to work — hence the `install` line above.
 
+### Putting the wallpaper in the overview backdrop
+
+With no extra configuration the wallpaper is a **workspace background**: it scrolls with
+the workspace, and the overview shows it inside each workspace's thumbnail. To make it
+stationary and fill the whole overview backdrop instead, add a layer rule to niri's
+config — this is niri's own mechanism, and every wallpaper tool uses it (swaybg
+included):
+
+```kdl
+layer-rule {
+    match namespace="^niripaper$"
+    place-within-backdrop true
+}
+```
+
+The namespace it matches is fixed at `niripaper`; it is not a setting, because changing
+it would stop this rule from matching. Window blur samples the wallpaper either way —
+the rule only changes what the overview shows and whether the wallpaper moves with the
+workspace.
+
 ### Flags
 
 | Flag | Meaning |
 | --- | --- |
 | `--output NAME` | draw on one output only (default: every output niri reports) |
 | `--config PATH` | config file to read (default: `~/.config/niripaper/config.toml`) |
-| `--namespace NAME` | layer-shell namespace (default: `niripaper`) |
+| `--namespace NAME` | layer-shell namespace (default: `niripaper`; fixes which niri layer rules match) |
 | `--wallpaper PATH` | image to draw |
 | `--scale F` | canvas enlargement, `1.0`–`1.35` |
 | `--column-span N`, `--workspace-span N` | how many steps the parallax spreads over |
@@ -149,13 +170,11 @@ The binary has to be on `PATH` for that to work — hence the `install` line abo
 
 ## Configuration
 
-The config file lives at `~/.config/niripaper/config.toml`. It is optional: with no
-file at all, the built-in defaults are used. A `config.d/` directory next to it is
-read too — every `*.toml` in it, in filename order, merged over the main file
-(later files win). That is where a tool keeps its own settings without touching
-yours: delete the file and it is gone. A fragment has to spell out its own table
-headers — `[transition]` and the like — since it is merged, not textually
-spliced; a key at the wrong level is an unknown field, which is a hard error. Edits are picked up while the daemon runs;
+The config file lives at `~/.config/niripaper/config.toml`, and it is the *whole*
+configuration — there is exactly one file. It is optional: with no file at all, the
+built-in defaults are used, which draws the procedural test pattern. The daemon only
+reads it; the desktop app is what writes it, rewriting the file in place and keeping
+the comments that document each key. Edits are picked up while the daemon runs;
 a file that fails to parse is reported and the running configuration is kept. Values are resolved as
 **command line → config file → built-in default**, so the file only needs to state
 what differs.
@@ -167,7 +186,6 @@ video_fps = 25                       # frame-rate cap for video wallpapers (0 = 
 scale = 1.1           # canvas enlargement; larger values leave more room to move in
 column_span = 6       # how many columns the horizontal parallax spans
 workspace_span = 6    # how many workspaces the vertical parallax spans
-namespace = "niripaper"
 
 [animations]
 follow_niri = true    # take the overview transition's settings from niri
@@ -196,13 +214,12 @@ scale = 1.2
 
 | Key | Meaning |
 | --- | --- |
-| `wallpaper` | image or video to draw (PNG/JPEG/WebP, or mp4/webm/mkv/mov/m4v/avi) |
+| `wallpaper` | image or video to draw (PNG/JPEG/WebP, or mp4/webm/mkv/mov/m4v/avi/gif) |
 | `video_fps` | frame-rate cap for video wallpapers (default `0`, i.e. the source's) |
 | `scale` | canvas enlargement (default `1.1`, max `1.35`) |
 | `column_span` | fixed column span for the horizontal parallax (default `6`, min `2`) |
 | `workspace_span` | fixed workspace span for the vertical parallax (default `6`, min `2`) |
 | `fit` | how a source that does not match the canvas aspect is placed: `fill` (default), `fit`, `stretch`, `center`, `tile` |
-| `namespace` | layer-shell namespace (default `niripaper`) |
 | `[animations] follow_niri` | take the overview transition's settings from niri (default `true`) |
 | `[animations] slowdown` | stretch every animation's timeline |
 | `[animations.parallax]` | how the wallpaper moves when you move |
@@ -299,8 +316,10 @@ worth trying on faster hardware.
 - **The wallpaper does not move.** If niri's config turns animations off globally
   (`animations { off }`), the overview transition is off here too. The parallax is
   unaffected — it is not one of niri's animations.
-- **Your layer rules match a different name.** Layer rules are matched by namespace,
-  so set `namespace` to whatever name your existing rules already use.
+- **Your layer rules match a different name.** Layer rules are matched by the
+  layer-shell namespace, which is fixed at `niripaper` (not a config key: changing it
+  would stop the rule you wrote from matching). Override it on the command line with
+  `--namespace NAME` for a one-off run.
 
 ## License
 
