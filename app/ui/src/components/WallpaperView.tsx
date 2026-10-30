@@ -12,6 +12,7 @@ import { DEFAULT_FILTERS, type WallhavenFilters } from './wallhavenFilters'
 import { MasonryGrid } from './MasonryGrid'
 import { WallpaperCard } from './WallpaperCard'
 import { PlaylistDialog } from './PlaylistDialog'
+import { useConfig } from '../hooks/useConfig'
 
 export interface WallhavenQuery {
   q?: string
@@ -67,15 +68,17 @@ const lumaOf = (w: WallpaperItem) => {
 
 const DARK_BELOW = 65
 
-function filterLocal(list: WallpaperItem[], filter: LocalFilter) {
+function filterLocal(list: WallpaperItem[], filter: LocalFilter, playlistItems: string[]) {
   switch (filter) {
     case 'static':
     case 'video':
       return list.filter((w) => w.kind === filter)
     case 'dark':
-      return list.filter((w) => w.colors?.length && lumaOf(w) < DARK_BELOW)
+      return list.filter((w) => (w.is_dark !== undefined ? w.is_dark : Boolean(w.colors?.length && lumaOf(w) < DARK_BELOW)))
     case 'light':
-      return list.filter((w) => w.colors?.length && lumaOf(w) >= DARK_BELOW)
+      return list.filter((w) => (w.is_dark !== undefined ? !w.is_dark : Boolean(w.colors?.length && lumaOf(w) >= DARK_BELOW)))
+    case 'playlist':
+      return list.filter((w) => w.path && playlistItems.includes(w.path))
     default:
       return list
   }
@@ -149,7 +152,13 @@ export function WallpaperView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchRequest?.key])
 
-  const filteredLocal = useMemo(() => filterLocal(localList, localFilter), [localList, localFilter])
+  const config = useConfig(onNotify ?? (() => {}))
+  const playlistItems = config.value<string[]>('playlist.items') ?? []
+
+  const filteredLocal = useMemo(
+    () => filterLocal(localList, localFilter, playlistItems),
+    [localList, localFilter, playlistItems],
+  )
   const list = currentSource === 'wallhaven' ? wallhavenList : filteredLocal
   const handleSelect = useCallback(
     (wp: WallpaperItem) => onSelectWallpaper(wp, currentSource),
@@ -195,6 +204,7 @@ export function WallpaperView({
       ) : (
         <LocalControls
           currentFilter={localFilter}
+          playlistCount={playlistItems.length}
           onFilterChange={setLocalFilter}
           onRefresh={onRefreshLocal}
         />

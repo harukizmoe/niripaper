@@ -481,6 +481,7 @@ pub struct LocalWallpaperItem {
     pub thumb: String,
     pub fps: Option<String>,
     pub active_on: Option<String>,
+    pub is_dark: bool,
 }
 
 /// Scan `~/Pictures/Wallpapers` (or a custom directory) for real media files (§4.10).
@@ -616,7 +617,7 @@ pub async fn load_local_wallpapers(
         // Prefer the picture's own colours. A video falls back to its
         // extracted thumbnail, and only a video whose frame could not be
         // extracted keeps the name-derived approximation.
-        let mut colors = if is_video {
+        let (mut colors, is_dark) = if is_video {
             extract_colors_cached(&cache_dir, std::path::Path::new(&thumb_path_str))
         } else {
             extract_colors_cached(&cache_dir, &path)
@@ -642,6 +643,7 @@ pub async fn load_local_wallpapers(
                 None
             },
             active_on: None,
+            is_dark,
         });
     }
 
@@ -776,7 +778,10 @@ fn hash_str(s: &str) -> u64 {
 /// file's bytes, so key it by path + size + mtime and keep the result next to
 /// the video thumbnails. A cache miss costs one decode; every later scan is a
 /// handful of small reads.
-fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) -> Vec<String> {
+fn extract_colors_cached(
+    cache_dir: &std::path::Path,
+    path: &std::path::Path,
+) -> (Vec<String>, bool) {
     let meta = std::fs::metadata(path).ok();
     let key = format!(
         "{:016x}",
@@ -791,61 +796,72 @@ fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) ->
                 .unwrap_or(0)
         ))
     );
-    // `v2`: ranked source colours (Score), not k-means centres. Older cache
-    // files hold the latter and must not be read as the former.
-    let cache_file = cache_dir.join(format!("colors-v2-{key}.txt"));
+    // `v3`: includes calculated `is_dark` tag on line 1, then ranked colors.
+    let cache_file = cache_dir.join(format!("colors-v3-{key}.txt"));
 
     if let Ok(text) = std::fs::read_to_string(&cache_file) {
-        let colors: Vec<String> = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_owned)
-            .collect();
-        if !colors.is_empty() {
-            return colors;
+        let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+        if let Some(first) = lines.next() {
+            let is_dark = first == "dark";
+            let colors: Vec<String> = lines.map(str::to_owned).collect();
+            if !colors.is_empty() {
+                return (colors, is_dark);
+            }
         }
     }
 
-    let colors = extract_colors(path);
+    let (colors, is_dark) = extract_colors_and_luma(path);
     if !colors.is_empty() {
-        let _ = std::fs::write(&cache_file, colors.join("\n"));
+        let content = format!(
+            "{}\n{}",
+            if is_dark { "dark" } else { "light" },
+            colors.join("\n")
+        );
+        let _ = std::fs::write(&cache_file, content);
     }
-    colors
+    (colors, is_dark)
 }
 
-/// Rank the image's candidate theme source colours, best first.
-///
-/// This is Material's own wallpaper path (`sourceColorFromImage`): Celebi
-/// quantisation to 128 clusters, then `Score`, which weighs chroma against
-/// how much of the picture each hue covers. The front end takes the first
-/// entry as the seed and builds the scheme from it with the same library, so
-/// the theme is what any other Material You implementation would derive from
-/// this picture. It replaces a k-means pass whose centres were then picked
-/// among by raw chroma — a heuristic of our own that small vivid specks won.
-fn extract_colors(path: &std::path::Path) -> Vec<String> {
+/// Rank the image's candidate theme source colours, best first, and compute
+/// perceived luminance for automatic dark/light classification.
+fn extract_colors_and_luma(path: &std::path::Path) -> (Vec<String>, bool) {
     use material_colors::color::Rgb;
     use material_colors::quantize::{Quantizer, QuantizerCelebi};
     use material_colors::score::Score;
 
     let Ok(img) = image::open(path) else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     // Downscale first, as the library asks: 128x128 keeps every region of the
     // picture represented and quantises in a few milliseconds.
     let small = img.resize_exact(128, 128, image::imageops::FilterType::Triangle);
-    let pixels: Vec<Rgb> = small
-        .to_rgb8()
+    let rgb = small.to_rgb8();
+
+    // Calculate full-image perceived relative luminance (Rec. 709).
+    let mut sum_luma = 0.0f64;
+    for p in rgb.pixels() {
+        sum_luma += 0.2126 * p.0[0] as f64 + 0.7152 * p.0[1] as f64 + 0.0722 * p.0[2] as f64;
+    }
+    let avg_luma = sum_luma / (128.0 * 128.0);
+    let is_dark = avg_luma < 108.0;
+
+    let pixels: Vec<Rgb> = rgb
         .pixels()
         .map(|p| Rgb::new(p.0[0], p.0[1], p.0[2]))
         .collect();
     let clusters = QuantizerCelebi::quantize(&pixels, 128);
     // `filter = true` drops greys and slivers; when nothing survives, Score
     // returns its fallback, which is an honest "no usable colour" seed.
-    Score::score(&clusters.color_to_count, Some(4), None, Some(true))
+    let colors = Score::score(&clusters.color_to_count, Some(4), None, Some(true))
         .iter()
         .map(|c| format!("#{}", c.as_hex()))
-        .collect()
+        .collect();
+    (colors, is_dark)
+}
+
+#[cfg(test)]
+fn extract_colors(path: &std::path::Path) -> Vec<String> {
+    extract_colors_and_luma(path).0
 }
 
 /// Older call site kept for videos, where there is no still frame to sample.

@@ -5,6 +5,7 @@ import {
   IconButton,
   MenuItem,
   Select,
+  Stack,
   Switch,
   ToggleButton,
   ToggleButtonGroup,
@@ -12,9 +13,14 @@ import {
   Typography,
 } from '@mui/material'
 import RefreshRounded from '@mui/icons-material/RefreshRounded'
+import SkipNextRounded from '@mui/icons-material/SkipNextRounded'
+import FormatListBulletedRounded from '@mui/icons-material/FormatListBulletedRounded'
 import { invoke } from '../hooks/useDaemon'
+import { useConfig } from '../hooks/useConfig'
 import { SCHEME_LABELS, SCHEME_NAMES, DEFAULT_SCHEME, type SchemeName } from '../theme/color'
 import type { ThemeMode } from '../App'
+import { NumberInput } from './fields'
+import { PlaylistDialog } from './PlaylistDialog'
 import { SettingRow, SettingsGroup, SettingsPage } from './settings'
 
 interface SettingsViewProps {
@@ -71,6 +77,13 @@ export function SettingsView({
   const [autostartEnabled, setAutostartEnabled] = useState(false)
   const [configPath, setConfigPath] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [playlistOpen, setPlaylistOpen] = useState(false)
+
+  const config = useConfig(onNotify)
+  const playlistEnabled = config.value<boolean>('playlist.enabled') ?? false
+  const intervalMins = config.value<number>('playlist.interval_mins') ?? 15
+  const order = config.value<string>('playlist.order') ?? 'rotate'
+  const playlistItems = config.value<string[]>('playlist.items') ?? []
 
   const checkDaemon = useCallback(async () => {
     try {
@@ -276,6 +289,94 @@ export function SettingsView({
           control={<Switch checked={lazyLoad} onChange={onToggleLazyLoad} />}
         />
       </SettingsGroup>
+
+      <SettingsGroup title="壁纸定时轮播" description="定时自动切换壁纸并播放换图过渡动画。">
+        <SettingRow
+          label="启用定时轮播"
+          description="开启后守护进程将按设定间隔自动在播放列表中轮转壁纸。"
+          control={
+            <Switch
+              checked={playlistEnabled}
+              onChange={() => void config.set('playlist.enabled', !playlistEnabled)}
+            />
+          }
+        />
+        <SettingRow
+          label="轮播间隔"
+          description="每隔多长时间切换一次壁纸。"
+          disabled={!playlistEnabled}
+          modified={config.isSet('playlist.interval_mins')}
+          onReset={() => void config.reset('playlist.interval_mins')}
+          control={
+            <NumberInput
+              value={intervalMins}
+              min={1}
+              max={1440}
+              step={1}
+              unit="分钟"
+              disabled={!playlistEnabled}
+              onCommit={(v) => void config.set('playlist.interval_mins', v)}
+            />
+          }
+        />
+        <SettingRow
+          label="播放顺序"
+          description="顺序循环或随机挑选播放。"
+          disabled={!playlistEnabled}
+          modified={config.isSet('playlist.order')}
+          onReset={() => void config.reset('playlist.order')}
+          control={
+            <Select
+              size="small"
+              value={order}
+              disabled={!playlistEnabled}
+              onChange={(e) => void config.set('playlist.order', e.target.value)}
+              sx={{ minWidth: 140 }}
+            >
+              <MenuItem value="rotate">顺序循环</MenuItem>
+              <MenuItem value="random">随机播放</MenuItem>
+            </Select>
+          }
+        />
+        <SettingRow
+          label="管理轮播列表"
+          description={`当前已添加 ${playlistItems.length} 张壁纸。`}
+          control={
+            <Stack direction="row" spacing={1.5}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<SkipNextRounded />}
+                disabled={playlistItems.length === 0}
+                onClick={async () => {
+                  try {
+                    await invoke('daemon_next', {})
+                    onNotify('已切换到下一张壁纸')
+                  } catch (e) {
+                    onNotify(`切换失败：${e}`)
+                  }
+                }}
+              >
+                立即下一张
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<FormatListBulletedRounded />}
+                onClick={() => setPlaylistOpen(true)}
+              >
+                查看列表
+              </Button>
+            </Stack>
+          }
+        />
+      </SettingsGroup>
+
+      <PlaylistDialog
+        open={playlistOpen}
+        onClose={() => setPlaylistOpen(false)}
+        onNotify={onNotify}
+      />
     </SettingsPage>
   )
 }

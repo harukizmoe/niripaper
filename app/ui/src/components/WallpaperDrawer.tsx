@@ -71,6 +71,86 @@ export function WallpaperDrawer({ isOpen, wallpaper, ...rest }: WallpaperDrawerP
   )
 }
 
+interface FilterPreset {
+  id: string
+  label: string
+  values: {
+    brightness: number
+    contrast: number
+    saturation: number
+    hue: number
+    vignette: number
+    grain: number
+  }
+}
+
+const FILTER_PRESETS: FilterPreset[] = [
+  {
+    id: 'none',
+    label: '原图 (无滤镜)',
+    values: { brightness: 1.0, contrast: 1.0, saturation: 1.0, hue: 0.0, vignette: 0.0, grain: 0.0 },
+  },
+  {
+    id: 'monochrome',
+    label: '黑白胶片 (Monochrome)',
+    values: { brightness: 1.0, contrast: 1.25, saturation: 0.0, hue: 0.0, vignette: 0.25, grain: 0.2 },
+  },
+  {
+    id: 'vintage',
+    label: '复古胶片 (Vintage)',
+    values: { brightness: 1.02, contrast: 1.1, saturation: 0.8, hue: 15.0, vignette: 0.35, grain: 0.25 },
+  },
+  {
+    id: 'cyberpunk',
+    label: '赛博霓虹 (Cyberpunk)',
+    values: { brightness: 0.95, contrast: 1.35, saturation: 1.45, hue: 180.0, vignette: 0.35, grain: 0.0 },
+  },
+  {
+    id: 'warm',
+    label: '暖阳日系 (Warm Sunlight)',
+    values: { brightness: 1.08, contrast: 0.95, saturation: 1.15, hue: 25.0, vignette: 0.1, grain: 0.0 },
+  },
+  {
+    id: 'cold',
+    label: '清冷电影 (Cold Cinema)',
+    values: { brightness: 0.95, contrast: 1.2, saturation: 0.9, hue: 205.0, vignette: 0.3, grain: 0.05 },
+  },
+  {
+    id: 'dark_moody',
+    label: '暗黑高冷 (Dark Moody)',
+    values: { brightness: 0.8, contrast: 1.4, saturation: 0.75, hue: 0.0, vignette: 0.5, grain: 0.15 },
+  },
+  {
+    id: 'muted',
+    label: '柔和褪色 (Muted / Faded)',
+    values: { brightness: 1.06, contrast: 0.85, saturation: 0.7, hue: 0.0, vignette: 0.15, grain: 0.1 },
+  },
+]
+
+function matchPreset(
+  b: number,
+  c: number,
+  s: number,
+  h: number,
+  v: number,
+  g: number,
+): string {
+  for (const preset of FILTER_PRESETS) {
+    const pv = preset.values
+    if (
+      Math.abs(pv.brightness - b) < 0.02 &&
+      Math.abs(pv.contrast - c) < 0.02 &&
+      Math.abs(pv.saturation - s) < 0.02 &&
+      Math.abs(pv.hue - h) < 1.0 &&
+      Math.abs(pv.vignette - v) < 0.02 &&
+      Math.abs(pv.grain - g) < 0.02
+    ) {
+      return preset.id
+    }
+  }
+  return 'custom'
+}
+
 function DrawerBody({
   wallpaper: wp,
   source,
@@ -114,6 +194,24 @@ function DrawerBody({
     void config.reset('filter.hue')
     void config.reset('filter.vignette')
     void config.reset('filter.grain')
+  }
+
+  const currentPreset = matchPreset(brightness, contrast, saturation, hue, vignette, grain)
+
+  const applyPreset = (presetId: string) => {
+    const preset = FILTER_PRESETS.find((p) => p.id === presetId)
+    if (!preset) return
+    if (preset.id === 'none') {
+      resetAllFilters()
+      return
+    }
+    const pv = preset.values
+    void config.set('filter.brightness', pv.brightness)
+    void config.set('filter.contrast', pv.contrast)
+    void config.set('filter.saturation', pv.saturation)
+    void config.set('filter.hue', pv.hue)
+    void config.set('filter.vignette', pv.vignette)
+    void config.set('filter.grain', pv.grain)
   }
 
   const cssFilter = `brightness(${brightness}) contrast(${contrast}) saturate(${saturation}) hue-rotate(${hue}deg)`
@@ -330,6 +428,30 @@ function DrawerBody({
               </Button>
             )}
           </Stack>
+
+          <SettingRow
+            label="滤镜预设"
+            description="一键应用风格化色调，支持在下方微调。"
+            control={
+              <Select
+                size="small"
+                value={currentPreset}
+                onChange={(e) => applyPreset(e.target.value)}
+                sx={{ minWidth: 180 }}
+              >
+                {FILTER_PRESETS.map((p) => (
+                  <MenuItem key={p.id} value={p.id}>
+                    {p.label}
+                  </MenuItem>
+                ))}
+                {currentPreset === 'custom' && (
+                  <MenuItem value="custom" disabled>
+                    自定义微调
+                  </MenuItem>
+                )}
+              </Select>
+            }
+          />
 
           <SettingRow
             label="亮度"

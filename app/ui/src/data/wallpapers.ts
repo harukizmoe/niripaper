@@ -19,4 +19,5 @@ export interface WallpaperItem {
   fps?: string;
   activeOn?: string | null;
   path?: string;
+  is_dark?: boolean;
 }
