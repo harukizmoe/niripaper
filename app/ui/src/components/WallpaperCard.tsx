@@ -5,6 +5,7 @@ import CheckRounded from '@mui/icons-material/CheckRounded'
 import PlayArrowRounded from '@mui/icons-material/PlayArrowRounded'
 import ImageNotSupportedRounded from '@mui/icons-material/ImageNotSupportedRounded'
 import type { WallpaperItem } from '../data/wallpapers'
+import { cachedThumb, loadThumb } from '../data/thumbs'
 import { outputLabel } from '../hooks/useOutputs'
 
 interface WallpaperCardProps {
@@ -65,7 +66,12 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
 
   // 优先加载 thumb（静态缩略图或视频提取帧），视频源路径仅用于壁纸应用
   const mediaSource = toMediaSrc(wallpaper.thumb || wallpaper.path || '')
-  const [imgSrc, setImgSrc] = useState(mediaSource)
+  // Wallhaven thumbnails are remote; the shell keeps a copy on disk so a card
+  // that scrolls out and back does not pay for the picture again.
+  const remoteThumb = /^https?:\/\//.test(wallpaper.thumb)
+  const [imgSrc, setImgSrc] = useState(() =>
+    remoteThumb ? (cachedThumb(wallpaper.id) ?? '') : mediaSource,
+  )
   const [broken, setBroken] = useState(false)
   // One state, not two. Splitting "the skeleton may go" (`loaded`) from "the
   // entrance may start" (`entering`) let a render land between them: the
@@ -83,10 +89,31 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
   const staggerMs = lazyLoad ? Math.min(index, 12) * 45 : 0
 
   useEffect(() => {
-    setImgSrc(toMediaSrc(wallpaper.thumb || wallpaper.path || ''))
+    setImgSrc(
+      remoteThumb
+        ? (cachedThumb(wallpaper.id) ?? '')
+        : toMediaSrc(wallpaper.thumb || wallpaper.path || ''),
+    )
     setPlaced(false)
     setBroken(false)
-  }, [wallpaper.thumb, wallpaper.path])
+    // `wallpaper.id` matters when a card is reused for another picture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallpaper.id, wallpaper.thumb, wallpaper.path])
+
+  // Only once the card is near the viewport: ask the shell for the cached
+  // file, which downloads it the first time. The in-memory map means a card
+  // coming back into view after a scroll gets the file without an IPC round
+  // trip at all.
+  useEffect(() => {
+    if (!requested || !remoteThumb || imgSrc) return
+    let cancelled = false
+    void loadThumb(wallpaper.id, wallpaper.thumb).then((src) => {
+      if (!cancelled) setImgSrc(src)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [requested, remoteThumb, imgSrc, wallpaper.id, wallpaper.thumb])
 
   // Wait for the decoded bitmap, not merely `load`.
   //
@@ -260,7 +287,7 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
           // No `src` until the card is near the viewport. The element stays
           // mounted (so the reveal is a style change, not a re-mount that
           // would re-decode and flash), but an absent src issues no request.
-          src={requested ? imgSrc : undefined}
+          src={requested && imgSrc ? imgSrc : undefined}
           alt={wallpaper.name}
           // Our own observer already gates the fetch, so asking the browser to
           // defer again would only add latency.
