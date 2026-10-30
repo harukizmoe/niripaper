@@ -9,11 +9,7 @@ import { TransitionsView } from './components/TransitionsView'
 import { SettingsView } from './components/SettingsView'
 import { ParallaxView } from './components/ParallaxView'
 import { WallpaperDrawer } from './components/WallpaperDrawer'
-import {
-  whWallpapers,
-  localWallpapers as initialLocalWallpapers,
-  type WallpaperItem,
-} from './data/wallpapers'
+import type { WallpaperItem } from './data/wallpapers'
 import {
   applyRoleVars,
   buildRoles,
@@ -67,8 +63,11 @@ export default function App() {
     const saved = localStorage.getItem('niripaper_lazy_load')
     return saved !== null ? saved === 'true' : true
   })
-  const [localList, setLocalList] = useState<WallpaperItem[]>(initialLocalWallpapers)
-  const [wallhavenList, setWallhavenList] = useState<WallpaperItem[]>(whWallpapers)
+  const [localList, setLocalList] = useState<WallpaperItem[]>([])
+  // The first scan can take a while (it builds the previews); until it is in,
+  // an empty library is "not read yet", not "empty".
+  const [localLoading, setLocalLoading] = useState(true)
+  const [wallhavenList, setWallhavenList] = useState<WallpaperItem[]>([])
   const [whLoading, setWhLoading] = useState(false)
   const [whHasMore, setWhHasMore] = useState(false)
   const [whFailed, setWhFailed] = useState(false)
@@ -106,9 +105,9 @@ export default function App() {
   // null and the seed would never settle on the wallpaper actually on screen.
   const refreshLocalWallpapers = useCallback(async () => {
     try {
-      const items = await invoke<WallpaperItem[]>('load_local_wallpapers')
-      if (items && items.length > 0) {
-        setLocalList(items)
+      const items = (await invoke<WallpaperItem[]>('load_local_wallpapers')) ?? []
+      setLocalList(items)
+      if (items.length > 0) {
         void currentWallpaperPath()
           .then((path) => {
             if (!path) return
@@ -126,19 +125,16 @@ export default function App() {
       }
     } catch (e) {
       console.warn('读取本地壁纸库失败:', e)
+    } finally {
+      setLocalLoading(false)
     }
   }, [])
 
   // Snackbar. A new message replaces the current one; MUI handles the timeout.
   const [snackbar, setSnackbar] = useState<{ key: number; message: string; failed: boolean } | null>(null)
   const showSnackbar = useCallback((message: string) => {
-    // A message that reports a failure is shown as one; a leading emoji from
-    // older call sites is dropped, the icon says what kind of message it is.
-    setSnackbar({
-      key: Date.now(),
-      message: message.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, ''),
-      failed: /失败/.test(message),
-    })
+    // A message that reports a failure is shown as one.
+    setSnackbar({ key: Date.now(), message, failed: /失败/.test(message) })
   }, [])
   // The newest request wins: a slow answer to an earlier search must not be
   // appended to (or replace) the list of a later one.
@@ -510,6 +506,7 @@ export default function App() {
             onRefreshLocal={refreshLocalWallpapers}
             whLoading={whLoading}
             whHasMore={whHasMore}
+            localLoading={localLoading}
             whFailed={whFailed}
           />
         )}

@@ -194,9 +194,8 @@ const WallpaperCardComponent: React.FC<WallpaperCardProps> = ({
         const percentX = ((e.clientX - rect.left) / rect.width) * 100
         const percentY = ((e.clientY - rect.top) / rect.height) * 100
         glare.style.opacity = '1'
-        glare.style.background = `radial-gradient(circle at ${percentX.toFixed(
-          1
-        )}% ${percentY.toFixed(1)}%, rgba(255, 255, 255, 0.35) 0%, transparent 65%)`
+        glare.style.setProperty('--glare-x', `${percentX.toFixed(1)}%`)
+        glare.style.setProperty('--glare-y', `${percentY.toFixed(1)}%`)
       }
     })
   }

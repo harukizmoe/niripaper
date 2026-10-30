@@ -154,29 +154,6 @@ export function applyRoleVars(roles: Roles): void {
   for (const [k, v] of Object.entries(roles)) {
     root.setProperty(`--md-sys-color-${k.replace(/_/g, '-')}`, v)
   }
-  for (const [legacy, role] of Object.entries(LEGACY_TOKENS)) {
-    const v = roles[role]
-    if (v) root.setProperty(legacy, v)
-  }
-}
-
-// Migration bridge: pages not yet rebuilt on MUI still read the prototype's
-// `--m3-*` tokens. Remove together with the last of index.css's page styles.
-const LEGACY_TOKENS: Record<string, string> = {
-  '--m3-bg': 'background',
-  '--m3-canvas': 'surface',
-  '--m3-surface': 'surface_container_low',
-  '--m3-surface-subtle': 'surface_container',
-  '--m3-surface-container': 'surface_container_high',
-  '--m3-surface-high': 'surface_container_highest',
-  '--m3-fg': 'on_surface',
-  '--m3-fg-muted': 'on_surface_variant',
-  '--m3-outline': 'outline_variant',
-  '--m3-accent-purple': 'primary',
-  '--m3-accent-lavender': 'primary_container',
-  '--m3-accent-lime': 'tertiary_container',
-  '--m3-accent-mint': 'secondary_container',
-  '--m3-accent-coral': 'error',
 }
 
 export function hexToRgb(hex: string): { r: number; g: number; b: number } {

@@ -9,7 +9,23 @@
 
 ---
 
-## 〇之二、2026-10-16（深夜）：前端栈定稿 —— React + Tailwind v4 + MUI v7；仓库重构为 workspace
+## 〇之三、2026-10-30：界面重做 —— 卸掉 Tailwind，MUI v9，M3 只做配色映射
+
+**取代** 〇之二 里的"Tailwind v4 + MUI v7"与"令牌在 `index.css` 一处定义、两个体系都读"。
+施工单见 `tasks/ui-redesign-plan.md`（已完成）。
+
+- **只保留 MUI 一套样式系统**（`@mui/material` 9.x）。Tailwind 已卸载：两套体系并存时，原型的手写类、
+  内联样式与 MUI 组件互相覆盖，颜色也就跟不上动态取色。
+- **M3 是主题，不是组件**：MUI 实现的是 Material Design 2，M3 支持搁置（mui/material-ui#29345）。
+  所以 M3 只体现在 `theme/color.ts`（官方 `@material/material-color-utilities` 的 HCT 方案输出 M3 角色）
+  与 `theme/mui.ts`（角色映射进 palette、M3 字阶/圆角、组件覆写）。组件样式只在 `mui.ts` 写，页面不改样式。
+- **`index.css` 只剩页面重置和壁纸卡片**（倾斜、高光、入场动画这些 MUI 表达不了的），颜色一律读
+  `--md-sys-color-*` 变量（`applyRoleVars()` 写在 `<html>` 上）。原型的 `--m3-*` 令牌与过渡桥已删除。
+- **设置页统一为"设置分组 + 设置行"**（`components/settings.tsx`），改了立即写 `config.toml`，
+  值不是默认值时显示恢复默认，默认值取自 `schema`。旧的整页保存按钮与 `get/save_transition_config` 命令已删除。
+- **界面上不展示守护进程没有的功能**：被删掉的滤镜、壁纸轮播记在 `tasks/backlog-wallpaper-features.md`。
+
+## 〇之二、2026-10-16（深夜）：前端栈定稿 —— React + Tailwind v4 + MUI v7；仓库重构为 workspace（前端栈部分已被 〇之三 取代）
 
 **决定**：原型升级为真实应用结构时，前端用 **Vite + React 19 + TypeScript + Tailwind CSS v4 +
 MUI v7**（`@mui/material` + `@emotion`），组件库选型记录如下。

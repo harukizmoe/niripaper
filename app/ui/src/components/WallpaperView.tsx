@@ -38,6 +38,8 @@ interface WallpaperViewProps {
   /** A search asked for from elsewhere (a tag in the drawer); `key` makes a repeat count. */
   searchRequest?: { query: string; key: number } | null
   whLoading?: boolean
+  /** The local library has not been read yet. */
+  localLoading?: boolean
   /** There is another page after the last one loaded. */
   whHasMore?: boolean
   /** The last request failed; scrolling alone will not retry it. */
@@ -90,6 +92,7 @@ export function WallpaperView({
   onRefreshLocal,
   searchRequest,
   whLoading = false,
+  localLoading = false,
   whHasMore = false,
   whFailed = false,
   enableBlur = true,
@@ -209,7 +212,11 @@ export function WallpaperView({
       >
         {list.length === 0 && !whLoading && (
           <Typography sx={{ color: 'text.secondary', textAlign: 'center', py: 8 }}>
-            {currentSource === 'local' ? '这里还没有壁纸。' : '没有找到壁纸，换个关键词或放宽筛选试试。'}
+            {currentSource === 'wallhaven'
+              ? '没有找到壁纸，换个关键词或放宽筛选试试。'
+              : localLoading
+                ? '正在读取壁纸库…'
+                : '这里还没有壁纸。'}
           </Typography>
         )}
 
