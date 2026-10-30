@@ -42,7 +42,7 @@ with the workspaces.
 
 ## Status
 
-Version 0.2.0, early.
+Version 0.1.0, early.
 
 Working today: static images (PNG, JPEG, WebP), **video wallpapers** (hardware-decoded),
 parallax, the overview transition, the wallpaper transition (nine effects), `fit` for
