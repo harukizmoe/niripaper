@@ -109,6 +109,13 @@ pub fn config_values(
     put("workspace_span", json!(config.workspace_span));
     put("namespace", json!(namespace));
     put("fit", json!(fit.name()));
+    let filter = &config.filter;
+    put("filter.brightness", json!(filter.brightness));
+    put("filter.contrast", json!(filter.contrast));
+    put("filter.saturation", json!(filter.saturation));
+    put("filter.hue", json!(filter.hue));
+    put("filter.vignette", json!(filter.vignette));
+    put("filter.grain", json!(filter.grain));
     let animations = &config.animations;
     put("animations.follow_niri", json!(animations.follow_niri));
     put("animations.off", json!(animations.off));

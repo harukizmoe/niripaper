@@ -172,6 +172,72 @@ pub fn keys() -> Vec<Key> {
             about: "How a source that does not match the canvas aspect is placed: cover crops, contain pads, stretch distorts.",
         },
         Key {
+            name: "filter.brightness",
+            kind: Kind::Float {
+                min: 0.5,
+                max: Some(1.5),
+            },
+            default: json!(config.filter.brightness),
+            unit: Some("×"),
+            hot: true,
+            about: "Post-processing brightness multiplier.",
+        },
+        Key {
+            name: "filter.contrast",
+            kind: Kind::Float {
+                min: 0.5,
+                max: Some(1.6),
+            },
+            default: json!(config.filter.contrast),
+            unit: Some("×"),
+            hot: true,
+            about: "Post-processing contrast multiplier.",
+        },
+        Key {
+            name: "filter.saturation",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(2.0),
+            },
+            default: json!(config.filter.saturation),
+            unit: Some("×"),
+            hot: true,
+            about: "Post-processing saturation multiplier (0 = grayscale).",
+        },
+        Key {
+            name: "filter.hue",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(360.0),
+            },
+            default: json!(config.filter.hue),
+            unit: Some("°"),
+            hot: true,
+            about: "Post-processing hue rotation angle in degrees.",
+        },
+        Key {
+            name: "filter.vignette",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.vignette),
+            unit: None,
+            hot: true,
+            about: "Post-processing corner vignette darkening intensity (0 = none).",
+        },
+        Key {
+            name: "filter.grain",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.grain),
+            unit: None,
+            hot: true,
+            about: "Post-processing film grain intensity (0 = none).",
+        },
+        Key {
             name: "animations.follow_niri",
             kind: Kind::Bool,
             default: json!(animations.follow_niri),

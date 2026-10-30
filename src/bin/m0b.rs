@@ -356,6 +356,7 @@ fn run() -> Result<(), String> {
                 gl::Pattern::Bands,
             ),
             gl::Content::Pattern(gl::Pattern::Bands),
+            &niripaper::config::Filter::default(),
             None,
         );
         frame.finish();

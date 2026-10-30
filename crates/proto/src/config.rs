@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::animation::{Animation, Curve, Spring};
 use crate::domain::Fit;
@@ -75,6 +75,8 @@ pub struct Config {
     pub namespace: String,
     /// How a source whose aspect ratio does not match the canvas is placed.
     pub fit: Fit,
+    /// Post-processing wallpaper filter.
+    pub filter: Filter,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
     /// The transition when the wallpaper changes.
@@ -95,6 +97,7 @@ impl Default for Config {
             video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             fit: Fit::Fill,
+            filter: Filter::default(),
             animations: Animations::default(),
             transition: Settings::default(),
             wallpaper: None,
@@ -149,6 +152,42 @@ pub struct OverviewAnimation {
     pub animation: Animation,
 }
 
+/// Post-processing wallpaper filter.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Filter {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub hue: f32,
+    pub vignette: f32,
+    pub grain: f32,
+}
+
+impl Default for Filter {
+    fn default() -> Self {
+        Self {
+            brightness: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            hue: 0.0,
+            vignette: 0.0,
+            grain: 0.0,
+        }
+    }
+}
+
+impl Filter {
+    pub fn is_enabled(&self) -> bool {
+        (self.brightness - 1.0).abs() > 0.001
+            || (self.contrast - 1.0).abs() > 0.001
+            || (self.saturation - 1.0).abs() > 0.001
+            || self.hue.abs() > 0.001
+            || self.vignette > 0.001
+            || self.grain > 0.001
+    }
+}
+
 /// What one output may override. Everything else is global.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -159,6 +198,7 @@ pub struct OutputOverride {
     pub parallax: Option<bool>,
     pub wallpaper: Option<PathBuf>,
     pub fit: Option<String>,
+    pub filter: Option<Filter>,
 }
 
 /// The parameters in effect for one output.
@@ -170,6 +210,7 @@ pub struct OutputParams {
     pub parallax: bool,
     pub wallpaper: Option<PathBuf>,
     pub fit: Fit,
+    pub filter: Filter,
 }
 
 impl Config {
@@ -305,6 +346,7 @@ impl Config {
         if let Some(fit) = &raw.fit {
             config.fit = Fit::parse(fit).map_err(|e| format!("fit: {e}"))?;
         }
+        config.filter = resolve_filter(&raw.filter)?;
         // The global `off` is an animation switch, and the wallpaper transition
         // is an animation: turning everything off has to turn this off too.
         config.transition =
@@ -324,6 +366,9 @@ impl Config {
             }
             if let Some(fit) = &output.fit {
                 Fit::parse(fit).map_err(|e| format!("outputs.{name}.fit: {e}"))?;
+            }
+            if let Some(filter) = &output.filter {
+                validate_filter(filter)?;
             }
             config.outputs.insert(name, output);
         }
@@ -350,6 +395,7 @@ impl Config {
                 .and_then(|o| o.fit.as_deref())
                 .and_then(|name| Fit::parse(name).ok())
                 .unwrap_or(self.fit),
+            filter: over.and_then(|o| o.filter).unwrap_or(self.filter),
         }
     }
 }
@@ -779,6 +825,83 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
     })
 }
 
+fn validate_filter(filter: &Filter) -> Result<(), String> {
+    if !(0.0..=3.0).contains(&filter.brightness) {
+        return Err(format!(
+            "filter.brightness must be between 0.0 and 3.0, got {}",
+            filter.brightness
+        ));
+    }
+    if !(0.0..=3.0).contains(&filter.contrast) {
+        return Err(format!(
+            "filter.contrast must be between 0.0 and 3.0, got {}",
+            filter.contrast
+        ));
+    }
+    if !(0.0..=3.0).contains(&filter.saturation) {
+        return Err(format!(
+            "filter.saturation must be between 0.0 and 3.0, got {}",
+            filter.saturation
+        ));
+    }
+    if !(0.0..=360.0).contains(&filter.hue) {
+        return Err(format!(
+            "filter.hue must be between 0.0 and 360.0, got {}",
+            filter.hue
+        ));
+    }
+    if !(0.0..=1.0).contains(&filter.vignette) {
+        return Err(format!(
+            "filter.vignette must be between 0.0 and 1.0, got {}",
+            filter.vignette
+        ));
+    }
+    if !(0.0..=1.0).contains(&filter.grain) {
+        return Err(format!(
+            "filter.grain must be between 0.0 and 1.0, got {}",
+            filter.grain
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_filter(raw: &Option<RawFilter>) -> Result<Filter, String> {
+    let mut filter = Filter::default();
+    if let Some(raw) = raw {
+        if let Some(v) = raw.brightness {
+            filter.brightness = v;
+        }
+        if let Some(v) = raw.contrast {
+            filter.contrast = v;
+        }
+        if let Some(v) = raw.saturation {
+            filter.saturation = v;
+        }
+        if let Some(v) = raw.hue {
+            filter.hue = v;
+        }
+        if let Some(v) = raw.vignette {
+            filter.vignette = v;
+        }
+        if let Some(v) = raw.grain {
+            filter.grain = v;
+        }
+    }
+    validate_filter(&filter)?;
+    Ok(filter)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFilter {
+    brightness: Option<f32>,
+    contrast: Option<f32>,
+    saturation: Option<f32>,
+    hue: Option<f32>,
+    vignette: Option<f32>,
+    grain: Option<f32>,
+}
+
 /// The overview transition: an animation block plus its target zoom.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -798,6 +921,7 @@ struct RawConfig {
     video_fps: Option<u32>,
     namespace: Option<String>,
     fit: Option<String>,
+    filter: Option<RawFilter>,
     #[serde(default)]
     animations: RawAnimations,
     #[serde(default)]
@@ -830,6 +954,14 @@ mod tests {
             namespace = "custom"
             wallpaper = "/etc/os-release"
 
+            [filter]
+            brightness = 1.1
+            contrast = 0.95
+            saturation = 1.2
+            hue = 45.0
+            vignette = 0.3
+            grain = 0.15
+
             [animations.parallax]
             duration_ms = 250
             curve = "ease-out-expo"
@@ -837,6 +969,8 @@ mod tests {
             [outputs."DP-1"]
             scale = 1.3
             parallax = true
+            [outputs."DP-1".filter]
+            brightness = 0.9
 
             [outputs."eDP-1"]
             column_span = 4
@@ -848,6 +982,12 @@ mod tests {
         assert!(!config.parallax);
         assert_eq!(config.column_span, 8);
         assert_eq!(config.workspace_span, 5);
+        assert_eq!(config.filter.brightness, 1.1);
+        assert_eq!(config.filter.contrast, 0.95);
+        assert_eq!(config.filter.saturation, 1.2);
+        assert_eq!(config.filter.hue, 45.0);
+        assert_eq!(config.filter.vignette, 0.3);
+        assert_eq!(config.filter.grain, 0.15);
         assert_eq!(
             config.wallpaper.as_deref(),
             Some(Path::new("/etc/os-release"))
@@ -859,10 +999,12 @@ mod tests {
         assert_eq!(config.namespace, "custom");
         assert_eq!(config.output("DP-1").scale, 1.3);
         assert!(config.output("DP-1").parallax);
+        assert_eq!(config.output("DP-1").filter.brightness, 0.9);
         assert_eq!(config.output("DP-1").column_span, 8);
         assert_eq!(config.output("DP-1").workspace_span, 5);
         assert_eq!(config.output("eDP-1").scale, 1.2);
         assert!(!config.output("eDP-1").parallax);
+        assert_eq!(config.output("eDP-1").filter.brightness, 1.1);
         assert_eq!(config.output("eDP-1").column_span, 4);
         // The per-output section does not override what it does not mention.
         assert_eq!(config.output("eDP-1").workspace_span, 5);

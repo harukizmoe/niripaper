@@ -344,6 +344,13 @@ struct Uniforms {
     stripes: i32,
     push: i32,
     start_radius: i32,
+    filter_enabled: i32,
+    brightness: i32,
+    contrast: i32,
+    saturation: i32,
+    hue: i32,
+    vignette: i32,
+    grain: i32,
 }
 
 /// What the shader needs to blend the previous frame in.
@@ -416,6 +423,13 @@ impl Renderer {
             stripes: uniform(program, "u_stripes"),
             push: uniform(program, "u_push"),
             start_radius: uniform(program, "u_start_radius"),
+            filter_enabled: uniform(program, "u_filter_enabled"),
+            brightness: uniform(program, "u_brightness"),
+            contrast: uniform(program, "u_contrast"),
+            saturation: uniform(program, "u_saturation"),
+            hue: uniform(program, "u_hue"),
+            vignette: uniform(program, "u_vignette"),
+            grain: uniform(program, "u_grain"),
         };
         Ok(Self {
             program,
@@ -426,13 +440,32 @@ impl Renderer {
 
     /// Draw the pattern over the whole current framebuffer. `blend` is the
     /// wallpaper transition in flight, if there is one.
-    pub fn draw(&self, view: View, content: Content<'_>, blend: Option<&Blend>) {
+    pub fn draw(
+        &self,
+        view: View,
+        content: Content<'_>,
+        filter: &crate::config::Filter,
+        blend: Option<&Blend>,
+    ) {
         unsafe {
             glBindVertexArray(self.vao);
             glUseProgram(self.program);
             glUniform2f(self.uniforms.screen, view.screen.0, view.screen.1);
             glUniform1f(self.uniforms.scale, view.scale);
             glUniform2f(self.uniforms.offset, view.offset.0, view.offset.1);
+            let filter_enabled = filter.is_enabled();
+            glUniform1i(
+                self.uniforms.filter_enabled,
+                if filter_enabled { 1 } else { 0 },
+            );
+            if filter_enabled {
+                glUniform1f(self.uniforms.brightness, filter.brightness);
+                glUniform1f(self.uniforms.contrast, filter.contrast);
+                glUniform1f(self.uniforms.saturation, filter.saturation);
+                glUniform1f(self.uniforms.hue, filter.hue);
+                glUniform1f(self.uniforms.vignette, filter.vignette);
+                glUniform1f(self.uniforms.grain, filter.grain);
+            }
             match content {
                 Content::Wallpaper(texture) => {
                     glActiveTexture(GL_TEXTURE0);
@@ -519,10 +552,52 @@ uniform vec2 u_direction;
 uniform float u_stripes;
 uniform float u_push;
 uniform float u_start_radius;
+uniform int u_filter_enabled;
+uniform float u_brightness;
+uniform float u_contrast;
+uniform float u_saturation;
+uniform float u_hue;
+uniform float u_vignette;
+uniform float u_grain;
 out vec4 color;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+vec3 apply_filter(vec3 col, vec2 screen_uv, float aspect) {
+    if (abs(u_hue) > 0.001) {
+        float angle = radians(u_hue);
+        float cosA = cos(angle);
+        float sinA = sin(angle);
+        mat3 hueMat = mat3(
+            vec3(0.213 + cosA * 0.787 - sinA * 0.213, 0.715 - cosA * 0.715 - sinA * 0.715, 0.072 - cosA * 0.072 + sinA * 0.928),
+            vec3(0.213 - cosA * 0.213 + sinA * 0.143, 0.715 + cosA * 0.285 + sinA * 0.140, 0.072 - cosA * 0.072 - sinA * 0.283),
+            vec3(0.213 - cosA * 0.213 - sinA * 0.787, 0.715 - cosA * 0.715 + sinA * 0.715, 0.072 + cosA * 0.928 + sinA * 0.072)
+        );
+        col = clamp(hueMat * col, 0.0, 1.0);
+    }
+    if (abs(u_saturation - 1.0) > 0.001) {
+        float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col = clamp(mix(vec3(luma), col, u_saturation), 0.0, 1.0);
+    }
+    if (abs(u_brightness - 1.0) > 0.001) {
+        col = clamp(col * u_brightness, 0.0, 1.0);
+    }
+    if (abs(u_contrast - 1.0) > 0.001) {
+        col = clamp((col - 0.5) * u_contrast + 0.5, 0.0, 1.0);
+    }
+    if (u_vignette > 0.001) {
+        vec2 p = (screen_uv - vec2(0.5)) * vec2(aspect, 1.0);
+        float dist = length(p);
+        float vig = 1.0 - smoothstep(0.4, 0.9, dist) * u_vignette;
+        col = col * clamp(vig, 0.0, 1.0);
+    }
+    if (u_grain > 0.001) {
+        float noise = (hash(screen_uv * u_screen) - 0.5) * u_grain * 0.15;
+        col = clamp(col + vec3(noise), 0.0, 1.0);
+    }
+    return col;
 }
 
 // A transition between the previous frame and this one.
@@ -671,6 +746,10 @@ void main() {
         if (edge < 0.002) {
             base = vec3(1.0);
         }
+    }
+
+    if (u_filter_enabled == 1) {
+        base = apply_filter(base, uv, u_screen.x / u_screen.y);
     }
 
     if (u_blend == 1) {

@@ -79,6 +79,8 @@ pub struct Options {
     pub transition: crate::render::transition::Settings,
     /// How a source whose aspect ratio does not match the canvas is placed.
     pub fit: Fit,
+    /// Post-processing wallpaper filter.
+    pub filter: crate::config::Filter,
     /// The command line's per-output overrides, and the configuration they are
     /// resolved against — see [`Options::resolve_output`].
     pub cli: CliOverrides,
@@ -106,6 +108,7 @@ impl Options {
             animations: crate::config::Animations::default(),
             transition: crate::render::transition::Settings::default(),
             fit: Fit::Fill,
+            filter: crate::config::Filter::default(),
             cli: CliOverrides::default(),
             config: None,
             trace: false,
@@ -148,6 +151,7 @@ impl Options {
         self.parallax = self.cli.parallax.unwrap_or(params.parallax);
         self.wallpaper = self.cli.wallpaper.clone().or(params.wallpaper);
         self.fit = self.cli.fit.unwrap_or(params.fit);
+        self.filter = params.filter;
     }
 }
 
@@ -578,6 +582,7 @@ fn run_output(
             Some(media) => media.content(),
             None => gl::Content::Pattern(options.pattern),
         },
+        filter: options.filter,
         blend: None,
     }
     .draw(&mut client, &mut pool, &surface, &renderer, false)?;
@@ -818,6 +823,12 @@ fn run_output(
                     }
                     options.wallpaper = params.wallpaper;
                     options.fit = params.fit;
+                    let filter_changed = options.filter != params.filter;
+                    options.filter = params.filter;
+                    if filter_changed && !frame_pending {
+                        surface.request_frame(&client.handle());
+                        client.flush()?;
+                    }
                     niri.motion
                         .set_spans(options.column_span, options.workspace_span);
                     // Rebuild the animators at their current position so a
@@ -984,6 +995,7 @@ fn run_output(
                     Some(media) => media.content(),
                     None => gl::Content::Pattern(options.pattern),
                 },
+                filter: options.filter,
                 blend,
             }
             .draw(&mut client, &mut pool, &surface, &renderer, moving)?;

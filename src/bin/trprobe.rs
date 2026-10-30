@@ -54,8 +54,9 @@ fn main() -> Result<(), String> {
 
     // The "before" frame: one pattern, so the transition's mask is obvious.
     let view = View::flat((width as f32, height as f32), Pattern::Bands);
+    let filter = niripaper::config::Filter::default();
     frame.begin();
-    renderer.draw(view, Content::Pattern(Pattern::Bands), None);
+    renderer.draw(view, Content::Pattern(Pattern::Bands), &filter, None);
     snapshot.capture();
 
     let read_pixels: extern "C" fn(i32, i32, i32, i32, u32, u32, *mut c_void) =
@@ -76,7 +77,12 @@ fn main() -> Result<(), String> {
                 start_radius: settings.start_radius as f32,
             };
             frame.begin();
-            renderer.draw(view, Content::Pattern(Pattern::Blocks), Some(&blend));
+            renderer.draw(
+                view,
+                Content::Pattern(Pattern::Blocks),
+                &filter,
+                Some(&blend),
+            );
             let mut pixels = vec![0u8; (width * height * 4) as usize];
             read_pixels(
                 0,

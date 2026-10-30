@@ -6,6 +6,7 @@
 //! every call site had to change for it. A struct means the next addition does
 //! not ripple.
 
+use crate::config::Filter;
 use crate::motion::{offset_px, Progress};
 use crate::render::gl::{self, Content, Pattern, Renderer, View};
 use crate::render::layer::{Client, LayerSurface, Pool};
@@ -14,6 +15,7 @@ use crate::render::layer::{Client, LayerSurface, Pool};
 pub struct Scene<'a> {
     pub view: View,
     pub content: Content<'a>,
+    pub filter: Filter,
     /// The wallpaper transition in flight, if any
     /// ([`crate::render::transition`]). `None` means "just draw the content".
     pub blend: Option<gl::Blend>,
@@ -63,7 +65,7 @@ impl<'a> Scene<'a> {
 
         let frame = pool.frame(slot);
         frame.begin();
-        renderer.draw(self.view, self.content, self.blend.as_ref());
+        renderer.draw(self.view, self.content, &self.filter, self.blend.as_ref());
         frame.finish();
         if let Some(err) = gl::last_error() {
             return Err(format!("GL error after drawing: 0x{err:x}"));

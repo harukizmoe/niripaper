@@ -235,6 +235,14 @@ mod tests {
         assert_eq!(config.animations.overview_open_close.zoom, 0.98);
     }
 
+    #[test]
+    fn filter_keys_create_filter_table_and_validate() {
+        let out = set("", "filter.brightness", json!(1.2)).unwrap();
+        assert!(out.contains("[filter]\nbrightness = 1.2"));
+        let config = Config::parse_without_niri(&out).unwrap();
+        assert_eq!(config.filter.brightness, 1.2);
+    }
+
     /// The comments document every key; editing one must not drop them.
     #[test]
     fn replacing_a_value_keeps_its_comment() {

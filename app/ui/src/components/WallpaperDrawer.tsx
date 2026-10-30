@@ -17,7 +17,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import type { WallpaperItem } from '../data/wallpapers'
 import { useConfig } from '../hooks/useConfig'
 import type { OutputInfo } from '../hooks/useOutputs'
-import { NumberInput } from './fields'
+import { NumberInput, SliderField } from './fields'
 import { OutputSelect } from './OutputSelect'
 import { SettingRow } from './settings'
 
@@ -92,6 +92,32 @@ function DrawerBody({
   })()
   const fit = pickedFit ?? (config.ready ? config.value<string>('fit') : 'fill')
 
+  const brightness = config.value<number>('filter.brightness') ?? 1.0
+  const contrast = config.value<number>('filter.contrast') ?? 1.0
+  const saturation = config.value<number>('filter.saturation') ?? 1.0
+  const hue = config.value<number>('filter.hue') ?? 0.0
+  const vignette = config.value<number>('filter.vignette') ?? 0.0
+  const grain = config.value<number>('filter.grain') ?? 0.0
+
+  const anyFilterSet =
+    config.isSet('filter.brightness') ||
+    config.isSet('filter.contrast') ||
+    config.isSet('filter.saturation') ||
+    config.isSet('filter.hue') ||
+    config.isSet('filter.vignette') ||
+    config.isSet('filter.grain')
+
+  const resetAllFilters = () => {
+    void config.reset('filter.brightness')
+    void config.reset('filter.contrast')
+    void config.reset('filter.saturation')
+    void config.reset('filter.hue')
+    void config.reset('filter.vignette')
+    void config.reset('filter.grain')
+  }
+
+  const cssFilter = `brightness(${brightness}) contrast(${contrast}) saturate(${saturation}) hue-rotate(${hue}deg)`
+
   return (
     <Stack sx={{ height: '100%' }}>
       <Stack direction="row" sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 1.5 }}>
@@ -104,7 +130,15 @@ function DrawerBody({
       </Stack>
 
       <Stack spacing={2.5} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2 }}>
-        <Box sx={{ borderRadius: 3, overflow: 'hidden', bgcolor: 'md.surface_container', aspectRatio: '16 / 9' }}>
+        <Box
+          sx={{
+            position: 'relative',
+            borderRadius: 3,
+            overflow: 'hidden',
+            bgcolor: 'md.surface_container',
+            aspectRatio: '16 / 9',
+          }}
+        >
           {wp.kind === 'video' ? (
             <Box
               component="video"
@@ -114,14 +148,36 @@ function DrawerBody({
               muted
               loop
               playsInline
-              sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block',
+                filter: cssFilter,
+              }}
             />
           ) : (
             <Box
               component="img"
               src={toMediaSrc(wp.full_url || wp.path || wp.thumb)}
               alt={wp.name}
-              sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block',
+                filter: cssFilter,
+              }}
+            />
+          )}
+          {vignette > 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                background: `radial-gradient(circle, transparent ${40 * (1 - vignette * 0.5)}%, rgba(0,0,0,${vignette * 0.85}) 100%)`,
+              }}
             />
           )}
         </Box>
@@ -243,6 +299,109 @@ function DrawerBody({
               }
             />
           )}
+        </Box>
+
+        <Divider />
+
+        <Box>
+          <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              后期滤镜
+            </Typography>
+            {anyFilterSet && (
+              <Button size="small" variant="text" onClick={resetAllFilters}>
+                恢复默认
+              </Button>
+            )}
+          </Stack>
+
+          <SettingRow
+            label="亮度"
+            modified={config.isSet('filter.brightness')}
+            onReset={() => void config.reset('filter.brightness')}
+          >
+            <SliderField
+              value={brightness}
+              min={0.5}
+              max={1.5}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.brightness', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="对比度"
+            modified={config.isSet('filter.contrast')}
+            onReset={() => void config.reset('filter.contrast')}
+          >
+            <SliderField
+              value={contrast}
+              min={0.5}
+              max={1.6}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.contrast', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="饱和度"
+            modified={config.isSet('filter.saturation')}
+            onReset={() => void config.reset('filter.saturation')}
+          >
+            <SliderField
+              value={saturation}
+              min={0.0}
+              max={2.0}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.saturation', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="色相偏移"
+            modified={config.isSet('filter.hue')}
+            onReset={() => void config.reset('filter.hue')}
+          >
+            <SliderField
+              value={hue}
+              min={0.0}
+              max={360.0}
+              step={1}
+              unit="°"
+              onCommit={(v) => void config.set('filter.hue', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="电影暗角"
+            modified={config.isSet('filter.vignette')}
+            onReset={() => void config.reset('filter.vignette')}
+          >
+            <SliderField
+              value={vignette}
+              min={0.0}
+              max={1.0}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.vignette', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="胶片颗粒"
+            modified={config.isSet('filter.grain')}
+            onReset={() => void config.reset('filter.grain')}
+          >
+            <SliderField
+              value={grain}
+              min={0.0}
+              max={1.0}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.grain', v)}
+            />
+          </SettingRow>
         </Box>
       </Stack>
 
