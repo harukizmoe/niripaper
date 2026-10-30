@@ -49,6 +49,8 @@ interface WallpaperDrawerProps {
   onClose: () => void
   onApply: (params: { fit: string }) => void
   onSaveToLocal: (wallpaper: WallpaperItem) => void
+  /** Download a Wallhaven original into the library; resolves to its path. */
+  onDownload: (wallpaper: WallpaperItem) => Promise<string>
   onSearchTag: (tag: string) => void
   onNotify: (msg: string) => void
 }
@@ -96,6 +98,7 @@ function DrawerBody({
   onClose,
   onApply,
   onSaveToLocal,
+  onDownload,
   onSearchTag,
   onNotify,
 }: Omit<WallpaperDrawerProps, 'isOpen' | 'wallpaper'> & { wallpaper: WallpaperItem }) {
@@ -150,16 +153,23 @@ function DrawerBody({
   const currentPath = wp.path || ''
   const inPlaylist = currentPath ? playlistItems.includes(currentPath) : false
 
-  const togglePlaylist = () => {
-    if (!currentPath) {
-      onNotify('无法加入轮播：当前壁纸无本地文件，请先保存到本地')
-      return
+  const togglePlaylist = async () => {
+    let path = currentPath
+    if (!path) {
+      // A Wallhaven picture has no file yet: fetch it, then queue it.
+      try {
+        path = await onDownload(wp)
+      } catch (e) {
+        onNotify(`下载失败: ${e}`)
+        return
+      }
     }
-    const nextItems = inPlaylist
-      ? playlistItems.filter((p) => p !== currentPath)
-      : [...playlistItems, currentPath]
-    void config.set('playlist.items', nextItems)
-    onNotify(inPlaylist ? '已从轮播列表中移出' : '已加入轮播列表')
+    const queued = playlistItems.includes(path)
+    void config.set(
+      'playlist.items',
+      queued ? playlistItems.filter((p) => p !== path) : [...playlistItems, path],
+    )
+    onNotify(queued ? '已从轮播列表中移出' : '已加入轮播列表')
   }
 
   return (
@@ -585,14 +595,12 @@ function DrawerBody({
         <Button variant="contained" size="large" onClick={() => onApply({ fit })}>
           设为壁纸
         </Button>
-        {currentPath && (
-          <Button variant="outlined" onClick={togglePlaylist}>
-            {inPlaylist ? '从轮播列表中移出' : '加入轮播列表'}
-          </Button>
-        )}
+        <Button variant="outlined" onClick={() => void togglePlaylist()}>
+          {inPlaylist ? '从轮播列表中移出' : currentPath ? '加入轮播列表' : '下载并加入轮播'}
+        </Button>
         {source === 'wallhaven' && (
-          <Button variant="contained" color="secondary" onClick={() => onSaveToLocal(wp)}>
-            保存到本地库
+          <Button variant="text" onClick={() => onSaveToLocal(wp)}>
+            仅下载，不设为壁纸
           </Button>
         )}
       </Stack>

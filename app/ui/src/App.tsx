@@ -391,6 +391,19 @@ export default function App() {
     setDrawerOpen(true)
   }, [])
 
+  /// Download a Wallhaven original into the library and return its path. The
+  /// one place that decides the file name, so every button agrees on it.
+  const downloadWallhaven = async (wp: WallpaperItem): Promise<string> => {
+    const ext = wp.file_type === 'image/png' ? '.png' : '.jpg'
+    const filename = /\.(png|jpe?g|webp)$/.test(wp.name) ? wp.name : `${wp.name}${ext}`
+    const path = await invoke<string>('download_wallhaven_wallpaper', {
+      fullUrl: wp.full_url || wp.thumb,
+      filename,
+    })
+    await refreshLocalWallpapers()
+    return path
+  }
+
   const handleApplyWallpaper = async (params: { fit: string }) => {
     if (!selectedWp) return
 
@@ -399,19 +412,7 @@ export default function App() {
     if (selectedSource === 'wallhaven') {
       showSnackbar(`正在下载「${selectedWp.name}」…`)
       try {
-        const ext =
-          selectedWp.file_type === 'image/png' ? '.png' : '.jpg'
-        const filename =
-          selectedWp.name.endsWith('.png') ||
-          selectedWp.name.endsWith('.jpg') ||
-          selectedWp.name.endsWith('.webp')
-            ? selectedWp.name
-            : `${selectedWp.name}${ext}`
-        finalPath = await invoke<string>('download_wallhaven_wallpaper', {
-          fullUrl: selectedWp.full_url || selectedWp.thumb,
-          filename,
-        })
-        await refreshLocalWallpapers()
+        finalPath = await downloadWallhaven(selectedWp)
       } catch (e) {
         showSnackbar(`下载失败: ${e}`)
         return
@@ -469,19 +470,8 @@ export default function App() {
   const handleSaveToLocal = async (wp: WallpaperItem) => {
     showSnackbar(`正在下载「${wp.name}」…`)
     try {
-      const ext = wp.file_type === 'image/png' ? '.png' : '.jpg'
-      const filename =
-        wp.name.endsWith('.png') ||
-        wp.name.endsWith('.jpg') ||
-        wp.name.endsWith('.webp')
-          ? wp.name
-          : `${wp.name}${ext}`
-      const savedPath = await invoke<string>('download_wallhaven_wallpaper', {
-        fullUrl: wp.full_url || wp.thumb,
-        filename,
-      })
+      const savedPath = await downloadWallhaven(wp)
       showSnackbar(`已保存到本地库：${savedPath}`)
-      await refreshLocalWallpapers()
     } catch (e) {
       showSnackbar(`保存到本地失败: ${e}`)
     }
@@ -583,6 +573,7 @@ export default function App() {
             onClose={() => setDrawerOpen(false)}
             onApply={handleApplyWallpaper}
             onSaveToLocal={handleSaveToLocal}
+            onDownload={downloadWallhaven}
             onSearchTag={(tag) => {
               setCurrentTab('wallpapers')
               setCurrentSource('wallhaven')
