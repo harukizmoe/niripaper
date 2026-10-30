@@ -51,6 +51,15 @@ pub fn daemon_set(
     })
 }
 
+/// Switch to the next wallpaper in the playlist.
+#[tauri::command]
+pub fn daemon_next(
+    connection: State<'_, Connection>,
+    output: Option<String>,
+) -> Result<String, String> {
+    connection.send(&Request::Next { output })
+}
+
 /// Shut the daemon down. Returns the daemon's reply. When stopped, the Wayland
 /// layer surface is destroyed and the desktop immediately reveals Noctalia.
 #[tauri::command]
@@ -472,6 +481,7 @@ pub struct LocalWallpaperItem {
     pub thumb: String,
     pub fps: Option<String>,
     pub active_on: Option<String>,
+    pub is_dark: bool,
 }
 
 /// Scan `~/Pictures/Wallpapers` (or a custom directory) for real media files (§4.10).
@@ -607,7 +617,7 @@ pub async fn load_local_wallpapers(
         // Prefer the picture's own colours. A video falls back to its
         // extracted thumbnail, and only a video whose frame could not be
         // extracted keeps the name-derived approximation.
-        let mut colors = if is_video {
+        let (mut colors, is_dark) = if is_video {
             extract_colors_cached(&cache_dir, std::path::Path::new(&thumb_path_str))
         } else {
             extract_colors_cached(&cache_dir, &path)
@@ -633,6 +643,7 @@ pub async fn load_local_wallpapers(
                 None
             },
             active_on: None,
+            is_dark,
         });
     }
 
@@ -767,7 +778,10 @@ fn hash_str(s: &str) -> u64 {
 /// file's bytes, so key it by path + size + mtime and keep the result next to
 /// the video thumbnails. A cache miss costs one decode; every later scan is a
 /// handful of small reads.
-fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) -> Vec<String> {
+fn extract_colors_cached(
+    cache_dir: &std::path::Path,
+    path: &std::path::Path,
+) -> (Vec<String>, bool) {
     let meta = std::fs::metadata(path).ok();
     let key = format!(
         "{:016x}",
@@ -782,61 +796,72 @@ fn extract_colors_cached(cache_dir: &std::path::Path, path: &std::path::Path) ->
                 .unwrap_or(0)
         ))
     );
-    // `v2`: ranked source colours (Score), not k-means centres. Older cache
-    // files hold the latter and must not be read as the former.
-    let cache_file = cache_dir.join(format!("colors-v2-{key}.txt"));
+    // `v3`: includes calculated `is_dark` tag on line 1, then ranked colors.
+    let cache_file = cache_dir.join(format!("colors-v3-{key}.txt"));
 
     if let Ok(text) = std::fs::read_to_string(&cache_file) {
-        let colors: Vec<String> = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_owned)
-            .collect();
-        if !colors.is_empty() {
-            return colors;
+        let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+        if let Some(first) = lines.next() {
+            let is_dark = first == "dark";
+            let colors: Vec<String> = lines.map(str::to_owned).collect();
+            if !colors.is_empty() {
+                return (colors, is_dark);
+            }
         }
     }
 
-    let colors = extract_colors(path);
+    let (colors, is_dark) = extract_colors_and_luma(path);
     if !colors.is_empty() {
-        let _ = std::fs::write(&cache_file, colors.join("\n"));
+        let content = format!(
+            "{}\n{}",
+            if is_dark { "dark" } else { "light" },
+            colors.join("\n")
+        );
+        let _ = std::fs::write(&cache_file, content);
     }
-    colors
+    (colors, is_dark)
 }
 
-/// Rank the image's candidate theme source colours, best first.
-///
-/// This is Material's own wallpaper path (`sourceColorFromImage`): Celebi
-/// quantisation to 128 clusters, then `Score`, which weighs chroma against
-/// how much of the picture each hue covers. The front end takes the first
-/// entry as the seed and builds the scheme from it with the same library, so
-/// the theme is what any other Material You implementation would derive from
-/// this picture. It replaces a k-means pass whose centres were then picked
-/// among by raw chroma — a heuristic of our own that small vivid specks won.
-fn extract_colors(path: &std::path::Path) -> Vec<String> {
+/// Rank the image's candidate theme source colours, best first, and compute
+/// perceived luminance for automatic dark/light classification.
+fn extract_colors_and_luma(path: &std::path::Path) -> (Vec<String>, bool) {
     use material_colors::color::Rgb;
     use material_colors::quantize::{Quantizer, QuantizerCelebi};
     use material_colors::score::Score;
 
     let Ok(img) = image::open(path) else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     // Downscale first, as the library asks: 128x128 keeps every region of the
     // picture represented and quantises in a few milliseconds.
     let small = img.resize_exact(128, 128, image::imageops::FilterType::Triangle);
-    let pixels: Vec<Rgb> = small
-        .to_rgb8()
+    let rgb = small.to_rgb8();
+
+    // Calculate full-image perceived relative luminance (Rec. 709).
+    let mut sum_luma = 0.0f64;
+    for p in rgb.pixels() {
+        sum_luma += 0.2126 * p.0[0] as f64 + 0.7152 * p.0[1] as f64 + 0.0722 * p.0[2] as f64;
+    }
+    let avg_luma = sum_luma / (128.0 * 128.0);
+    let is_dark = avg_luma < 108.0;
+
+    let pixels: Vec<Rgb> = rgb
         .pixels()
         .map(|p| Rgb::new(p.0[0], p.0[1], p.0[2]))
         .collect();
     let clusters = QuantizerCelebi::quantize(&pixels, 128);
     // `filter = true` drops greys and slivers; when nothing survives, Score
     // returns its fallback, which is an honest "no usable colour" seed.
-    Score::score(&clusters.color_to_count, Some(4), None, Some(true))
+    let colors = Score::score(&clusters.color_to_count, Some(4), None, Some(true))
         .iter()
         .map(|c| format!("#{}", c.as_hex()))
-        .collect()
+        .collect();
+    (colors, is_dark)
+}
+
+#[cfg(test)]
+fn extract_colors(path: &std::path::Path) -> Vec<String> {
+    extract_colors_and_luma(path).0
 }
 
 /// Older call site kept for videos, where there is no still frame to sample.
@@ -875,7 +900,7 @@ fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
 }
 
 /// Wallhaven API search query parameters (matching Noctalia's official plugin).
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, Debug, Clone)]
 pub struct WallhavenQueryParams {
     pub q: Option<String>,
     pub categories: Option<String>,
@@ -914,8 +939,69 @@ pub struct WallhavenSearchResult {
 }
 
 /// Query Wallhaven API v1 directly via curl (zero extra dependencies, uses system TLS).
+///
+/// `async` on purpose: a plain `fn` command runs on the main thread, and this one
+/// waits on curl for a second or so — the whole window, spinner included, froze
+/// for that long on every page. The blocking work goes to a worker thread.
 #[tauri::command]
-pub fn search_wallhaven(params: WallhavenQueryParams) -> Result<WallhavenSearchResult, String> {
+pub async fn search_wallhaven(
+    params: WallhavenQueryParams,
+) -> Result<WallhavenSearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search_wallhaven_blocking(params))
+        .await
+        .map_err(|e| format!("检索线程异常: {e}"))?
+}
+
+/// The API's page size is fixed at 24 and `per_page` is ignored, so a batch is
+/// several pages asked for at once. Two pages ≈ 48 cards per scroll step.
+const PAGES_PER_BATCH: u32 = 2;
+
+/// One batch: pages `first`, `first + 1`, … up to [`PAGES_PER_BATCH`], fetched
+/// concurrently. The result reports the *last* page fetched, so the caller's
+/// "next page" is `current_page + 1`.
+fn search_wallhaven_blocking(
+    params: WallhavenQueryParams,
+) -> Result<WallhavenSearchResult, String> {
+    let first_page = params.page.unwrap_or(1);
+    // The rest of the batch goes out alongside the first page, so a batch costs
+    // one request's latency rather than one per page.
+    let rest: Vec<_> = (1..PAGES_PER_BATCH)
+        .map(|offset| {
+            let params = params.clone();
+            std::thread::spawn(move || fetch_search_page(&params, first_page + offset))
+        })
+        .collect();
+
+    let WallhavenSearchResult {
+        wallpapers: mut items,
+        mut current_page,
+        mut last_page,
+        total,
+    } = fetch_search_page(&params, first_page)?;
+
+    for (offset, handle) in rest.into_iter().enumerate() {
+        // A page past the end answers 400: that is "no more", not a failure.
+        let Ok(Ok(next)) = handle.join() else { break };
+        if next.current_page != first_page + offset as u32 + 1 {
+            break;
+        }
+        items.extend(next.wallpapers);
+        current_page = next.current_page;
+        last_page = next.last_page;
+    }
+
+    Ok(WallhavenSearchResult {
+        wallpapers: items,
+        current_page,
+        last_page,
+        total,
+    })
+}
+
+fn fetch_search_page(
+    params: &WallhavenQueryParams,
+    page: u32,
+) -> Result<WallhavenSearchResult, String> {
     let mut query_parts = Vec::new();
 
     if let Some(q) = params.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -933,7 +1019,6 @@ pub fn search_wallhaven(params: WallhavenQueryParams) -> Result<WallhavenSearchR
     if let Some(order) = params.order.as_deref() {
         query_parts.push(format!("order={order}"));
     }
-    let page = params.page.unwrap_or(1);
     query_parts.push(format!("page={page}"));
 
     if let Some(ratios) = params.ratios.as_deref().filter(|s| !s.is_empty()) {
@@ -1090,8 +1175,21 @@ pub fn search_wallhaven(params: WallhavenQueryParams) -> Result<WallhavenSearchR
 }
 
 /// Download a Wallhaven wallpaper into `~/Pictures/Wallpapers` (matching Noctalia's download workflow).
+/// Off the main thread for the same reason as [`search_wallhaven`].
 #[tauri::command]
-pub fn download_wallhaven_wallpaper(
+pub async fn download_wallhaven_wallpaper(
+    full_url: String,
+    filename: String,
+    dest_dir: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        download_wallhaven_blocking(full_url, filename, dest_dir)
+    })
+    .await
+    .map_err(|e| format!("下载线程异常: {e}"))?
+}
+
+fn download_wallhaven_blocking(
     full_url: String,
     filename: String,
     dest_dir: Option<String>,

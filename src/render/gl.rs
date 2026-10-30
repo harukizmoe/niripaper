@@ -344,6 +344,20 @@ struct Uniforms {
     stripes: i32,
     push: i32,
     start_radius: i32,
+    filter_enabled: i32,
+    brightness: i32,
+    contrast: i32,
+    saturation: i32,
+    vibrance: i32,
+    temperature: i32,
+    hue: i32,
+    vignette: i32,
+    grain: i32,
+    aberration: i32,
+    grain_size: i32,
+    tone_shadow: i32,
+    tone_highlight: i32,
+    tone_amount: i32,
 }
 
 /// What the shader needs to blend the previous frame in.
@@ -416,6 +430,20 @@ impl Renderer {
             stripes: uniform(program, "u_stripes"),
             push: uniform(program, "u_push"),
             start_radius: uniform(program, "u_start_radius"),
+            filter_enabled: uniform(program, "u_filter_enabled"),
+            brightness: uniform(program, "u_brightness"),
+            contrast: uniform(program, "u_contrast"),
+            saturation: uniform(program, "u_saturation"),
+            vibrance: uniform(program, "u_vibrance"),
+            temperature: uniform(program, "u_temperature"),
+            hue: uniform(program, "u_hue"),
+            vignette: uniform(program, "u_vignette"),
+            grain: uniform(program, "u_grain"),
+            aberration: uniform(program, "u_aberration"),
+            grain_size: uniform(program, "u_grain_size"),
+            tone_shadow: uniform(program, "u_tone_shadow"),
+            tone_highlight: uniform(program, "u_tone_highlight"),
+            tone_amount: uniform(program, "u_tone_amount"),
         };
         Ok(Self {
             program,
@@ -426,13 +454,39 @@ impl Renderer {
 
     /// Draw the pattern over the whole current framebuffer. `blend` is the
     /// wallpaper transition in flight, if there is one.
-    pub fn draw(&self, view: View, content: Content<'_>, blend: Option<&Blend>) {
+    pub fn draw(
+        &self,
+        view: View,
+        content: Content<'_>,
+        filter: &crate::config::Filter,
+        blend: Option<&Blend>,
+    ) {
         unsafe {
             glBindVertexArray(self.vao);
             glUseProgram(self.program);
             glUniform2f(self.uniforms.screen, view.screen.0, view.screen.1);
             glUniform1f(self.uniforms.scale, view.scale);
             glUniform2f(self.uniforms.offset, view.offset.0, view.offset.1);
+            let filter_enabled = filter.is_enabled();
+            glUniform1i(
+                self.uniforms.filter_enabled,
+                if filter_enabled { 1 } else { 0 },
+            );
+            if filter_enabled {
+                glUniform1f(self.uniforms.brightness, filter.brightness);
+                glUniform1f(self.uniforms.contrast, filter.contrast);
+                glUniform1f(self.uniforms.saturation, filter.saturation);
+                glUniform1f(self.uniforms.vibrance, filter.vibrance);
+                glUniform1f(self.uniforms.temperature, filter.temperature);
+                glUniform1f(self.uniforms.hue, filter.hue);
+                glUniform1f(self.uniforms.vignette, filter.vignette);
+                glUniform1f(self.uniforms.grain, filter.grain);
+                glUniform1f(self.uniforms.aberration, filter.aberration);
+                glUniform1f(self.uniforms.grain_size, filter.grain_size);
+                glUniform1f(self.uniforms.tone_shadow, filter.tone_shadow);
+                glUniform1f(self.uniforms.tone_highlight, filter.tone_highlight);
+                glUniform1f(self.uniforms.tone_amount, filter.tone_amount);
+            }
             match content {
                 Content::Wallpaper(texture) => {
                     glActiveTexture(GL_TEXTURE0);
@@ -519,10 +573,97 @@ uniform vec2 u_direction;
 uniform float u_stripes;
 uniform float u_push;
 uniform float u_start_radius;
+uniform int u_filter_enabled;
+uniform float u_brightness;
+uniform float u_contrast;
+uniform float u_saturation;
+uniform float u_vibrance;
+uniform float u_temperature;
+uniform float u_hue;
+uniform float u_vignette;
+uniform float u_grain;
+uniform float u_aberration;
+uniform float u_grain_size;
+uniform float u_tone_shadow;
+uniform float u_tone_highlight;
+uniform float u_tone_amount;
 out vec4 color;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+vec3 hue_rgb(float deg) {
+    float h = deg / 60.0;
+    return clamp(abs(mod(h + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+}
+
+// Colour work happens in linear light (exposure, white balance, saturation),
+// contrast and the finishing touches in display space. Every control is
+// neutral at its default, so a small value is a small change.
+vec3 apply_filter(vec3 col, vec2 screen_uv, float aspect) {
+    vec3 lin = pow(max(col, vec3(0.0)), vec3(2.2));
+
+    if (abs(u_brightness - 1.0) > 0.001) {
+        lin *= exp2((u_brightness - 1.0) * 2.0);
+    }
+    if (abs(u_temperature) > 0.001) {
+        lin *= vec3(1.0 + 0.18 * u_temperature, 1.0, 1.0 - 0.18 * u_temperature);
+    }
+    if (abs(u_hue) > 0.001) {
+        float a = radians(u_hue);
+        float c = cos(a);
+        float s = sin(a);
+        // GLSL matrices are column-major: transpose() turns these rows into
+        // the usual luminance-preserving rotation.
+        mat3 m = transpose(mat3(
+            0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
+            0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283,
+            0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072
+        ));
+        lin = max(m * lin, vec3(0.0));
+    }
+    float luma = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+    if (abs(u_saturation - 1.0) > 0.001) {
+        lin = max(mix(vec3(luma), lin, u_saturation), vec3(0.0));
+    }
+    if (abs(u_vibrance - 1.0) > 0.001) {
+        float sat = max(lin.r, max(lin.g, lin.b)) - min(lin.r, min(lin.g, lin.b));
+        float amount = 1.0 + (u_vibrance - 1.0) * (1.0 - clamp(sat * 2.0, 0.0, 1.0));
+        lin = max(mix(vec3(luma), lin, amount), vec3(0.0));
+    }
+
+    vec3 c = pow(clamp(lin, 0.0, 1.0), vec3(1.0 / 2.2));
+
+    if (abs(u_contrast - 1.0) > 0.001) {
+        vec3 x = clamp(c, 0.001, 0.999);
+        vec3 hi = pow(x, vec3(u_contrast));
+        vec3 s_curve = hi / (hi + pow(1.0 - x, vec3(u_contrast)));
+        c = mix(c, s_curve, 0.85);
+    }
+    if (u_tone_amount > 0.001) {
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        vec3 ts = hue_rgb(u_tone_shadow);
+        vec3 th = hue_rgb(u_tone_highlight);
+        float ws = 1.0 - smoothstep(0.0, 0.6, l);
+        float wh = smoothstep(0.4, 1.0, l);
+        // Push colour in without changing the brightness it is added to.
+        c += (ts - dot(ts, vec3(0.333))) * ws * u_tone_amount * 0.18;
+        c += (th - dot(th, vec3(0.333))) * wh * u_tone_amount * 0.18;
+        c = clamp(c, 0.0, 1.0);
+    }
+    if (u_vignette > 0.001) {
+        vec2 p = (screen_uv - vec2(0.5)) * vec2(aspect, 1.0);
+        float v = smoothstep(0.35, 1.0, length(p));
+        c *= 1.0 - v * v * u_vignette * 0.8;
+    }
+    if (u_grain > 0.001) {
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        float weight = 1.0 - abs(l - 0.5) * 1.2;
+        float n = hash(floor(screen_uv * u_screen / u_grain_size)) - 0.5;
+        c = clamp(c + vec3(n * u_grain * 0.2 * weight), 0.0, 1.0);
+    }
+    return c;
 }
 
 // A transition between the previous frame and this one.
@@ -652,9 +793,19 @@ void main() {
 
     vec3 base;
     if (u_has_wallpaper == 1) {
-        // The texture is already canvas-sized and cover-cropped, so this is a
-        // straight 1:1 lookup.
-        base = texture(u_wallpaper, new_c).rgb;
+        if (u_filter_enabled == 1 && u_aberration > 0.001) {
+            vec2 dir = uv - vec2(0.5);
+            float d2 = dot(dir, dir);
+            vec2 offset = dir * d2 * u_aberration * 0.006 * u_scale;
+            float r = texture(u_wallpaper, new_c + offset).r;
+            float g = texture(u_wallpaper, new_c).g;
+            float b = texture(u_wallpaper, new_c - offset).b;
+            base = vec3(r, g, b);
+        } else {
+            // The texture is already canvas-sized and cover-cropped, so this is a
+            // straight 1:1 lookup.
+            base = texture(u_wallpaper, new_c).rgb;
+        }
     } else if (u_pattern == 1) {
         vec2 cell = floor(new_c * vec2(96.0, 54.0));
         float h = hash(cell);
@@ -671,6 +822,10 @@ void main() {
         if (edge < 0.002) {
             base = vec3(1.0);
         }
+    }
+
+    if (u_filter_enabled == 1) {
+        base = apply_filter(base, uv, u_screen.x / u_screen.y);
     }
 
     if (u_blend == 1) {

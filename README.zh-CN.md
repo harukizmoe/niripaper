@@ -26,24 +26,29 @@ niripaper 是 [niri](https://github.com/niri-wm/niri) 合成器的视差壁纸�
   所以壁纸和工作区是同步动的。
 - **总览缩放。** 打开 niri 总览时，壁纸跟着一起缩小。
 - **按输出分别配置。** 缩放、跨度、壁纸都可以每个输出不一样。
+- **桌面应用。** 一个 Tauri 窗口，做壁纸守护进程不该做的事：浏览本地库或 Wallhaven、
+  带着滤镜预览、选择显示器，以及改过渡、视差和轮播。它自己一个壁纸像素都不画 ——
+  通过控制 socket 发 `set`/`next`，并就地改写配置文件。
 - **资源占用低。** 没有东西在动时不出帧，也测不到 CPU 占用。
 
 ## 状态
 
-版本 0.2.0，早期。
+版本 0.1.0，早期。
 
 现在能用：静态图像（PNG / JPEG / WebP）、**视频壁纸**（硬件解码）、视差、总览过渡、
 换图过渡（九个效果）、`fit`（源与画布宽高比不一致时的五种放法）、单一配置文件
-与热重载、按输出配置、给前端用的 `schema`/`state`，以及给运行中的守护进程换壁纸。
+与热重载、按输出配置、给前端用的 `schema`/`state`、给运行中的守护进程换壁纸，
+以及一个浏览本地库与 Wallhaven、按显示器应用壁纸、编辑配置的桌面应用（`app/`）。
 
-还没有：桌面应用（**另开一个程序**，通过守护进程的控制 socket 与它对话 —— 守护进程这侧的接口是
-`schema`、`state` 和那份配置文件，这些都已经有了）、AUR 包、预编译二进制。
+还没有：AUR 包。
 
 ## 环境要求
 
 - **niri。** 开发时用的是 26.04。
 - **libmpv** —— 视频那条路链接它。Arch 上就是 `mpv` 这个包。
 - **Rust**（较新的 stable 工具链），如果你要自己编译。
+- **桌面应用还需要：** WebKitGTK 4.1 的开发文件（Arch 上是 `webkit2gtk-4.1`），以及
+  Node.js 与 npm。`ffmpeg` 是可选的 —— 没有它，本地视频壁纸就没有预览帧。
 
 ## 安装
 
@@ -60,15 +65,29 @@ cargo install --path . --locked --bin niripaper
 **`--bin niripaper` 不能省**：不写它，`src/bin/` 下的诊断探针也会一起装进
 `~/.cargo/bin`。
 
+桌面应用用同一份检出构建。它的前端会被编译进 app 二进制，所以先构建前端，再构建外壳：
+
+```bash
+cd app/ui && npm ci && npm run build && cd ../..
+cargo build -p niripaper-app --release
+```
+
+产物是 `target/release/niripaper-app`。crate 名就是这个；窗口和托盘图标显示的是 NiriPaper。
+没有任何步骤会替你把它装到 `PATH` 上。
+
 `packaging/aur/` 里有一份给 AUR 用的 `PKGBUILD`（**还没发布到 AUR** —— AUR 现在
 不收新账号，见 `packaging/aur/README.md`）。
 
-Release 里带**两个** `x86_64` 二进制。它们按**链接的库**命名，不按构建它的发行版命名 ——
-因为真正有差别的只有这一件事：链接 `libmpv` 的守护进程被它的 soname 钉住。
+Release 里带**两个** `x86_64` 压缩包。它们按**守护进程链接的库**命名，不按构建它的发行版
+命名 —— 因为真正有差别的只有这一件事：链接 `libmpv` 的守护进程被它的 soname 钉住。
 `mpv --version` 报 0.35 或更新的 —— Arch、Fedora、Debian 12 及更新 —— 取 `-mpv0.41`；
 报 0.34 的（Ubuntu 22.04）取 `-mpv0.34`。两者都要 glibc 2.34 或更新（两份构建的这个
-数字相同）。每个包里的 `INSTALL.txt` 写出这两个数字，且是 **从二进制里量出来的**而不是
-写死的。从源码构建则在任何地方都可用。
+数字相同）。
+
+每个包里都有两个程序：`niripaper`（守护进程）与 `niripaper-app`（桌面应用）。应用在
+运行时还需要 WebKitGTK 4.1 与 libayatana-appindicator；守护进程不需要，所以只跑守护进程
+就不必装这两个库。每个包里的 `INSTALL.txt` 写出确切要求，且是 **从二进制里量出来的**
+而不是写死的。从源码构建则在任何地方都可用。
 
 ## 用法
 
@@ -88,6 +107,7 @@ niripaper watch                           # 只打印视差目标值，不绘制
 
 ```bash
 niripaper set ~/Pictures/wall.webp    # 换壁纸，图片或视频都行
+niripaper next                        # 立刻切到轮播列表的下一张
 niripaper query                       # 现在屏幕上是什么
 niripaper schema                      # 全部配置项，JSON
 niripaper state                       # 守护进程当前状态，JSON
@@ -106,6 +126,25 @@ niripaper kill                        # 让它退出
 
 `state` 里的 `config.values` 是**配置里写的**，而 `wallpaper.path` 是**实际在屏的**：
 `set` 只换画面不动配置，所以两者本来就可能不一样。
+
+### 桌面应用
+
+`niripaper-app` 是图形前端。它是薄客户端：通过控制 socket 发 `set` 和 `next`，
+并就地改写 `~/.config/niripaper/config.toml`（保留注释）；文件一变，守护进程就重载。
+
+- **壁纸** —— 两个来源。本地库是 `$XDG_PICTURES_DIR/Wallpapers`（没有就用
+  `~/Pictures/Wallpapers`），递归读取；卡片可以按类型（图片 / 视频）、按明暗（暗色 / 亮色）、
+  按是否在轮播列表里筛选。明暗是从图片本身量的（平均感知亮度），按文件缓存 —— 之后新加的壁纸
+  在第一次读取库时就会被分类。Wallhaven 是实时检索：关键词、分类、纯度、排序，以及一个按
+  所选显示器的比例与分辨率生成的「匹配这块屏」筛选。结果是瀑布流，滚到接近末尾时一次再取
+  两页（约 48 张）；缩略图缓存在 `~/.cache/niripaper/wallhaven/`，滑回去不会重新下载。
+- **应用** —— 选显示器（或全部）和 `fit`，然后应用。Wallhaven 的图会先整张下载进本地库，
+  所以应用它的同时也留下了它；同一份下载也可以单独请求而不应用；Wallhaven 的图还能直接加进轮播。
+- **滤镜** —— 守护进程提供的预设加上逐项滑杆，拖动时预览同步变化。预览是 shader 的
+  CSS 近似，不是逐像素一致。
+- **轮播、过渡、视差** 各有一页；写的都是命令行读的同一批配置键。
+- **设置** 包括守护进程连接、登录时自启、窗口配色（从当前壁纸取），以及两个列表行为：
+  悬停时虚化其它卡片、只在滚到附近时加载预览图。
 
 ### 随 niri 启动
 
@@ -194,9 +233,12 @@ scale = 1.2
 | `wallpaper` | 要绘制的图像或视频（PNG/JPEG/WebP，或 mp4/webm/mkv/mov/m4v/avi/gif） |
 | `video_fps` | 视频帧率上限（默认 `0`，即跟着源帧率走） |
 | `scale` | 画布放大倍数（默认 `1.1`，上限 `1.35`） |
+| `parallax` | 壁纸是否跟随焦点与工作区移动（默认 `true`）。设为 `false` 时壁纸居中不动，但 `scale` 仍然生效，总览缩放照常工作 |
 | `column_span` | 横向视差的固定列跨度（默认 `6`，最小 `2`） |
 | `workspace_span` | 纵向视差的固定工作区跨度（默认 `6`，最小 `2`） |
 | `fit` | 源与画布宽高比不一致时怎么放：`fill`（默认）、`fit`、`stretch`、`center`、`tile` |
+| `[filter]` | 后期滤镜，见下。每一项默认都是“无效果”，不改就没有开销 |
+| `[playlist] enabled`、`interval_mins`、`order`、`items` | 按定时器在列表里轮换壁纸（默认关闭、`15` 分钟、`rotate`；`random` 不会重复当前这张） |
 | `[animations] follow_niri` | 总览过渡的设置取自 niri（默认 `true`） |
 | `[animations] slowdown` | 把所有动画的时间轴拉长 |
 | `[animations.parallax]` | 移动时壁纸怎么动 |
@@ -271,6 +313,28 @@ niri 那五个缓动都是"开头快、结尾慢"，正好和一个"张开"想�
 视频会**硬件解码**，并缩放到画布（输出尺寸 × `scale`）—— 从不按源分辨率出图。
 `video_fps` 决定每秒呈现多少次：niri 给图层表面的帧回调是 60 Hz，所以 60 fps 的源
 正好卡在那个临界点上。本机实测 25 足够顺滑、不丢帧；换更快的硬件值得往上调。
+
+### 滤镜
+
+`[filter]`（单个输出用 `[outputs."NAME".filter]`）在 GPU 上调整画面，图片与视频通用。
+颜色相关的运算在线性光里进行。
+
+| 配置项 | 范围 | 默认 | 含义 |
+| --- | --- | --- | --- |
+| `brightness` | `0.5`–`1.5` | `1.0` | 曝光 |
+| `contrast` | `0.5`–`1.6` | `1.0` | S 曲线对比度 |
+| `saturation` | `0`–`2` | `1.0` | 颜色浓度 |
+| `vibrance` | `0`–`2` | `1.0` | 类似饱和度，但平淡的颜色提得多、鲜艳的提得少 |
+| `temperature` | `-1`–`1` | `0` | 偏冷到偏暖；`0` 不改变颜色 |
+| `hue` | `0`–`360` | `0` | 所有色相整体旋转，单位度 |
+| `vignette` | `0`–`1` | `0` | 压暗四角 |
+| `grain`、`grain_size` | `0`–`1`、`1`–`4` px | `0`、`1.5` | 胶片颗粒，中间调最明显 |
+| `aberration` | `0`–`1` | `0` | 靠近边缘的色散 |
+| `tone_amount`、`tone_shadow`、`tone_highlight` | `0`–`1`、色相（度） | `0` | 分离色调：给暗部和亮部各染一点色，不改变亮度 |
+
+桌面应用里有若干预设（电影质感、黑白胶片、赛博霓虹、暖阳日落、动漫清透、复古胶片、
+暗夜护眼）。它们只是这些配置项的取值，定义在 `crates/proto` 的 `Filter::presets()`。
+`trprobe NODE OUT WALLPAPER` 会把每个预设渲染到一张图上，不用占用屏幕就能看效果。
 
 ## 排查
 

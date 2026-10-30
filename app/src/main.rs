@@ -12,6 +12,7 @@
 mod commands;
 mod config_edit;
 mod state;
+mod thumbs;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -53,6 +54,7 @@ fn main() {
             commands::daemon_state,
             commands::daemon_query,
             commands::daemon_set,
+            commands::daemon_next,
             commands::daemon_apply,
             commands::daemon_kill,
             commands::daemon_start,
@@ -67,6 +69,7 @@ fn main() {
             commands::apply_system_palette,
             commands::load_local_wallpapers,
             commands::search_wallhaven,
+            thumbs::wallhaven_thumbnail,
             commands::download_wallhaven_wallpaper,
             commands::get_autostart_status,
             commands::set_autostart_enabled,

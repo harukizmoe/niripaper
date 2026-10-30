@@ -1,6 +1,6 @@
 # Maintainer: harukizmoe <harukizmoe@gmail.com>
 pkgname=niripaper
-pkgver=0.2.0
+pkgver=0.1.0
 pkgrel=1
 pkgdesc="A parallax wallpaper daemon for the niri compositor"
 arch=('x86_64')

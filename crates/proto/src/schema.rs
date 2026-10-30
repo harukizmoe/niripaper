@@ -43,6 +43,8 @@ pub enum Kind {
     },
     /// A path on disk.
     Path,
+    /// A list of paths on disk.
+    Paths,
     /// A free-form string.
     Text,
     /// One of `options`.
@@ -138,6 +140,14 @@ pub fn keys() -> Vec<Key> {
             about: "Canvas = output × scale; the extra is the parallax travel.",
         },
         Key {
+            name: "parallax",
+            kind: Kind::Bool,
+            default: json!(config.parallax),
+            unit: None,
+            hot: true,
+            about: "Follow focus and workspace changes by moving the wallpaper.",
+        },
+        Key {
             name: "column_span",
             kind: Kind::Int { min: 2, max: None },
             default: json!(config.column_span),
@@ -162,6 +172,191 @@ pub fn keys() -> Vec<Key> {
             unit: None,
             hot: true,
             about: "How a source that does not match the canvas aspect is placed: cover crops, contain pads, stretch distorts.",
+        },
+        Key {
+            name: "filter.brightness",
+            kind: Kind::Float {
+                min: 0.5,
+                max: Some(1.5),
+            },
+            default: json!(config.filter.brightness),
+            unit: Some("×"),
+            hot: true,
+            about: "Post-processing brightness multiplier.",
+        },
+        Key {
+            name: "filter.contrast",
+            kind: Kind::Float {
+                min: 0.5,
+                max: Some(1.6),
+            },
+            default: json!(config.filter.contrast),
+            unit: Some("×"),
+            hot: true,
+            about: "Post-processing contrast multiplier.",
+        },
+        Key {
+            name: "filter.saturation",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(2.0),
+            },
+            default: json!(config.filter.saturation),
+            unit: Some("×"),
+            hot: true,
+            about: "Post-processing saturation multiplier (0 = grayscale).",
+        },
+        Key {
+            name: "filter.vibrance",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(2.0),
+            },
+            default: json!(config.filter.vibrance),
+            unit: Some("×"),
+            hot: true,
+            about: "Smart natural saturation preserving highlights and skin tones.",
+        },
+        Key {
+            name: "filter.temperature",
+            kind: Kind::Float {
+                min: -1.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.temperature),
+            unit: None,
+            hot: true,
+            about: "Color temperature: cool/blue (-1) to warm/golden (+1).",
+        },
+        Key {
+            name: "filter.hue",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(360.0),
+            },
+            default: json!(config.filter.hue),
+            unit: Some("°"),
+            hot: true,
+            about: "Post-processing hue rotation angle in degrees.",
+        },
+        Key {
+            name: "filter.vignette",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.vignette),
+            unit: None,
+            hot: true,
+            about: "Post-processing corner vignette darkening intensity (0 = none).",
+        },
+        Key {
+            name: "filter.grain",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.grain),
+            unit: None,
+            hot: true,
+            about: "Post-processing film grain intensity (0 = none).",
+        },
+        Key {
+            name: "filter.aberration",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.aberration),
+            unit: None,
+            hot: true,
+            about: "Chromatic aberration optical lens dispersion at screen edges.",
+        },
+        Key {
+            name: "filter.grain_size",
+            kind: Kind::Float {
+                min: 1.0,
+                max: Some(4.0),
+            },
+            default: json!(config.filter.grain_size),
+            unit: Some("px"),
+            hot: true,
+            about: "Film grain particle size, in pixels.",
+        },
+        Key {
+            name: "filter.tone_shadow",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(360.0),
+            },
+            default: json!(config.filter.tone_shadow),
+            unit: Some("°"),
+            hot: true,
+            about: "Split toning: hue pushed into the shadows.",
+        },
+        Key {
+            name: "filter.tone_highlight",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(360.0),
+            },
+            default: json!(config.filter.tone_highlight),
+            unit: Some("°"),
+            hot: true,
+            about: "Split toning: hue pushed into the highlights.",
+        },
+        Key {
+            name: "filter.tone_amount",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.tone_amount),
+            unit: None,
+            hot: true,
+            about: "Split toning strength (0 = off).",
+        },
+        Key {
+            name: "playlist.enabled",
+            kind: Kind::Bool,
+            default: json!(config.playlist.enabled),
+            unit: None,
+            hot: true,
+            about: "Whether automatic wallpaper playlist rotation is enabled.",
+        },
+        Key {
+            name: "playlist.interval_mins",
+            kind: Kind::Int {
+                min: 1,
+                max: Some(1440),
+            },
+            default: json!(config.playlist.interval_mins),
+            unit: Some("分钟"),
+            hot: true,
+            about: "Interval between wallpaper rotations, in minutes.",
+        },
+        Key {
+            name: "playlist.order",
+            kind: Kind::Enum {
+                options: names(&crate::config::PlaylistOrder::NAMES),
+            },
+            default: json!(config.playlist.order.name()),
+            unit: None,
+            hot: true,
+            about: "Rotation order: sequential (rotate) or randomized (random).",
+        },
+        Key {
+            name: "playlist.items",
+            kind: Kind::Paths,
+            default: json!(config
+                .playlist
+                .items
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()),
+            unit: None,
+            hot: true,
+            about: "List of wallpaper paths in the rotation playlist.",
         },
         Key {
             name: "animations.follow_niri",
@@ -377,7 +572,32 @@ pub const PER_OUTPUT: [&str; 5] = ["wallpaper", "scale", "column_span", "workspa
 
 /// The whole schema, as one JSON value.
 pub fn schema() -> Value {
-    json!({ "keys": keys(), "per_output": PER_OUTPUT })
+    json!({
+        "keys": keys(),
+        "per_output": PER_OUTPUT,
+        "filter_presets": crate::config::Filter::presets()
+            .into_iter()
+            .map(|(id, label, f)| json!({
+                "id": id,
+                "label": label,
+                "values": {
+                    "filter.brightness": f.brightness,
+                    "filter.contrast": f.contrast,
+                    "filter.saturation": f.saturation,
+                    "filter.vibrance": f.vibrance,
+                    "filter.temperature": f.temperature,
+                    "filter.hue": f.hue,
+                    "filter.vignette": f.vignette,
+                    "filter.grain": f.grain,
+                    "filter.grain_size": f.grain_size,
+                    "filter.aberration": f.aberration,
+                    "filter.tone_shadow": f.tone_shadow,
+                    "filter.tone_highlight": f.tone_highlight,
+                    "filter.tone_amount": f.tone_amount,
+                },
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// niri's curve names, from the one place that parses them.

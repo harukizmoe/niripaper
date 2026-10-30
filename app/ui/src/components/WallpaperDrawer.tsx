@@ -17,7 +17,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import type { WallpaperItem } from '../data/wallpapers'
 import { useConfig } from '../hooks/useConfig'
 import type { OutputInfo } from '../hooks/useOutputs'
-import { NumberInput } from './fields'
+import { NumberInput, SliderField } from './fields'
 import { OutputSelect } from './OutputSelect'
 import { SettingRow } from './settings'
 
@@ -49,6 +49,8 @@ interface WallpaperDrawerProps {
   onClose: () => void
   onApply: (params: { fit: string }) => void
   onSaveToLocal: (wallpaper: WallpaperItem) => void
+  /** Download a Wallhaven original into the library; resolves to its path. */
+  onDownload: (wallpaper: WallpaperItem) => Promise<string>
   onSearchTag: (tag: string) => void
   onNotify: (msg: string) => void
 }
@@ -71,6 +73,22 @@ export function WallpaperDrawer({ isOpen, wallpaper, ...rest }: WallpaperDrawerP
   )
 }
 
+const FILTER_KEYS = [
+  'filter.brightness',
+  'filter.contrast',
+  'filter.saturation',
+  'filter.vibrance',
+  'filter.temperature',
+  'filter.hue',
+  'filter.vignette',
+  'filter.grain',
+  'filter.grain_size',
+  'filter.aberration',
+  'filter.tone_shadow',
+  'filter.tone_highlight',
+  'filter.tone_amount',
+]
+
 function DrawerBody({
   wallpaper: wp,
   source,
@@ -80,6 +98,7 @@ function DrawerBody({
   onClose,
   onApply,
   onSaveToLocal,
+  onDownload,
   onSearchTag,
   onNotify,
 }: Omit<WallpaperDrawerProps, 'isOpen' | 'wallpaper'> & { wallpaper: WallpaperItem }) {
@@ -92,6 +111,67 @@ function DrawerBody({
   })()
   const fit = pickedFit ?? (config.ready ? config.value<string>('fit') : 'fill')
 
+  const num = (key: string) => config.value<number>(key) ?? (config.key(key)?.default as number)
+  const brightness = num('filter.brightness')
+  const contrast = num('filter.contrast')
+  const saturation = num('filter.saturation')
+  const vibrance = num('filter.vibrance')
+  const temperature = num('filter.temperature')
+  const hue = num('filter.hue')
+  const vignette = num('filter.vignette')
+  const grain = num('filter.grain')
+  const grainSize = num('filter.grain_size')
+  const aberration = num('filter.aberration')
+  const toneShadow = num('filter.tone_shadow')
+  const toneHighlight = num('filter.tone_highlight')
+  const toneAmount = num('filter.tone_amount')
+
+  const anyFilterSet = FILTER_KEYS.some((k) => config.isSet(k))
+  const resetAllFilters = () => FILTER_KEYS.forEach((k) => void config.reset(k))
+
+  // Same tolerance for every key: a preset matches when nothing is visibly off.
+  const currentPreset =
+    config.presets.find((p) =>
+      FILTER_KEYS.every((k) => Math.abs((p.values[k] ?? 0) - num(k)) < 0.015 * Math.max(1, Math.abs(p.values[k] ?? 0))),
+    )?.id ?? 'custom'
+
+  const applyPreset = (presetId: string) => {
+    const preset = config.presets.find((p) => p.id === presetId)
+    if (!preset) return
+    if (preset.id === 'none') {
+      resetAllFilters()
+      return
+    }
+    FILTER_KEYS.forEach((k) => void config.set(k, preset.values[k]))
+  }
+
+  const sepia = temperature > 0 ? temperature * 0.35 : 0
+  const effectiveSat = Math.max(0, saturation * (1 + (vibrance - 1) * 0.5))
+  const cssFilter = `brightness(${brightness}) contrast(${contrast}) saturate(${effectiveSat}) hue-rotate(${hue}deg) sepia(${sepia})`
+
+  const playlistItems = config.value<string[]>('playlist.items') ?? []
+  const currentPath = wp.path || ''
+  const inPlaylist = currentPath ? playlistItems.includes(currentPath) : false
+
+  const togglePlaylist = async () => {
+    let path = currentPath
+    if (!path) {
+      // A Wallhaven picture has no file yet: fetch it, then queue it.
+      try {
+        path = await onDownload(wp)
+      } catch (e) {
+        onNotify(`下载失败: ${e}`)
+        return
+      }
+    }
+    const queued = playlistItems.includes(path)
+    void config.set(
+      'playlist.items',
+      queued ? playlistItems.filter((p) => p !== path) : [...playlistItems, path],
+    )
+    onNotify(queued ? '已从轮播列表中移出' : '已加入轮播列表')
+  }
+
   return (
     <Stack sx={{ height: '100%' }}>
       <Stack direction="row" sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 1.5 }}>
@@ -103,8 +183,21 @@ function DrawerBody({
         </IconButton>
       </Stack>
 
-      <Stack spacing={2.5} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2 }}>
-        <Box sx={{ borderRadius: 3, overflow: 'hidden', bgcolor: 'md.surface_container', aspectRatio: '16 / 9' }}>
+      {/* The sections are taller than the drawer: without `flexShrink: 0` the
+          preview (overflow hidden, so min-height 0) is squeezed to nothing. */}
+      <Stack
+        spacing={2.5}
+        sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2, '& > *': { flexShrink: 0 } }}
+      >
+        <Box
+          sx={{
+            position: 'relative',
+            borderRadius: 3,
+            overflow: 'hidden',
+            bgcolor: 'md.surface_container',
+            aspectRatio: '16 / 9',
+          }}
+        >
           {wp.kind === 'video' ? (
             <Box
               component="video"
@@ -114,14 +207,36 @@ function DrawerBody({
               muted
               loop
               playsInline
-              sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block',
+                filter: cssFilter,
+              }}
             />
           ) : (
             <Box
               component="img"
               src={toMediaSrc(wp.full_url || wp.path || wp.thumb)}
               alt={wp.name}
-              sx={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block',
+                filter: cssFilter,
+              }}
+            />
+          )}
+          {vignette > 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                background: `radial-gradient(circle, transparent ${40 * (1 - vignette * 0.5)}%, rgba(0,0,0,${vignette * 0.85}) 100%)`,
+              }}
             />
           )}
         </Box>
@@ -244,15 +359,253 @@ function DrawerBody({
             />
           )}
         </Box>
+
+        <Divider />
+
+        <Box>
+          <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              后期滤镜
+            </Typography>
+            {anyFilterSet && (
+              <Button size="small" variant="text" onClick={resetAllFilters}>
+                恢复默认
+              </Button>
+            )}
+          </Stack>
+
+          <SettingRow
+            label="滤镜预设"
+            description="一键应用风格化色调，支持在下方微调。"
+            control={
+              <Select
+                size="small"
+                value={currentPreset}
+                onChange={(e) => applyPreset(e.target.value)}
+                sx={{ minWidth: 180 }}
+              >
+                {config.presets.map((p) => (
+                  <MenuItem key={p.id} value={p.id}>
+                    {p.label}
+                  </MenuItem>
+                ))}
+                {currentPreset === 'custom' && (
+                  <MenuItem value="custom" disabled>
+                    自定义微调
+                  </MenuItem>
+                )}
+              </Select>
+            }
+          />
+
+          <SettingRow
+            label="亮度"
+            modified={config.isSet('filter.brightness')}
+            onReset={() => void config.reset('filter.brightness')}
+          >
+            <SliderField
+              value={brightness}
+              min={0.5}
+              max={1.5}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.brightness', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="对比度"
+            modified={config.isSet('filter.contrast')}
+            onReset={() => void config.reset('filter.contrast')}
+          >
+            <SliderField
+              value={contrast}
+              min={0.5}
+              max={1.6}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.contrast', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="饱和度"
+            modified={config.isSet('filter.saturation')}
+            onReset={() => void config.reset('filter.saturation')}
+          >
+            <SliderField
+              value={saturation}
+              min={0.0}
+              max={2.0}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.saturation', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="自然饱和度"
+            description="提高平淡颜色的鲜艳度，同时避免肤色和高光过饱和。"
+            modified={config.isSet('filter.vibrance')}
+            onReset={() => void config.reset('filter.vibrance')}
+          >
+            <SliderField
+              value={vibrance}
+              min={0.0}
+              max={2.0}
+              step={0.01}
+              unit="×"
+              onCommit={(v) => void config.set('filter.vibrance', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="色温"
+            description="偏负为清冷电影蓝绿，偏正为暖阳黄金落日。"
+            modified={config.isSet('filter.temperature')}
+            onReset={() => void config.reset('filter.temperature')}
+          >
+            <SliderField
+              value={temperature}
+              min={-1.0}
+              max={1.0}
+              step={0.02}
+              onCommit={(v) => void config.set('filter.temperature', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="色相偏移"
+            modified={config.isSet('filter.hue')}
+            onReset={() => void config.reset('filter.hue')}
+          >
+            <SliderField
+              value={hue}
+              min={0.0}
+              max={360.0}
+              step={1}
+              unit="°"
+              onCommit={(v) => void config.set('filter.hue', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="电影暗角"
+            modified={config.isSet('filter.vignette')}
+            onReset={() => void config.reset('filter.vignette')}
+          >
+            <SliderField
+              value={vignette}
+              min={0.0}
+              max={1.0}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.vignette', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="颗粒大小"
+            modified={config.isSet('filter.grain_size')}
+            onReset={() => void config.reset('filter.grain_size')}
+          >
+            <SliderField
+              value={grainSize}
+              min={1}
+              max={4}
+              step={0.1}
+              unit="px"
+              onCommit={(v) => void config.set('filter.grain_size', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="分离色调强度"
+            description="给暗部和亮部各染一点色，不改变整体亮度。"
+            modified={config.isSet('filter.tone_amount')}
+            onReset={() => void config.reset('filter.tone_amount')}
+          >
+            <SliderField
+              value={toneAmount}
+              min={0}
+              max={1}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.tone_amount', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="暗部色相"
+            modified={config.isSet('filter.tone_shadow')}
+            onReset={() => void config.reset('filter.tone_shadow')}
+          >
+            <SliderField
+              value={toneShadow}
+              min={0}
+              max={360}
+              step={1}
+              unit="°"
+              disabled={toneAmount <= 0.001}
+              onCommit={(v) => void config.set('filter.tone_shadow', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="亮部色相"
+            modified={config.isSet('filter.tone_highlight')}
+            onReset={() => void config.reset('filter.tone_highlight')}
+          >
+            <SliderField
+              value={toneHighlight}
+              min={0}
+              max={360}
+              step={1}
+              unit="°"
+              disabled={toneAmount <= 0.001}
+              onCommit={(v) => void config.set('filter.tone_highlight', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="边缘色散"
+            description="屏幕四周的光学棱镜色差，呈现电影镜头感。"
+            modified={config.isSet('filter.aberration')}
+            onReset={() => void config.reset('filter.aberration')}
+          >
+            <SliderField
+              value={aberration}
+              min={0.0}
+              max={1.0}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.aberration', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="胶片颗粒"
+            modified={config.isSet('filter.grain')}
+            onReset={() => void config.reset('filter.grain')}
+          >
+            <SliderField
+              value={grain}
+              min={0.0}
+              max={1.0}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.grain', v)}
+            />
+          </SettingRow>
+        </Box>
       </Stack>
 
       <Stack spacing={1.25} sx={{ px: 3, py: 2, borderTop: 1, borderColor: 'divider' }}>
         <Button variant="contained" size="large" onClick={() => onApply({ fit })}>
           设为壁纸
         </Button>
+        <Button variant="outlined" onClick={() => void togglePlaylist()}>
+          {inPlaylist ? '从轮播列表中移出' : currentPath ? '加入轮播列表' : '下载并加入轮播'}
+        </Button>
         {source === 'wallhaven' && (
-          <Button variant="contained" color="secondary" onClick={() => onSaveToLocal(wp)}>
-            保存到本地库
+          <Button variant="text" onClick={() => onSaveToLocal(wp)}>
+            仅下载，不设为壁纸
           </Button>
         )}
       </Stack>

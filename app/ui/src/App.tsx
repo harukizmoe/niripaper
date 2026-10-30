@@ -40,14 +40,36 @@ async function currentWallpaperPath(): Promise<string | null> {
   }
 }
 
+export type ThemeMode = 'system' | 'light' | 'dark'
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('wallpapers')
   const [currentSource, setCurrentSource] = useState<'wallhaven' | 'local'>('local')
-  // Light/dark is remembered; the first run follows the desktop's preference.
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    const saved = localStorage.getItem('niripaper_dark')
-    return saved !== null ? saved === 'true' : matchMedia('(prefers-color-scheme: dark)').matches
+  // Theme mode: system (default), light, or dark.
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('niripaper_theme_mode') as ThemeMode | null
+    if (saved === 'system' || saved === 'light' || saved === 'dark') return saved
+    const oldDark = localStorage.getItem('niripaper_dark')
+    if (oldDark !== null) return oldDark === 'true' ? 'dark' : 'light'
+    return 'system'
   })
+  const [systemDark, setSystemDark] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches
+    }
+    return false
+  })
+
+  // Listen for live system dark/light mode changes.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
+
+  const isDark = themeMode === 'system' ? systemDark : themeMode === 'dark'
   const [followWallpaper, setFollowWallpaper] = useState<boolean>(
     () => localStorage.getItem('niripaper_follow_wallpaper') !== 'false',
   )
@@ -164,7 +186,9 @@ export default function App() {
           return [...prev, ...items.filter((w) => !seen.has(w.id))]
         })
         setWhHasMore(items.length > 0 && res.current_page < res.last_page)
-        whLast.current = { params, page }
+        // The daemon fetches a whole batch of pages, so the next "load more"
+        // starts after the last page it actually returned.
+        whLast.current = { params, page: res.current_page ?? page }
       } catch (e) {
         if (id !== whRequest.current) return
         console.warn('检索 Wallhaven 失败:', e)
@@ -321,11 +345,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleToggleTheme = () => {
-    setIsDark((prev) => {
-      localStorage.setItem('niripaper_dark', String(!prev))
-      return !prev
-    })
+  const handleThemeModeChange = (mode: ThemeMode) => {
+    setThemeMode(mode)
+    localStorage.setItem('niripaper_theme_mode', mode)
+  }
+
+  const handleCycleTheme = () => {
+    const order: ThemeMode[] = ['system', 'light', 'dark']
+    const nextMode = order[(order.indexOf(themeMode) + 1) % order.length]
+    handleThemeModeChange(nextMode)
   }
 
   const handleToggleFollowWallpaper = () => {
@@ -365,6 +393,19 @@ export default function App() {
     setDrawerOpen(true)
   }, [])
 
+  /// Download a Wallhaven original into the library and return its path. The
+  /// one place that decides the file name, so every button agrees on it.
+  const downloadWallhaven = async (wp: WallpaperItem): Promise<string> => {
+    const ext = wp.file_type === 'image/png' ? '.png' : '.jpg'
+    const filename = /\.(png|jpe?g|webp)$/.test(wp.name) ? wp.name : `${wp.name}${ext}`
+    const path = await invoke<string>('download_wallhaven_wallpaper', {
+      fullUrl: wp.full_url || wp.thumb,
+      filename,
+    })
+    await refreshLocalWallpapers()
+    return path
+  }
+
   const handleApplyWallpaper = async (params: { fit: string }) => {
     if (!selectedWp) return
 
@@ -373,19 +414,7 @@ export default function App() {
     if (selectedSource === 'wallhaven') {
       showSnackbar(`正在下载「${selectedWp.name}」…`)
       try {
-        const ext =
-          selectedWp.file_type === 'image/png' ? '.png' : '.jpg'
-        const filename =
-          selectedWp.name.endsWith('.png') ||
-          selectedWp.name.endsWith('.jpg') ||
-          selectedWp.name.endsWith('.webp')
-            ? selectedWp.name
-            : `${selectedWp.name}${ext}`
-        finalPath = await invoke<string>('download_wallhaven_wallpaper', {
-          fullUrl: selectedWp.full_url || selectedWp.thumb,
-          filename,
-        })
-        await refreshLocalWallpapers()
+        finalPath = await downloadWallhaven(selectedWp)
       } catch (e) {
         showSnackbar(`下载失败: ${e}`)
         return
@@ -443,19 +472,8 @@ export default function App() {
   const handleSaveToLocal = async (wp: WallpaperItem) => {
     showSnackbar(`正在下载「${wp.name}」…`)
     try {
-      const ext = wp.file_type === 'image/png' ? '.png' : '.jpg'
-      const filename =
-        wp.name.endsWith('.png') ||
-        wp.name.endsWith('.jpg') ||
-        wp.name.endsWith('.webp')
-          ? wp.name
-          : `${wp.name}${ext}`
-      const savedPath = await invoke<string>('download_wallhaven_wallpaper', {
-        fullUrl: wp.full_url || wp.thumb,
-        filename,
-      })
+      const savedPath = await downloadWallhaven(wp)
       showSnackbar(`已保存到本地库：${savedPath}`)
-      await refreshLocalWallpapers()
     } catch (e) {
       showSnackbar(`保存到本地失败: ${e}`)
     }
@@ -478,8 +496,9 @@ export default function App() {
       <Rail
         currentTab={currentTab}
         onTabChange={handleTabChange}
+        themeMode={themeMode}
         isDark={isDark}
-        onToggleTheme={handleToggleTheme}
+        onCycleTheme={handleCycleTheme}
       />
 
       {/* 右侧工作区 */}
@@ -508,6 +527,7 @@ export default function App() {
             whHasMore={whHasMore}
             localLoading={localLoading}
             whFailed={whFailed}
+            onNotify={showSnackbar}
           />
         )}
 
@@ -521,6 +541,9 @@ export default function App() {
 
         {currentTab === 'settings' && (
           <SettingsView
+            themeMode={themeMode}
+            isDark={isDark}
+            onThemeModeChange={handleThemeModeChange}
             followWallpaper={followWallpaper}
             onToggleFollowWallpaper={handleToggleFollowWallpaper}
             seedColor={themeSeed}
@@ -552,6 +575,7 @@ export default function App() {
             onClose={() => setDrawerOpen(false)}
             onApply={handleApplyWallpaper}
             onSaveToLocal={handleSaveToLocal}
+            onDownload={downloadWallhaven}
             onSearchTag={(tag) => {
               setCurrentTab('wallpapers')
               setCurrentSource('wallhaven')

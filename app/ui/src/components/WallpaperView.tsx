@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Button, Fab, LinearProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Box, Button, CircularProgress, Fab, LinearProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import ArrowUpwardRounded from '@mui/icons-material/ArrowUpwardRounded'
+import PlaylistPlayRounded from '@mui/icons-material/PlaylistPlayRounded'
 import type { WallpaperItem } from '../data/wallpapers'
 import { hexToRgb } from '../theme/color'
 import { EVERY_OUTPUT, type OutputInfo } from '../hooks/useOutputs'
@@ -10,6 +11,8 @@ import { WallhavenControls } from './WallhavenControls'
 import { DEFAULT_FILTERS, type WallhavenFilters } from './wallhavenFilters'
 import { MasonryGrid } from './MasonryGrid'
 import { WallpaperCard } from './WallpaperCard'
+import { PlaylistDialog } from './PlaylistDialog'
+import { useConfig } from '../hooks/useConfig'
 
 export interface WallhavenQuery {
   q?: string
@@ -46,6 +49,7 @@ interface WallpaperViewProps {
   whFailed?: boolean
   enableBlur?: boolean
   lazyLoad?: boolean
+  onNotify?: (msg: string) => void
 }
 
 /// How far down the "back to top" button appears.
@@ -64,15 +68,17 @@ const lumaOf = (w: WallpaperItem) => {
 
 const DARK_BELOW = 65
 
-function filterLocal(list: WallpaperItem[], filter: LocalFilter) {
+function filterLocal(list: WallpaperItem[], filter: LocalFilter, playlistItems: string[]) {
   switch (filter) {
     case 'static':
     case 'video':
       return list.filter((w) => w.kind === filter)
     case 'dark':
-      return list.filter((w) => w.colors?.length && lumaOf(w) < DARK_BELOW)
+      return list.filter((w) => (w.is_dark !== undefined ? w.is_dark : Boolean(w.colors?.length && lumaOf(w) < DARK_BELOW)))
     case 'light':
-      return list.filter((w) => w.colors?.length && lumaOf(w) >= DARK_BELOW)
+      return list.filter((w) => (w.is_dark !== undefined ? !w.is_dark : Boolean(w.colors?.length && lumaOf(w) >= DARK_BELOW)))
+    case 'playlist':
+      return list.filter((w) => w.path && playlistItems.includes(w.path))
     default:
       return list
   }
@@ -97,6 +103,7 @@ export function WallpaperView({
   whFailed = false,
   enableBlur = true,
   lazyLoad = true,
+  onNotify,
 }: WallpaperViewProps) {
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null)
   // `filters` is what the list on screen was searched with; `draft` is what is
@@ -105,6 +112,7 @@ export function WallpaperView({
   const [draft, setDraft] = useState('')
   const [localFilter, setLocalFilter] = useState<LocalFilter>('all')
   const [scrolledDown, setScrolledDown] = useState(false)
+  const [playlistOpen, setPlaylistOpen] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const gridWrapRef = useRef<HTMLDivElement>(null)
@@ -144,7 +152,13 @@ export function WallpaperView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchRequest?.key])
 
-  const filteredLocal = useMemo(() => filterLocal(localList, localFilter), [localList, localFilter])
+  const config = useConfig(onNotify ?? (() => {}))
+  const playlistItems = config.value<string[]>('playlist.items') ?? []
+
+  const filteredLocal = useMemo(
+    () => filterLocal(localList, localFilter, playlistItems),
+    [localList, localFilter, playlistItems],
+  )
   const list = currentSource === 'wallhaven' ? wallhavenList : filteredLocal
   const handleSelect = useCallback(
     (wp: WallpaperItem) => onSelectWallpaper(wp, currentSource),
@@ -154,7 +168,7 @@ export function WallpaperView({
 
   return (
     <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <Stack direction="row" sx={{ alignItems: 'center', px: 3.5, py: 2 }}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'center', px: 3.5, py: 2 }}>
         <ToggleButtonGroup
           exclusive
           size="small"
@@ -164,9 +178,17 @@ export function WallpaperView({
           <ToggleButton value="local">本地 · {localList.length}</ToggleButton>
           <ToggleButton value="wallhaven">Wallhaven</ToggleButton>
         </ToggleButtonGroup>
-        <Box sx={{ ml: 'auto' }}>
+        <Stack direction="row" spacing={1.5} sx={{ ml: 'auto', alignItems: 'center' }}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<PlaylistPlayRounded />}
+            onClick={() => setPlaylistOpen(true)}
+          >
+            壁纸轮播
+          </Button>
           <OutputSelect outputs={outputs} value={target} onChange={onTargetChange} />
-        </Box>
+        </Stack>
       </Stack>
 
       {currentSource === 'wallhaven' ? (
@@ -182,6 +204,7 @@ export function WallpaperView({
       ) : (
         <LocalControls
           currentFilter={localFilter}
+          playlistCount={playlistItems.length}
           onFilterChange={setLocalFilter}
           onRefresh={onRefreshLocal}
         />
@@ -243,7 +266,13 @@ export function WallpaperView({
         </Box>
 
         <Stack sx={{ alignItems: 'center', pt: 4, minHeight: 56 }}>
-          {currentSource === 'wallhaven' && whFailed ? (
+          {currentSource === 'wallhaven' && whLoading && list.length > 0 ? (
+            // Already-loaded cards stay put; the next batch is appended below.
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', color: 'text.secondary' }}>
+              <CircularProgress size={20} thickness={5} />
+              <Typography variant="body2">正在加载…</Typography>
+            </Stack>
+          ) : currentSource === 'wallhaven' && whFailed ? (
             <Button onClick={onLoadMoreWallhaven}>加载失败，重试</Button>
           ) : (
             list.length > 0 &&
@@ -267,6 +296,12 @@ export function WallpaperView({
           </Fab>
         )}
       </Box>
+
+      <PlaylistDialog
+        open={playlistOpen}
+        onClose={() => setPlaylistOpen(false)}
+        onNotify={onNotify ?? (() => {})}
+      />
     </Box>
   )
 }

@@ -33,6 +33,10 @@ pub fn render(request: &Request) -> String {
             Some(output) => format!("query {output}"),
             None => "query".to_owned(),
         },
+        Request::Next { output } => match output {
+            Some(output) => format!("next {output}"),
+            None => "next".to_owned(),
+        },
         Request::Schema => "schema".to_owned(),
         Request::State { output } => match output {
             Some(output) => format!("state {output}"),
@@ -66,6 +70,10 @@ mod tests {
                 output: Some("eDP-1".to_owned()),
             },
             Request::Query { output: None },
+            Request::Next { output: None },
+            Request::Next {
+                output: Some("DP-1".to_owned()),
+            },
             Request::Schema,
             Request::State { output: None },
             Request::State {

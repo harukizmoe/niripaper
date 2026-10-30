@@ -104,10 +104,37 @@ pub fn config_values(
     );
     put("video_fps", json!(video_fps));
     put("scale", json!(config.scale));
+    put("parallax", json!(config.parallax));
     put("column_span", json!(config.column_span));
     put("workspace_span", json!(config.workspace_span));
     put("namespace", json!(namespace));
     put("fit", json!(fit.name()));
+    let filter = &config.filter;
+    put("filter.brightness", json!(filter.brightness));
+    put("filter.contrast", json!(filter.contrast));
+    put("filter.saturation", json!(filter.saturation));
+    put("filter.vibrance", json!(filter.vibrance));
+    put("filter.temperature", json!(filter.temperature));
+    put("filter.hue", json!(filter.hue));
+    put("filter.vignette", json!(filter.vignette));
+    put("filter.grain", json!(filter.grain));
+    put("filter.aberration", json!(filter.aberration));
+    put("filter.grain_size", json!(filter.grain_size));
+    put("filter.tone_shadow", json!(filter.tone_shadow));
+    put("filter.tone_highlight", json!(filter.tone_highlight));
+    put("filter.tone_amount", json!(filter.tone_amount));
+    let playlist = &config.playlist;
+    put("playlist.enabled", json!(playlist.enabled));
+    put("playlist.interval_mins", json!(playlist.interval_mins));
+    put("playlist.order", json!(playlist.order.name()));
+    put(
+        "playlist.items",
+        json!(playlist
+            .items
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()),
+    );
     let animations = &config.animations;
     put("animations.follow_niri", json!(animations.follow_niri));
     put("animations.off", json!(animations.off));

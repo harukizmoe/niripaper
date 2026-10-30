@@ -59,6 +59,7 @@ pub struct Options {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    pub parallax: bool,
     pub pattern: Pattern,
     /// A wallpaper to draw instead of the procedural pattern: a still image, or
     /// a video (routed by extension).
@@ -78,6 +79,10 @@ pub struct Options {
     pub transition: crate::render::transition::Settings,
     /// How a source whose aspect ratio does not match the canvas is placed.
     pub fit: Fit,
+    /// Post-processing wallpaper filter.
+    pub filter: crate::config::Filter,
+    /// Wallpaper rotation playlist.
+    pub playlist: crate::config::Playlist,
     /// The command line's per-output overrides, and the configuration they are
     /// resolved against — see [`Options::resolve_output`].
     pub cli: CliOverrides,
@@ -96,6 +101,7 @@ impl Options {
             scale: motion::DEFAULT_SCALE,
             column_span: DEFAULT_COLUMN_SPAN,
             workspace_span: DEFAULT_WORKSPACE_SPAN,
+            parallax: true,
             pattern: Pattern::Blocks,
             wallpaper: None,
             video_fps: 0,
@@ -104,6 +110,8 @@ impl Options {
             animations: crate::config::Animations::default(),
             transition: crate::render::transition::Settings::default(),
             fit: Fit::Fill,
+            filter: crate::config::Filter::default(),
+            playlist: crate::config::Playlist::default(),
             cli: CliOverrides::default(),
             config: None,
             trace: false,
@@ -121,6 +129,7 @@ pub struct CliOverrides {
     pub scale: Option<f64>,
     pub column_span: Option<usize>,
     pub workspace_span: Option<usize>,
+    pub parallax: Option<bool>,
     pub wallpaper: Option<std::path::PathBuf>,
     pub fit: Option<Fit>,
 }
@@ -142,8 +151,10 @@ impl Options {
         self.scale = self.cli.scale.unwrap_or(params.scale);
         self.column_span = self.cli.column_span.unwrap_or(params.column_span);
         self.workspace_span = self.cli.workspace_span.unwrap_or(params.workspace_span);
+        self.parallax = self.cli.parallax.unwrap_or(params.parallax);
         self.wallpaper = self.cli.wallpaper.clone().or(params.wallpaper);
         self.fit = self.cli.fit.unwrap_or(params.fit);
+        self.filter = params.filter;
     }
 }
 
@@ -153,6 +164,8 @@ enum Command {
     Set(PathBuf),
     /// What is on screen right now (`query`).
     Query(std::sync::mpsc::Sender<String>),
+    /// Rotate to the next playlist item (`next`).
+    Next(std::sync::mpsc::Sender<String>),
     /// The full snapshot for `state`.
     State(std::sync::mpsc::Sender<serde_json::Value>),
 }
@@ -188,6 +201,7 @@ fn pick<'a>(
 fn named_output(request: &crate::ipc::Request) -> Option<&str> {
     match request {
         crate::ipc::Request::Set { output, .. }
+        | crate::ipc::Request::Next { output }
         | crate::ipc::Request::Query { output }
         | crate::ipc::Request::State { output } => output.as_deref(),
         crate::ipc::Request::Schema | crate::ipc::Request::Kill => None,
@@ -339,6 +353,23 @@ pub fn run(options: &Options, running: Arc<dyn Fn() -> bool + Send + Sync>) -> R
                     "ok".to_owned()
                 } else {
                     format!("error no worker for {}", failed.join(", "))
+                })
+            }
+            crate::ipc::Request::Next { .. } => {
+                let mut lines = Vec::new();
+                for (name, tx) in targets {
+                    let (tx2, rx2) = std::sync::mpsc::channel();
+                    if tx.send(Command::Next(tx2)).is_ok() {
+                        match rx2.recv_timeout(REPLY_TIMEOUT) {
+                            Ok(line) => lines.push(format!("{name}: {line}")),
+                            Err(_) => lines.push(format!("{name}: no reply")),
+                        }
+                    }
+                }
+                Some(if lines.is_empty() {
+                    "error no workers".to_owned()
+                } else {
+                    lines.join("; ")
                 })
             }
             crate::ipc::Request::Query { .. } => {
@@ -527,15 +558,27 @@ fn run_output(
     // What is on screen, which is not always the configured wallpaper: `set`
     // swaps the picture without touching the file.
     let mut shown = media.as_ref().and(options.wallpaper.clone());
+    let mut playlist_index: usize = 0;
+    let mut next_rotation_at: Option<Instant> =
+        if options.playlist.enabled && !options.playlist.items.is_empty() {
+            Some(Instant::now() + Duration::from_secs(options.playlist.interval_mins as u64 * 60))
+        } else {
+            None
+        };
 
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
-    let mut animator = Animator::new(
-        niri.motion.progress(&options.output),
-        options.animations.parallax,
-    )
-    .with_slowdown(options.animations.slowdown);
+    let initial_progress = if options.parallax {
+        niri.motion.progress(&options.output)
+    } else {
+        motion::Progress {
+            horizontal: 0.5,
+            vertical: 0.5,
+        }
+    };
+    let mut animator = Animator::new(initial_progress, options.animations.parallax)
+        .with_slowdown(options.animations.slowdown);
     // The overview transition animates the canvas scale (§4.1): pulling back
     // shows more of the wallpaper, which reads as the workspace receding.
     let mut zoom = Animator::new(1.0f64, options.animations.overview_open_close.animation)
@@ -569,6 +612,7 @@ fn run_output(
             Some(media) => media.content(),
             None => gl::Content::Pattern(options.pattern),
         },
+        filter: options.filter,
         blend: None,
     }
     .draw(&mut client, &mut pool, &surface, &renderer, false)?;
@@ -673,6 +717,41 @@ fn run_output(
             return Err(format!("poll: {err}"));
         }
 
+        if let Some(target) = next_rotation_at {
+            if Instant::now() >= target
+                && options.playlist.enabled
+                && !options.playlist.items.is_empty()
+            {
+                playlist_index = next_playlist_index(
+                    playlist_index,
+                    options.playlist.items.len(),
+                    options.playlist.order,
+                    entropy(),
+                );
+                let target_path = &options.playlist.items[playlist_index];
+                match switch_wallpaper(
+                    target_path,
+                    canvas,
+                    options.video_fps,
+                    options.fit,
+                    &mut media,
+                    &mut transition,
+                    &pool,
+                    last_slot,
+                    screen,
+                ) {
+                    Ok(()) => {
+                        shown = Some(target_path.clone());
+                        next_rotation_at = Some(
+                            Instant::now()
+                                + Duration::from_secs(options.playlist.interval_mins as u64 * 60),
+                        );
+                    }
+                    Err(err) => log(&format!("playlist {}: {err}", target_path.display())),
+                }
+            }
+        }
+
         if fds[2].revents & libc::POLLIN != 0 {
             if let Some(media) = media.as_mut() {
                 // Decode into our texture; the next frame callback presents it.
@@ -692,7 +771,14 @@ fn run_output(
                 break;
             }
             let now = Instant::now();
-            let target = niri.motion.progress(&options.output);
+            let target = if options.parallax {
+                niri.motion.progress(&options.output)
+            } else {
+                motion::Progress {
+                    horizontal: 0.5,
+                    vertical: 0.5,
+                }
+            };
             if animator.retarget(target, now) {
                 log(&format!(
                     "target h={:.3} v={:.3} (moving)",
@@ -771,6 +857,7 @@ fn run_output(
                     options.scale = params.scale;
                     options.column_span = params.column_span;
                     options.workspace_span = params.workspace_span;
+                    options.parallax = params.parallax;
                     // Compared before the assignments below overwrite them.
                     let transition_changed = reloaded.transition != options.transition
                         || reloaded.animations.slowdown != options.animations.slowdown;
@@ -801,13 +888,39 @@ fn run_output(
                     }
                     options.wallpaper = params.wallpaper;
                     options.fit = params.fit;
+                    options.playlist = reloaded.playlist.clone();
+                    if options.playlist.enabled && !options.playlist.items.is_empty() {
+                        if next_rotation_at.is_none() {
+                            next_rotation_at = Some(
+                                Instant::now()
+                                    + Duration::from_secs(
+                                        options.playlist.interval_mins as u64 * 60,
+                                    ),
+                            );
+                        }
+                    } else {
+                        next_rotation_at = None;
+                    }
+                    let filter_changed = options.filter != params.filter;
+                    options.filter = params.filter;
+                    if filter_changed && !frame_pending {
+                        surface.request_frame(&client.handle());
+                        client.flush()?;
+                    }
                     niri.motion
                         .set_spans(options.column_span, options.workspace_span);
                     // Rebuild the animators at their current position so a
                     // changed curve or duration applies without a jump.
                     let now = Instant::now();
                     let position = animator.position(now);
-                    let target = animator.target();
+                    let target = if options.parallax {
+                        niri.motion.progress(&options.output)
+                    } else {
+                        motion::Progress {
+                            horizontal: 0.5,
+                            vertical: 0.5,
+                        }
+                    };
                     animator = Animator::new(position, options.animations.parallax)
                         .with_slowdown(options.animations.slowdown);
                     animator.retarget(target, now);
@@ -880,8 +993,60 @@ fn run_output(
                         Err(err) => log(&format!("set {}: {err}", path.display())),
                     }
                 }
+                Command::Next(reply) => {
+                    if options.playlist.items.is_empty() {
+                        let _ = reply.send("error playlist is empty".to_owned());
+                        continue;
+                    }
+                    playlist_index = next_playlist_index(
+                        playlist_index,
+                        options.playlist.items.len(),
+                        options.playlist.order,
+                        entropy(),
+                    );
+                    let target_path = &options.playlist.items[playlist_index];
+                    match switch_wallpaper(
+                        target_path,
+                        canvas,
+                        options.video_fps,
+                        options.fit,
+                        &mut media,
+                        &mut transition,
+                        &pool,
+                        last_slot,
+                        screen,
+                    ) {
+                        Ok(()) => {
+                            shown = Some(target_path.clone());
+                            next_rotation_at = if options.playlist.enabled {
+                                Some(
+                                    Instant::now()
+                                        + Duration::from_secs(
+                                            options.playlist.interval_mins as u64 * 60,
+                                        ),
+                                )
+                            } else {
+                                None
+                            };
+                            let _ = reply.send(format!("ok {}", target_path.display()));
+                        }
+                        Err(err) => {
+                            let _ = reply.send(format!("error {err}"));
+                        }
+                    }
+                }
                 Command::Query(reply) => {
-                    let (progress, _) = animator.sample(Instant::now());
+                    let (progress, _) = if options.parallax {
+                        animator.sample(Instant::now())
+                    } else {
+                        (
+                            motion::Progress {
+                                horizontal: 0.5,
+                                vertical: 0.5,
+                            },
+                            false,
+                        )
+                    };
                     let kind = match &media {
                         Some(media) => media.describe(),
                         None => format!("pattern {:?}", options.pattern),
@@ -893,7 +1058,17 @@ fn run_output(
                 }
                 Command::State(reply) => {
                     let now = Instant::now();
-                    let (progress, _) = animator.sample(now);
+                    let (progress, _) = if options.parallax {
+                        animator.sample(now)
+                    } else {
+                        (
+                            motion::Progress {
+                                horizontal: 0.5,
+                                vertical: 0.5,
+                            },
+                            false,
+                        )
+                    };
                     let _ = reply.send(state_json(&Snapshot {
                         options: &options,
                         media: media.as_ref(),
@@ -920,7 +1095,17 @@ fn run_output(
             let now = Instant::now();
             let dt = now.saturating_duration_since(last_frame_at);
             last_frame_at = now;
-            let (progress, moving) = animator.sample(now);
+            let (progress, moving) = if options.parallax {
+                animator.sample(now)
+            } else {
+                (
+                    motion::Progress {
+                        horizontal: 0.5,
+                        vertical: 0.5,
+                    },
+                    false,
+                )
+            };
             let (zoom_now, zoom_moving) = zoom.sample(now);
             let blend = transition.sample(now);
             let moving = moving || zoom_moving || video_present || blend.is_some();
@@ -930,6 +1115,7 @@ fn run_output(
                     Some(media) => media.content(),
                     None => gl::Content::Pattern(options.pattern),
                 },
+                filter: options.filter,
                 blend,
             }
             .draw(&mut client, &mut pool, &surface, &renderer, moving)?;
@@ -963,7 +1149,10 @@ fn run_output(
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving() || transition.is_moving() || video_present)
+        if ((options.parallax && animator.is_moving())
+            || zoom.is_moving()
+            || transition.is_moving()
+            || video_present)
             && !frame_pending
         {
             surface.request_frame(&client.handle());
@@ -1130,9 +1319,73 @@ fn log(message: &str) {
     let _ = out.flush();
 }
 
+/// Which playlist entry comes after `current`.
+///
+/// `current` may be stale: a config reload can shorten the list under it, so it
+/// is reduced first. Random never repeats the entry on screen (unless there is
+/// only one). `entropy` is a parameter so the choice can be tested.
+fn next_playlist_index(
+    current: usize,
+    len: usize,
+    order: crate::config::PlaylistOrder,
+    entropy: u64,
+) -> usize {
+    if len <= 1 {
+        return 0;
+    }
+    let current = current % len;
+    match order {
+        crate::config::PlaylistOrder::Rotate => (current + 1) % len,
+        crate::config::PlaylistOrder::Random => {
+            (current + 1 + (entropy % (len as u64 - 1)) as usize) % len
+        }
+    }
+}
+
+/// Cheap per-call entropy (SplitMix64 over the clock). Not for anything but
+/// shuffling a wallpaper list.
+fn entropy() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut z = nanos.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PlaylistOrder;
+
+    #[test]
+    fn rotate_wraps_and_survives_a_shorter_list() {
+        assert_eq!(next_playlist_index(0, 3, PlaylistOrder::Rotate, 0), 1);
+        assert_eq!(next_playlist_index(2, 3, PlaylistOrder::Rotate, 0), 0);
+        // The list shrank from 10 to 3 under an index of 7.
+        assert!(next_playlist_index(7, 3, PlaylistOrder::Rotate, 0) < 3);
+        assert_eq!(next_playlist_index(5, 0, PlaylistOrder::Rotate, 0), 0);
+    }
+
+    #[test]
+    fn random_never_repeats_the_current_entry() {
+        for len in 2..8 {
+            for current in 0..len {
+                for e in 0..50u64 {
+                    let next = next_playlist_index(current, len, PlaylistOrder::Random, e);
+                    assert!(next < len && next != current, "{len} {current} {e}");
+                }
+            }
+        }
+        assert_eq!(next_playlist_index(0, 1, PlaylistOrder::Random, 9), 0);
+    }
+
+    #[test]
+    fn entropy_varies() {
+        assert_ne!(entropy(), entropy());
+    }
 
     #[test]
     fn canvas_rounds_instead_of_ceiling() {

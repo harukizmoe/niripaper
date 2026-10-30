@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::animation::{Animation, Curve, Spring};
 use crate::domain::Fit;
@@ -66,6 +66,8 @@ pub struct Config {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    /// Whether the wallpaper follows focus and workspace changes.
+    pub parallax: bool,
     /// Frame-rate cap for video wallpapers (`0` keeps the source's). niri hands
     /// layer surfaces frame callbacks at 60 Hz, and every drawn frame also
     /// invalidates the backdrop, so a 60 fps source sits exactly on the edge.
@@ -73,6 +75,10 @@ pub struct Config {
     pub namespace: String,
     /// How a source whose aspect ratio does not match the canvas is placed.
     pub fit: Fit,
+    /// Post-processing wallpaper filter.
+    pub filter: Filter,
+    /// Wallpaper rotation playlist.
+    pub playlist: Playlist,
     /// Animation parameters, in niri's vocabulary.
     pub animations: Animations,
     /// The transition when the wallpaper changes.
@@ -89,9 +95,12 @@ impl Default for Config {
             scale: DEFAULT_SCALE,
             column_span: DEFAULT_COLUMN_SPAN,
             workspace_span: DEFAULT_WORKSPACE_SPAN,
+            parallax: true,
             video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             fit: Fit::Fill,
+            filter: Filter::default(),
+            playlist: Playlist::default(),
             animations: Animations::default(),
             transition: Settings::default(),
             wallpaper: None,
@@ -146,6 +155,215 @@ pub struct OverviewAnimation {
     pub animation: Animation,
 }
 
+/// Post-processing wallpaper filter.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Filter {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub vibrance: f32,
+    pub temperature: f32,
+    pub hue: f32,
+    pub vignette: f32,
+    pub grain: f32,
+    /// Grain particle size in output pixels.
+    pub grain_size: f32,
+    pub aberration: f32,
+    /// Split toning: the hue (degrees) pushed into the shadows and into the
+    /// highlights, and how much of it (0 = off).
+    pub tone_shadow: f32,
+    pub tone_highlight: f32,
+    pub tone_amount: f32,
+}
+
+impl Default for Filter {
+    fn default() -> Self {
+        Self {
+            brightness: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            vibrance: 1.0,
+            temperature: 0.0,
+            hue: 0.0,
+            vignette: 0.0,
+            grain: 0.0,
+            grain_size: 1.5,
+            aberration: 0.0,
+            tone_shadow: 200.0,
+            tone_highlight: 40.0,
+            tone_amount: 0.0,
+        }
+    }
+}
+
+impl Filter {
+    pub fn is_enabled(&self) -> bool {
+        (self.brightness - 1.0).abs() > 0.001
+            || (self.contrast - 1.0).abs() > 0.001
+            || (self.saturation - 1.0).abs() > 0.001
+            || (self.vibrance - 1.0).abs() > 0.001
+            || self.temperature.abs() > 0.001
+            || self.hue.abs() > 0.001
+            || self.vignette > 0.001
+            || self.grain > 0.001
+            || self.aberration > 0.001
+            || self.tone_amount > 0.001
+    }
+
+    /// The built-in looks, `(id, label, values)`. Kept here, not in the UI, so
+    /// the panel and `trprobe` render exactly the same thing. Every preset is
+    /// deliberately restrained: a few controls moved a little, not nine at once.
+    pub fn presets() -> Vec<(&'static str, &'static str, Filter)> {
+        let base = Filter::default();
+        vec![
+            ("none", "原图", base),
+            (
+                "cinematic",
+                "电影质感",
+                Filter {
+                    contrast: 1.12,
+                    vibrance: 1.2,
+                    vignette: 0.25,
+                    grain: 0.08,
+                    tone_shadow: 200.0,
+                    tone_highlight: 35.0,
+                    tone_amount: 0.5,
+                    ..base
+                },
+            ),
+            (
+                "noir",
+                "黑白胶片",
+                Filter {
+                    saturation: 0.0,
+                    vibrance: 0.0,
+                    contrast: 1.2,
+                    vignette: 0.3,
+                    grain: 0.15,
+                    ..base
+                },
+            ),
+            (
+                "cyberpunk",
+                "赛博霓虹",
+                Filter {
+                    contrast: 1.1,
+                    saturation: 1.1,
+                    vibrance: 1.2,
+                    vignette: 0.25,
+                    aberration: 0.2,
+                    tone_shadow: 280.0,
+                    tone_highlight: 175.0,
+                    tone_amount: 0.7,
+                    ..base
+                },
+            ),
+            (
+                "sunset",
+                "暖阳日落",
+                Filter {
+                    brightness: 1.04,
+                    vibrance: 1.15,
+                    temperature: 0.35,
+                    vignette: 0.15,
+                    tone_shadow: 20.0,
+                    tone_highlight: 45.0,
+                    tone_amount: 0.3,
+                    ..base
+                },
+            ),
+            (
+                "pastel",
+                "动漫清透",
+                Filter {
+                    brightness: 1.05,
+                    contrast: 0.92,
+                    vibrance: 1.25,
+                    temperature: 0.05,
+                    ..base
+                },
+            ),
+            (
+                "vintage",
+                "复古胶片",
+                Filter {
+                    contrast: 0.9,
+                    saturation: 0.85,
+                    temperature: 0.2,
+                    vignette: 0.3,
+                    grain: 0.2,
+                    grain_size: 2.0,
+                    tone_shadow: 180.0,
+                    tone_highlight: 50.0,
+                    tone_amount: 0.35,
+                    ..base
+                },
+            ),
+            (
+                "night",
+                "暗夜护眼",
+                Filter {
+                    brightness: 0.85,
+                    saturation: 0.9,
+                    temperature: 0.25,
+                    vignette: 0.3,
+                    ..base
+                },
+            ),
+        ]
+    }
+}
+
+/// The order in which playlist wallpapers are rotated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistOrder {
+    #[default]
+    Rotate,
+    Random,
+}
+
+impl PlaylistOrder {
+    pub const NAMES: [&'static str; 2] = ["rotate", "random"];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Rotate => "rotate",
+            Self::Random => "random",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "rotate" => Ok(Self::Rotate),
+            "random" => Ok(Self::Random),
+            other => Err(format!("unknown order {other}, expected rotate or random")),
+        }
+    }
+}
+
+/// Wallpaper rotation playlist configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Playlist {
+    pub enabled: bool,
+    pub interval_mins: u32,
+    pub order: PlaylistOrder,
+    pub items: Vec<PathBuf>,
+}
+
+impl Default for Playlist {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_mins: 15,
+            order: PlaylistOrder::Rotate,
+            items: Vec::new(),
+        }
+    }
+}
+
 /// What one output may override. Everything else is global.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -153,8 +371,10 @@ pub struct OutputOverride {
     pub scale: Option<f64>,
     pub column_span: Option<usize>,
     pub workspace_span: Option<usize>,
+    pub parallax: Option<bool>,
     pub wallpaper: Option<PathBuf>,
     pub fit: Option<String>,
+    pub filter: Option<Filter>,
 }
 
 /// The parameters in effect for one output.
@@ -163,8 +383,10 @@ pub struct OutputParams {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    pub parallax: bool,
     pub wallpaper: Option<PathBuf>,
     pub fit: Fit,
+    pub filter: Filter,
 }
 
 impl Config {
@@ -268,6 +490,9 @@ impl Config {
         if let Some(span) = raw.workspace_span {
             config.workspace_span = check_span("workspace_span", span)?;
         }
+        if let Some(parallax) = raw.parallax {
+            config.parallax = parallax;
+        }
         // niri exposes nothing over IPC (`niri msg` has no config dump, `niri
         // validate` only reports validity), so its config file is the only
         // source. A config we cannot read is an error rather than something to
@@ -297,6 +522,8 @@ impl Config {
         if let Some(fit) = &raw.fit {
             config.fit = Fit::parse(fit).map_err(|e| format!("fit: {e}"))?;
         }
+        config.filter = resolve_filter(&raw.filter)?;
+        config.playlist = resolve_playlist(&raw.playlist)?;
         // The global `off` is an animation switch, and the wallpaper transition
         // is an animation: turning everything off has to turn this off too.
         config.transition =
@@ -317,6 +544,9 @@ impl Config {
             if let Some(fit) = &output.fit {
                 Fit::parse(fit).map_err(|e| format!("outputs.{name}.fit: {e}"))?;
             }
+            if let Some(filter) = &output.filter {
+                validate_filter(filter)?;
+            }
             config.outputs.insert(name, output);
         }
         Ok(config)
@@ -331,6 +561,7 @@ impl Config {
             workspace_span: over
                 .and_then(|o| o.workspace_span)
                 .unwrap_or(self.workspace_span),
+            parallax: over.and_then(|o| o.parallax).unwrap_or(self.parallax),
             wallpaper: over
                 .and_then(|o| o.wallpaper.clone())
                 .or_else(|| self.wallpaper.clone()),
@@ -341,6 +572,7 @@ impl Config {
                 .and_then(|o| o.fit.as_deref())
                 .and_then(|name| Fit::parse(name).ok())
                 .unwrap_or(self.fit),
+            filter: over.and_then(|o| o.filter).unwrap_or(self.filter),
         }
     }
 }
@@ -770,6 +1002,187 @@ fn resolve_transition(raw: &RawTransition, global_off: bool) -> Result<Settings,
     })
 }
 
+fn validate_filter(filter: &Filter) -> Result<(), String> {
+    if !(0.0..=3.0).contains(&filter.brightness) {
+        return Err(format!(
+            "filter.brightness must be between 0.0 and 3.0, got {}",
+            filter.brightness
+        ));
+    }
+    if !(0.0..=3.0).contains(&filter.contrast) {
+        return Err(format!(
+            "filter.contrast must be between 0.0 and 3.0, got {}",
+            filter.contrast
+        ));
+    }
+    if !(0.0..=3.0).contains(&filter.saturation) {
+        return Err(format!(
+            "filter.saturation must be between 0.0 and 3.0, got {}",
+            filter.saturation
+        ));
+    }
+    if !(0.0..=3.0).contains(&filter.vibrance) {
+        return Err(format!(
+            "filter.vibrance must be between 0.0 and 3.0, got {}",
+            filter.vibrance
+        ));
+    }
+    if !(-1.0..=1.0).contains(&filter.temperature) {
+        return Err(format!(
+            "filter.temperature must be between -1.0 and 1.0, got {}",
+            filter.temperature
+        ));
+    }
+    if !(0.0..=360.0).contains(&filter.hue) {
+        return Err(format!(
+            "filter.hue must be between 0.0 and 360.0, got {}",
+            filter.hue
+        ));
+    }
+    if !(0.0..=1.0).contains(&filter.vignette) {
+        return Err(format!(
+            "filter.vignette must be between 0.0 and 1.0, got {}",
+            filter.vignette
+        ));
+    }
+    if !(0.0..=1.0).contains(&filter.grain) {
+        return Err(format!(
+            "filter.grain must be between 0.0 and 1.0, got {}",
+            filter.grain
+        ));
+    }
+    if !(0.0..=1.0).contains(&filter.aberration) {
+        return Err(format!(
+            "filter.aberration must be between 0.0 and 1.0, got {}",
+            filter.aberration
+        ));
+    }
+    if !(1.0..=4.0).contains(&filter.grain_size) {
+        return Err(format!(
+            "filter.grain_size must be between 1.0 and 4.0, got {}",
+            filter.grain_size
+        ));
+    }
+    for (name, v) in [
+        ("tone_shadow", filter.tone_shadow),
+        ("tone_highlight", filter.tone_highlight),
+    ] {
+        if !(0.0..=360.0).contains(&v) {
+            return Err(format!(
+                "filter.{name} must be between 0.0 and 360.0, got {v}"
+            ));
+        }
+    }
+    if !(0.0..=1.0).contains(&filter.tone_amount) {
+        return Err(format!(
+            "filter.tone_amount must be between 0.0 and 1.0, got {}",
+            filter.tone_amount
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_filter(raw: &Option<RawFilter>) -> Result<Filter, String> {
+    let mut filter = Filter::default();
+    if let Some(raw) = raw {
+        if let Some(v) = raw.brightness {
+            filter.brightness = v;
+        }
+        if let Some(v) = raw.contrast {
+            filter.contrast = v;
+        }
+        if let Some(v) = raw.saturation {
+            filter.saturation = v;
+        }
+        if let Some(v) = raw.vibrance {
+            filter.vibrance = v;
+        }
+        if let Some(v) = raw.temperature {
+            filter.temperature = v;
+        }
+        if let Some(v) = raw.hue {
+            filter.hue = v;
+        }
+        if let Some(v) = raw.vignette {
+            filter.vignette = v;
+        }
+        if let Some(v) = raw.grain {
+            filter.grain = v;
+        }
+        if let Some(v) = raw.aberration {
+            filter.aberration = v;
+        }
+        if let Some(v) = raw.grain_size {
+            filter.grain_size = v;
+        }
+        if let Some(v) = raw.tone_shadow {
+            filter.tone_shadow = v;
+        }
+        if let Some(v) = raw.tone_highlight {
+            filter.tone_highlight = v;
+        }
+        if let Some(v) = raw.tone_amount {
+            filter.tone_amount = v;
+        }
+    }
+    validate_filter(&filter)?;
+    Ok(filter)
+}
+
+fn resolve_playlist(raw: &Option<RawPlaylist>) -> Result<Playlist, String> {
+    let mut playlist = Playlist::default();
+    if let Some(raw) = raw {
+        if let Some(enabled) = raw.enabled {
+            playlist.enabled = enabled;
+        }
+        if let Some(mins) = raw.interval_mins {
+            if mins == 0 || mins > 1440 {
+                return Err("playlist.interval_mins must be between 1 and 1440".to_owned());
+            }
+            playlist.interval_mins = mins;
+        }
+        if let Some(order) = &raw.order {
+            playlist.order =
+                PlaylistOrder::parse(order).map_err(|e| format!("playlist.order: {e}"))?;
+        }
+        if let Some(items) = &raw.items {
+            playlist.items = items
+                .iter()
+                .map(|p| check_wallpaper("playlist.items", p.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+    }
+    Ok(playlist)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPlaylist {
+    enabled: Option<bool>,
+    interval_mins: Option<u32>,
+    order: Option<String>,
+    #[serde(default)]
+    items: Option<Vec<PathBuf>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFilter {
+    brightness: Option<f32>,
+    contrast: Option<f32>,
+    saturation: Option<f32>,
+    vibrance: Option<f32>,
+    temperature: Option<f32>,
+    hue: Option<f32>,
+    vignette: Option<f32>,
+    grain: Option<f32>,
+    aberration: Option<f32>,
+    grain_size: Option<f32>,
+    tone_shadow: Option<f32>,
+    tone_highlight: Option<f32>,
+    tone_amount: Option<f32>,
+}
+
 /// The overview transition: an animation block plus its target zoom.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -785,9 +1198,12 @@ struct RawConfig {
     scale: Option<f64>,
     column_span: Option<usize>,
     workspace_span: Option<usize>,
+    parallax: Option<bool>,
     video_fps: Option<u32>,
     namespace: Option<String>,
     fit: Option<String>,
+    filter: Option<RawFilter>,
+    playlist: Option<RawPlaylist>,
     #[serde(default)]
     animations: RawAnimations,
     #[serde(default)]
@@ -814,10 +1230,25 @@ mod tests {
         let config = Config::parse_without_niri(
             r#"
             scale = 1.2
+            parallax = false
             column_span = 8
             workspace_span = 5
             namespace = "custom"
             wallpaper = "/etc/os-release"
+
+            [filter]
+            brightness = 1.1
+            contrast = 0.95
+            saturation = 1.2
+            hue = 45.0
+            vignette = 0.3
+            grain = 0.15
+
+            [playlist]
+            enabled = true
+            interval_mins = 30
+            order = "random"
+            items = ["/etc/os-release", "/etc/hostname"]
 
             [animations.parallax]
             duration_ms = 250
@@ -825,6 +1256,9 @@ mod tests {
 
             [outputs."DP-1"]
             scale = 1.3
+            parallax = true
+            [outputs."DP-1".filter]
+            brightness = 0.9
 
             [outputs."eDP-1"]
             column_span = 4
@@ -833,8 +1267,19 @@ mod tests {
         )
         .expect("parses");
         assert_eq!(config.scale, 1.2);
+        assert!(!config.parallax);
         assert_eq!(config.column_span, 8);
         assert_eq!(config.workspace_span, 5);
+        assert_eq!(config.filter.brightness, 1.1);
+        assert_eq!(config.filter.contrast, 0.95);
+        assert_eq!(config.filter.saturation, 1.2);
+        assert_eq!(config.filter.hue, 45.0);
+        assert_eq!(config.filter.vignette, 0.3);
+        assert_eq!(config.filter.grain, 0.15);
+        assert!(config.playlist.enabled);
+        assert_eq!(config.playlist.interval_mins, 30);
+        assert_eq!(config.playlist.order, PlaylistOrder::Random);
+        assert_eq!(config.playlist.items.len(), 2);
         assert_eq!(
             config.wallpaper.as_deref(),
             Some(Path::new("/etc/os-release"))
@@ -845,9 +1290,13 @@ mod tests {
         );
         assert_eq!(config.namespace, "custom");
         assert_eq!(config.output("DP-1").scale, 1.3);
+        assert!(config.output("DP-1").parallax);
+        assert_eq!(config.output("DP-1").filter.brightness, 0.9);
         assert_eq!(config.output("DP-1").column_span, 8);
         assert_eq!(config.output("DP-1").workspace_span, 5);
         assert_eq!(config.output("eDP-1").scale, 1.2);
+        assert!(!config.output("eDP-1").parallax);
+        assert_eq!(config.output("eDP-1").filter.brightness, 1.1);
         assert_eq!(config.output("eDP-1").column_span, 4);
         // The per-output section does not override what it does not mention.
         assert_eq!(config.output("eDP-1").workspace_span, 5);
@@ -1184,5 +1633,45 @@ mod niri_follow_tests {
             Animation::spring(1.0, 800.0, 0.0001),
             "falls back to niri's own default, which is our default"
         );
+    }
+
+    #[test]
+    fn every_filter_preset_passes_validation() {
+        for (id, _, preset) in Filter::presets() {
+            validate_filter(&preset).unwrap_or_else(|e| panic!("preset {id}: {e}"));
+        }
+        // "none" has to be a real no-op, or the shader would run for nothing.
+        assert!(!Filter::presets()[0].2.is_enabled());
+        // Presets are for choosing between, so no two may be the same look.
+        let all = Filter::presets();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.2, b.2, "{} and {} are identical", a.0, b.0);
+            }
+        }
+    }
+
+    #[test]
+    fn out_of_range_filter_and_playlist_values_are_rejected() {
+        for bad in [
+            "[filter]\nbrightness = 9.0",
+            "[filter]\ntemperature = 2.0",
+            "[filter]\ngrain_size = 0.2",
+            "[filter]\ntone_amount = 1.5",
+            "[outputs.\"DP-1\".filter]\nvignette = 3.0",
+            "[playlist]\ninterval_mins = 0",
+            "[playlist]\ninterval_mins = 5000",
+            "[playlist]\norder = \"shuffle\"",
+        ] {
+            assert!(Config::parse_without_niri(bad).is_err(), "accepted: {bad}");
+        }
+    }
+
+    #[test]
+    fn playlist_and_filter_defaults_cost_nothing() {
+        let config = Config::parse_without_niri("").unwrap();
+        assert!(!config.filter.is_enabled());
+        assert!(!config.playlist.enabled);
+        assert!(config.playlist.items.is_empty());
     }
 }

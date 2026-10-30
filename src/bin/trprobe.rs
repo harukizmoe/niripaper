@@ -16,7 +16,7 @@ use niripaper::gpu;
 use niripaper::render::dmabuf::Frame;
 use niripaper::render::egl::{self, Egl, EglVendor};
 use niripaper::render::gbm;
-use niripaper::render::gl::{Blend, Content, Pattern, Renderer, Snapshot, View};
+use niripaper::render::gl::{Blend, Content, Pattern, Renderer, Snapshot, Texture, View};
 use niripaper::render::transition::{Direction, Effect, Settings};
 
 const GL_RGBA: u32 = 0x1908;
@@ -42,26 +42,77 @@ fn main() -> Result<(), String> {
     println!("gl: {} [{}]", context.version, context.vendor);
 
     let renderer = Renderer::new()?;
+    // LINEAR is not a render target on every driver (NVIDIA): ask for what the
+    // driver can actually render into.
+    let modifiers: Vec<u64> = context
+        .dmabuf_modifiers(gbm::FORMAT_XRGB8888)
+        .into_iter()
+        .filter(|(_, external_only)| !external_only)
+        .map(|(m, _)| m)
+        .collect();
     let frame = Frame::new(
         &context,
         &device,
         width,
         height,
         gbm::FORMAT_XRGB8888,
-        &[gbm::MOD_LINEAR],
+        &modifiers,
     )?;
     let snapshot = Snapshot::new(width, height);
 
     // The "before" frame: one pattern, so the transition's mask is obvious.
     let view = View::flat((width as f32, height as f32), Pattern::Bands);
+    let filter = niripaper::config::Filter::default();
     frame.begin();
-    renderer.draw(view, Content::Pattern(Pattern::Bands), None);
+    renderer.draw(view, Content::Pattern(Pattern::Bands), &filter, None);
     snapshot.capture();
 
     let read_pixels: extern "C" fn(i32, i32, i32, i32, u32, u32, *mut c_void) =
         unsafe { std::mem::transmute(egl::get_proc_address("glReadPixels")) };
 
     std::fs::create_dir_all(&out).map_err(|e| format!("{out}: {e}"))?;
+
+    // `trprobe NODE OUT WALLPAPER`: render the wallpaper once per filter preset,
+    // so a look can be judged on a real picture instead of on a test pattern.
+    if let Some(wallpaper) = std::env::args().nth(3) {
+        let img = image::open(&wallpaper)
+            .map_err(|e| format!("{wallpaper}: {e}"))?
+            .resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+            .to_rgb8();
+        let texture = Texture::from_rgb(width, height, img.as_raw());
+        for (id, _, preset) in niripaper::config::Filter::presets() {
+            frame.begin();
+            renderer.draw(view, Content::Wallpaper(&texture), &preset, None);
+            let mut pixels = vec![0u8; (width * height * 4) as usize];
+            read_pixels(
+                0,
+                0,
+                width as i32,
+                height as i32,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                pixels.as_mut_ptr().cast(),
+            );
+            let row = width as usize * 4;
+            let mut flipped = vec![0u8; pixels.len()];
+            for y in 0..height as usize {
+                flipped[y * row..(y + 1) * row].copy_from_slice(
+                    &pixels[(height as usize - 1 - y) * row..(height as usize - y) * row],
+                );
+            }
+            let path = format!("{out}/filter-{id}.png");
+            image::save_buffer(
+                &path,
+                &flipped,
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| format!("{path}: {e}"))?;
+            println!("{path}");
+        }
+        return Ok(());
+    }
     let shoot =
         |settings: &Settings, effect: Effect, progress: f32, label: &str| -> Result<(), String> {
             let blend = Blend {
@@ -76,7 +127,12 @@ fn main() -> Result<(), String> {
                 start_radius: settings.start_radius as f32,
             };
             frame.begin();
-            renderer.draw(view, Content::Pattern(Pattern::Blocks), Some(&blend));
+            renderer.draw(
+                view,
+                Content::Pattern(Pattern::Blocks),
+                &filter,
+                Some(&blend),
+            );
             let mut pixels = vec![0u8; (width * height * 4) as usize];
             read_pixels(
                 0,

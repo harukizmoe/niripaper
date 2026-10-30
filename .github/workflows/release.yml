@@ -1,6 +1,6 @@
 name: Release
 
-# Tagging is the release: `git tag v0.2.0 && git push origin v0.2.0` builds the
+# Tagging is the release: `git tag v0.1.0 && git push origin v0.1.0` builds the
 # binaries and attaches them to a GitHub Release.
 on:
   push:
@@ -32,13 +32,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libmpv-dev libegl1-mesa-dev libgl1-mesa-dev \
-            libgbm-dev libwayland-dev
+            libgbm-dev libwayland-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # The app's UI is compiled into its binary, so it is built first. The
+      # runner's own node is too old for Vite.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+
       - name: Build
-        run: cargo build --release --locked
+        run: |
+          (cd app/ui && npm ci && npm run build)
+          cargo build --release --locked
+          cargo build --release --locked -p niripaper-app
 
       - name: Package
         run: |
@@ -54,17 +66,23 @@ jobs:
           printf '%s\n' \
             "niripaper ${GITHUB_REF_NAME#v} — built on Ubuntu 22.04" \
             "" \
-            "Needs: glibc >= $glibc, $soname (mpv 0.34), libEGL, libgbm, libwayland-client." \
-            "Check with: ldd ./niripaper" \
+            "Two programs in this archive:" \
+            "  niripaper      the wallpaper daemon" \
+            "  niripaper-app  the desktop app (window title: NiriPaper)" \
             "" \
-            "Works on anything with at least that glibc and mpv 0.34. On a system with" \
-            "mpv 0.35 or newer (libmpv.so.2) take the other tarball." > INSTALL.txt
+            "The daemon needs: glibc >= $glibc, $soname (mpv 0.34), libEGL, libgbm, libwayland-client." \
+            "The app needs: glibc >= $glibc, webkit2gtk-4.1, libayatana-appindicator3." \
+            "Check both with: ldd ./niripaper && ldd ./niripaper-app" \
+            "" \
+            "The daemon works on anything with at least that glibc and mpv 0.34. On a system" \
+            "with mpv 0.35 or newer (libmpv.so.2) take the other tarball." > INSTALL.txt
           tar czf "dist/niripaper-${{ github.ref_name }}-x86_64-linux-gnu-mpv0.34.tar.gz" \
-            -C target/release niripaper \
+            -C target/release niripaper niripaper-app \
             -C "$GITHUB_WORKSPACE" INSTALL.txt README.md README.zh-CN.md LICENSE
           tar tzf dist/*.tar.gz
           # The line that says which distributions this can actually run on.
           ldd target/release/niripaper | grep -E "libmpv|libEGL|libgbm|libwayland-client" || true
+          ldd target/release/niripaper-app | grep -E "webkit2gtk|ayatana" || true
 
       - name: Release
         env:
@@ -84,12 +102,16 @@ jobs:
       - name: System dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel git pkgconf mpv libglvnd mesa wayland rust github-cli
+            base-devel git pkgconf mpv libglvnd mesa wayland rust github-cli \
+            webkit2gtk-4.1 libayatana-appindicator nodejs npm
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release --locked
+        run: |
+          (cd app/ui && npm ci && npm run build)
+          cargo build --release --locked
+          cargo build --release --locked -p niripaper-app
 
       - name: Package
         run: |
@@ -101,16 +123,22 @@ jobs:
           printf '%s\n' \
             "niripaper ${GITHUB_REF_NAME#v} — built on Arch" \
             "" \
-            "Needs: glibc >= $glibc, $soname (mpv 0.41), libEGL, libgbm, libwayland-client." \
-            "Check with: ldd ./niripaper" \
+            "Two programs in this archive:" \
+            "  niripaper      the wallpaper daemon" \
+            "  niripaper-app  the desktop app (window title: NiriPaper)" \
             "" \
-            "Works on anything with at least that glibc and mpv 0.41. On a system with" \
-            "mpv 0.34 (libmpv.so.1) take the other tarball." > INSTALL.txt
+            "The daemon needs: glibc >= $glibc, $soname (mpv 0.41), libEGL, libgbm, libwayland-client." \
+            "The app needs: glibc >= $glibc, webkit2gtk-4.1, libayatana-appindicator." \
+            "Check both with: ldd ./niripaper && ldd ./niripaper-app" \
+            "" \
+            "The daemon works on anything with at least that glibc and mpv 0.41. On a system" \
+            "with mpv 0.34 (libmpv.so.1) take the other tarball." > INSTALL.txt
           tar czf "dist/niripaper-${{ github.ref_name }}-x86_64-linux-gnu-mpv0.41.tar.gz" \
-            -C target/release niripaper \
+            -C target/release niripaper niripaper-app \
             -C "$GITHUB_WORKSPACE" INSTALL.txt README.md README.zh-CN.md LICENSE
           tar tzf dist/*.tar.gz
           ldd target/release/niripaper | grep -E "libmpv|libEGL|libgbm|libwayland-client" || true
+          ldd target/release/niripaper-app | grep -E "webkit2gtk|ayatana" || true
 
       - name: Release
         env:
