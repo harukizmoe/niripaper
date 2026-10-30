@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Button, Fab, LinearProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Box, Button, CircularProgress, Fab, LinearProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import ArrowUpwardRounded from '@mui/icons-material/ArrowUpwardRounded'
 import PlaylistPlayRounded from '@mui/icons-material/PlaylistPlayRounded'
 import type { WallpaperItem } from '../data/wallpapers'
@@ -266,7 +266,13 @@ export function WallpaperView({
         </Box>
 
         <Stack sx={{ alignItems: 'center', pt: 4, minHeight: 56 }}>
-          {currentSource === 'wallhaven' && whFailed ? (
+          {currentSource === 'wallhaven' && whLoading && list.length > 0 ? (
+            // Already-loaded cards stay put; the next batch is appended below.
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', color: 'text.secondary' }}>
+              <CircularProgress size={20} thickness={5} />
+              <Typography variant="body2">正在加载…</Typography>
+            </Stack>
+          ) : currentSource === 'wallhaven' && whFailed ? (
             <Button onClick={onLoadMoreWallhaven}>加载失败，重试</Button>
           ) : (
             list.length > 0 &&
