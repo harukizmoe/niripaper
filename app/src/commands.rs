@@ -65,25 +65,62 @@ pub fn daemon_start(connection: State<'_, Connection>) -> Result<String, String>
         return Ok("守护进程已在运行中".to_owned());
     }
 
+    // Its output goes to a log, not nowhere: when it fails to start, the
+    // reason is the only thing worth showing.
+    let log_path = daemon_log_path();
+    if let Some(dir) = log_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let log = std::fs::File::create(&log_path)
+        .map_err(|e| format!("创建日志 {} 失败: {e}", log_path.display()))?;
+    let log_err = log
+        .try_clone()
+        .map_err(|e| format!("创建日志 {} 失败: {e}", log_path.display()))?;
+
     let bin = find_daemon_binary();
-    let _child = std::process::Command::new(bin)
+    let mut child = std::process::Command::new(bin)
         .arg("daemon")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(log)
+        .stderr(log_err)
         .spawn()
         .map_err(|e| format!("启动守护进程失败: {e}"))?;
 
-    // Wait briefly for socket to become available (up to 1.5s)
+    // Wait briefly for socket to become available (up to 3s)
     let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_millis(1500) {
+    while start.elapsed() < std::time::Duration::from_millis(3000) {
         if connection.socket().is_ok() {
-            return Ok("壁纸引擎已成功启动并在后台独立运行".to_owned());
+            // Reap it when it exits, so it does not linger as a zombie.
+            std::thread::spawn(move || child.wait());
+            return Ok("壁纸引擎已启动".to_owned());
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let text = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let tail: Vec<&str> = text.lines().rev().take(3).collect();
+            let tail: Vec<&str> = tail.into_iter().rev().collect();
+            return Err(format!(
+                "守护进程启动失败（{status}）：{}",
+                tail.join(" / ")
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    Ok("守护进程指令已发出".to_owned())
+    std::thread::spawn(move || child.wait());
+    Ok(format!(
+        "已发出启动指令，尚未就绪，详见 {}",
+        log_path.display()
+    ))
+}
+
+/// Where a daemon started from the app writes its output.
+fn daemon_log_path() -> std::path::PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("niripaper")
+        .join("daemon.log")
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -261,7 +298,35 @@ pub fn apply_system_palette(palette: SystemPalette) -> Result<String, String> {
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
         .ok_or("无法确定配置目录")?;
     let dir = config.join("noctalia").join("palettes");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 {} 失败: {e}", dir.display()))?;
+    let path = write_system_palette(&dir, NAME, &palette)?;
+
+    // An error here means the daemon is not running; the file is written and
+    // the next selection will find it, so report the failure rather than
+    // pretending.
+    let out = std::process::Command::new("noctalia")
+        .args(["msg", "color-scheme-set", "custom", NAME])
+        .output()
+        .map_err(|e| format!("调用 noctalia 失败: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "系统主题已写入 {}，但切换失败（Noctalia 未运行？）：{}",
+            path.display(),
+            err.trim()
+        ));
+    }
+    Ok(NAME.to_owned())
+}
+
+/// The file half of [`apply_system_palette`]: write `<dir>/<name>.json` in the
+/// shape the daemon reads, without asking it to switch. Separate so a test can
+/// check the file without changing the user's desktop.
+fn write_system_palette(
+    dir: &std::path::Path,
+    name: &str,
+    palette: &SystemPalette,
+) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建 {} 失败: {e}", dir.display()))?;
 
     // Same shape a Noctalia palette file uses: one block per mode, `m`-prefixed
     // roles. Both modes get the same colours — the daemon picks by its own
@@ -308,27 +373,11 @@ pub fn apply_system_palette(palette: SystemPalette) -> Result<String, String> {
     });
     let body = serde_json::json!({ "dark": roles, "light": roles }).to_string();
 
-    let path = dir.join(format!("{NAME}.json"));
+    let path = dir.join(format!("{name}.json"));
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, body).map_err(|e| format!("写入调色板失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("替换调色板失败: {e}"))?;
-
-    // An error here means the daemon is not running; the file is written and
-    // the next selection will find it, so report the failure rather than
-    // pretending.
-    let out = std::process::Command::new("noctalia")
-        .args(["msg", "color-scheme-set", "custom", NAME])
-        .output()
-        .map_err(|e| format!("调用 noctalia 失败: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!(
-            "系统主题已写入 {}，但切换失败（Noctalia 未运行？）：{}",
-            path.display(),
-            err.trim()
-        ));
-    }
-    Ok(NAME.to_owned())
+    Ok(path)
 }
 
 /// Check whether autostart (systemd user service or XDG autostart) is configured.
@@ -1172,6 +1221,19 @@ fn apply_wallpaper_to_doc(
 
     if output == EVERY_OUTPUT {
         write(doc.as_table_mut());
+        // "Every output" has to mean it: an output's own `wallpaper` overrides
+        // the global one, so leaving it would bring the old picture back on
+        // that monitor at the next reload. Its other keys stay.
+        if let Some(outputs) = doc.get_mut("outputs").and_then(|i| i.as_table_like_mut()) {
+            for (_, table) in outputs.iter_mut() {
+                if let Some(table) = table.as_table_like_mut() {
+                    table.remove("wallpaper");
+                    if fit.is_some() {
+                        table.remove("fit");
+                    }
+                }
+            }
+        }
     } else {
         if !doc.contains_key("outputs") {
             doc["outputs"] = Item::Table(toml_edit::Table::new());
@@ -1268,6 +1330,20 @@ mod tests {
         assert_eq!(doc["outputs"]["DP-1"]["fit"].as_str(), Some("fill"));
     }
 
+    /// Applying to every output must not leave an output's own wallpaper behind
+    /// to override it; that output's other settings are kept.
+    #[test]
+    fn applying_to_every_output_clears_the_per_output_wallpapers() {
+        let mut doc = "[outputs.DP-1]\nwallpaper = \"/w/old.png\"\nfit = \"fill\"\nscale = 1.1\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        apply_wallpaper_to_doc(&mut doc, EVERY_OUTPUT, "/w/new.png", Some("fit"), None).unwrap();
+        assert_eq!(doc["wallpaper"].as_str(), Some("/w/new.png"));
+        assert!(doc["outputs"]["DP-1"].get("wallpaper").is_none());
+        assert!(doc["outputs"]["DP-1"].get("fit").is_none());
+        assert_eq!(doc["outputs"]["DP-1"]["scale"].as_float(), Some(1.1));
+    }
+
     /// Comments are the reason this writes through `toml_edit` at all; a
     /// round-trip that dropped them would silently destroy the documented
     /// config the project ships.
@@ -1347,15 +1423,13 @@ mod color_tests {
 mod palette_push_tests {
     use super::*;
 
-    /// The palette must land in the daemon's directory, in the exact shape it
-    /// expects, before any command is run. Uses a temp dir via XDG_CONFIG_HOME
-    /// so the real one is never touched.
+    /// The palette must be written in the exact shape the daemon expects. Only
+    /// the file half runs: the full command would switch the user's desktop.
     #[test]
     fn writes_a_custom_palette() {
         let dir = std::env::temp_dir().join(format!("niripaper-pal-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", &dir);
 
         let palette = SystemPalette {
             primary: "#115e7f".into(),
@@ -1372,11 +1446,8 @@ mod palette_push_tests {
             on_surface_variant: "#c5c6d2".into(),
             outline: "#8f909b".into(),
         };
-        // The command spawns `noctalia`, which may not answer in a test; only
-        // the file write is asserted here.
-        let _ = apply_system_palette(palette);
-
-        let path = dir.join("noctalia/palettes/NiriPaper.json");
+        let path = write_system_palette(&dir, "NiriPaper", &palette).expect("palette written");
+        assert_eq!(path, dir.join("NiriPaper.json"));
         let text = std::fs::read_to_string(&path).expect("palette written");
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(parsed["dark"]["mPrimary"], "#115e7f");

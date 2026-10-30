@@ -524,6 +524,9 @@ fn run_output(
         }
         None => None,
     };
+    // What is on screen, which is not always the configured wallpaper: `set`
+    // swaps the picture without touching the file.
+    let mut shown = media.as_ref().and(options.wallpaper.clone());
 
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
@@ -741,9 +744,8 @@ fn run_output(
                     // advertise it as hot while only half of it applied: the
                     // animators moved to the new scale, the texture did not.
                     let scale_changed = params.scale != options.scale;
-                    let reload_media = params.wallpaper != options.wallpaper
-                        || params.fit != options.fit
-                        || scale_changed;
+                    let placement_changed = params.fit != options.fit || scale_changed;
+                    let reload_media = params.wallpaper != options.wallpaper || placement_changed;
                     // The layer surface was created with a namespace and cannot
                     // change it without a restart, so `state` has to keep reporting
                     // the one actually in force. Saying so once is enough: the
@@ -769,6 +771,9 @@ fn run_output(
                     options.scale = params.scale;
                     options.column_span = params.column_span;
                     options.workspace_span = params.workspace_span;
+                    // Compared before the assignments below overwrite them.
+                    let transition_changed = reloaded.transition != options.transition
+                        || reloaded.animations.slowdown != options.animations.slowdown;
                     options.video_fps = reloaded.video_fps;
                     options.animations = reloaded.animations.clone();
                     options.transition = reloaded.transition.clone();
@@ -783,8 +788,17 @@ fn run_output(
                     // rather than poked. Without this, editing `[transition]`
                     // while the daemon runs silently does nothing, which is
                     // exactly what a panel writes to.
-                    transition =
-                        Transition::new(options.transition.clone(), options.animations.slowdown);
+                    //
+                    // Only when it changed, though: the panel applies a wallpaper
+                    // by writing the file *and* sending `set`, so this reload
+                    // lands while the `set`'s transition is playing, and an
+                    // unconditional rebuild cut it to the new picture at once.
+                    if transition_changed {
+                        transition = Transition::new(
+                            options.transition.clone(),
+                            options.animations.slowdown,
+                        );
+                    }
                     options.wallpaper = params.wallpaper;
                     options.fit = params.fit;
                     niri.motion
@@ -807,22 +821,29 @@ fn run_output(
                     zoom.retarget(zoom_target, now);
                     if reload_media {
                         if let Some(path) = options.wallpaper.clone() {
-                            match switch_wallpaper(
-                                &path,
-                                canvas,
-                                options.video_fps,
-                                options.fit,
-                                &mut media,
-                                &mut transition,
-                                &pool,
-                                last_slot,
-                                screen,
-                            ) {
-                                Ok(()) => {}
-                                Err(err) => log(&format!("reloaded wallpaper: {err}")),
+                            // The panel writes the file *and* sends `set`; when
+                            // the `set` came first the picture is already up,
+                            // and loading it again would restart its transition
+                            // from a half-drawn frame.
+                            if placement_changed || shown.as_ref() != Some(&path) {
+                                match switch_wallpaper(
+                                    &path,
+                                    canvas,
+                                    options.video_fps,
+                                    options.fit,
+                                    &mut media,
+                                    &mut transition,
+                                    &pool,
+                                    last_slot,
+                                    screen,
+                                ) {
+                                    Ok(()) => shown = Some(path),
+                                    Err(err) => log(&format!("reloaded wallpaper: {err}")),
+                                }
                             }
                         } else {
                             media = None;
+                            shown = None;
                             log("wallpaper cleared");
                         }
                     }
@@ -836,6 +857,12 @@ fn run_output(
         for command in commands.try_iter() {
             match command {
                 Command::Set(path) => {
+                    // The panel writes the file before it sends `set`, so the
+                    // reload may already have switched to this picture; doing it
+                    // again would restart the transition from a half-drawn frame.
+                    if shown.as_ref() == Some(&path) {
+                        continue;
+                    }
                     // Load first, swap after: a bad path must leave the current
                     // wallpaper alone, not blank the screen.
                     match switch_wallpaper(
@@ -849,7 +876,7 @@ fn run_output(
                         last_slot,
                         screen,
                     ) {
-                        Ok(()) => {}
+                        Ok(()) => shown = Some(path),
                         Err(err) => log(&format!("set {}: {err}", path.display())),
                     }
                 }

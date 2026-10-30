@@ -8,6 +8,12 @@ export interface OutputInfo {
   height: number
 }
 
+/// How often the list is asked for again. The daemon may start after the app,
+/// and monitors come and go; a local socket round trip is cheap.
+const REFRESH_MS = 3000
+
+const same = (a: OutputInfo[], b: OutputInfo[]) => JSON.stringify(a) === JSON.stringify(b)
+
 /// The outputs the daemon manages. Empty while it is not running, so a page
 /// has to work without any: "every output" is always a valid target.
 export function useOutputs() {
@@ -19,20 +25,20 @@ export function useOutputs() {
       const parsed = JSON.parse(raw) as {
         outputs?: Record<string, { canvas?: { width?: number; height?: number } }>
       }
-      setOutputs(
-        Object.entries(parsed.outputs ?? {}).map(([name, o]) => ({
-          name,
-          width: o.canvas?.width ?? 0,
-          height: o.canvas?.height ?? 0,
-        })),
-      )
+      const next = Object.entries(parsed.outputs ?? {})
+        .map(([name, o]) => ({ name, width: o.canvas?.width ?? 0, height: o.canvas?.height ?? 0 }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      // Only a real change re-renders the pages that read this.
+      setOutputs((prev) => (same(prev, next) ? prev : next))
     } catch {
-      setOutputs([])
+      setOutputs((prev) => (prev.length === 0 ? prev : []))
     }
   }, [])
 
   useEffect(() => {
     void refresh()
+    const timer = setInterval(() => void refresh(), REFRESH_MS)
+    return () => clearInterval(timer)
   }, [refresh])
 
   return { outputs, refresh }
