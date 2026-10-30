@@ -183,7 +183,12 @@ function DrawerBody({
         </IconButton>
       </Stack>
 
-      <Stack spacing={2.5} sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2 }}>
+      {/* The sections are taller than the drawer: without `flexShrink: 0` the
+          preview (overflow hidden, so min-height 0) is squeezed to nothing. */}
+      <Stack
+        spacing={2.5}
+        sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 2, '& > *': { flexShrink: 0 } }}
+      >
         <Box
           sx={{
             position: 'relative',
