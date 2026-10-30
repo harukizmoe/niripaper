@@ -104,6 +104,7 @@ pub fn config_values(
     );
     put("video_fps", json!(video_fps));
     put("scale", json!(config.scale));
+    put("parallax", json!(config.parallax));
     put("column_span", json!(config.column_span));
     put("workspace_span", json!(config.workspace_span));
     put("namespace", json!(namespace));

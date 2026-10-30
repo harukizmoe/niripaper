@@ -138,6 +138,14 @@ pub fn keys() -> Vec<Key> {
             about: "Canvas = output × scale; the extra is the parallax travel.",
         },
         Key {
+            name: "parallax",
+            kind: Kind::Bool,
+            default: json!(config.parallax),
+            unit: None,
+            hot: true,
+            about: "Follow focus and workspace changes by moving the wallpaper.",
+        },
+        Key {
             name: "column_span",
             kind: Kind::Int { min: 2, max: None },
             default: json!(config.column_span),

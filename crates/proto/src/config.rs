@@ -66,6 +66,8 @@ pub struct Config {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    /// Whether the wallpaper follows focus and workspace changes.
+    pub parallax: bool,
     /// Frame-rate cap for video wallpapers (`0` keeps the source's). niri hands
     /// layer surfaces frame callbacks at 60 Hz, and every drawn frame also
     /// invalidates the backdrop, so a 60 fps source sits exactly on the edge.
@@ -89,6 +91,7 @@ impl Default for Config {
             scale: DEFAULT_SCALE,
             column_span: DEFAULT_COLUMN_SPAN,
             workspace_span: DEFAULT_WORKSPACE_SPAN,
+            parallax: true,
             video_fps: 0,
             namespace: DEFAULT_NAMESPACE.to_owned(),
             fit: Fit::Fill,
@@ -153,6 +156,7 @@ pub struct OutputOverride {
     pub scale: Option<f64>,
     pub column_span: Option<usize>,
     pub workspace_span: Option<usize>,
+    pub parallax: Option<bool>,
     pub wallpaper: Option<PathBuf>,
     pub fit: Option<String>,
 }
@@ -163,6 +167,7 @@ pub struct OutputParams {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    pub parallax: bool,
     pub wallpaper: Option<PathBuf>,
     pub fit: Fit,
 }
@@ -268,6 +273,9 @@ impl Config {
         if let Some(span) = raw.workspace_span {
             config.workspace_span = check_span("workspace_span", span)?;
         }
+        if let Some(parallax) = raw.parallax {
+            config.parallax = parallax;
+        }
         // niri exposes nothing over IPC (`niri msg` has no config dump, `niri
         // validate` only reports validity), so its config file is the only
         // source. A config we cannot read is an error rather than something to
@@ -331,6 +339,7 @@ impl Config {
             workspace_span: over
                 .and_then(|o| o.workspace_span)
                 .unwrap_or(self.workspace_span),
+            parallax: over.and_then(|o| o.parallax).unwrap_or(self.parallax),
             wallpaper: over
                 .and_then(|o| o.wallpaper.clone())
                 .or_else(|| self.wallpaper.clone()),
@@ -785,6 +794,7 @@ struct RawConfig {
     scale: Option<f64>,
     column_span: Option<usize>,
     workspace_span: Option<usize>,
+    parallax: Option<bool>,
     video_fps: Option<u32>,
     namespace: Option<String>,
     fit: Option<String>,
@@ -814,6 +824,7 @@ mod tests {
         let config = Config::parse_without_niri(
             r#"
             scale = 1.2
+            parallax = false
             column_span = 8
             workspace_span = 5
             namespace = "custom"
@@ -825,6 +836,7 @@ mod tests {
 
             [outputs."DP-1"]
             scale = 1.3
+            parallax = true
 
             [outputs."eDP-1"]
             column_span = 4
@@ -833,6 +845,7 @@ mod tests {
         )
         .expect("parses");
         assert_eq!(config.scale, 1.2);
+        assert!(!config.parallax);
         assert_eq!(config.column_span, 8);
         assert_eq!(config.workspace_span, 5);
         assert_eq!(
@@ -845,9 +858,11 @@ mod tests {
         );
         assert_eq!(config.namespace, "custom");
         assert_eq!(config.output("DP-1").scale, 1.3);
+        assert!(config.output("DP-1").parallax);
         assert_eq!(config.output("DP-1").column_span, 8);
         assert_eq!(config.output("DP-1").workspace_span, 5);
         assert_eq!(config.output("eDP-1").scale, 1.2);
+        assert!(!config.output("eDP-1").parallax);
         assert_eq!(config.output("eDP-1").column_span, 4);
         // The per-output section does not override what it does not mention.
         assert_eq!(config.output("eDP-1").workspace_span, 5);

@@ -59,6 +59,7 @@ pub struct Options {
     pub scale: f64,
     pub column_span: usize,
     pub workspace_span: usize,
+    pub parallax: bool,
     pub pattern: Pattern,
     /// A wallpaper to draw instead of the procedural pattern: a still image, or
     /// a video (routed by extension).
@@ -96,6 +97,7 @@ impl Options {
             scale: motion::DEFAULT_SCALE,
             column_span: DEFAULT_COLUMN_SPAN,
             workspace_span: DEFAULT_WORKSPACE_SPAN,
+            parallax: true,
             pattern: Pattern::Blocks,
             wallpaper: None,
             video_fps: 0,
@@ -121,6 +123,7 @@ pub struct CliOverrides {
     pub scale: Option<f64>,
     pub column_span: Option<usize>,
     pub workspace_span: Option<usize>,
+    pub parallax: Option<bool>,
     pub wallpaper: Option<std::path::PathBuf>,
     pub fit: Option<Fit>,
 }
@@ -142,6 +145,7 @@ impl Options {
         self.scale = self.cli.scale.unwrap_or(params.scale);
         self.column_span = self.cli.column_span.unwrap_or(params.column_span);
         self.workspace_span = self.cli.workspace_span.unwrap_or(params.workspace_span);
+        self.parallax = self.cli.parallax.unwrap_or(params.parallax);
         self.wallpaper = self.cli.wallpaper.clone().or(params.wallpaper);
         self.fit = self.cli.fit.unwrap_or(params.fit);
     }
@@ -531,11 +535,16 @@ fn run_output(
     // --- niri --------------------------------------------------------------
     let mut niri = Niri::connect(options.column_span, options.workspace_span)?;
     niri.wait_for_full_state()?;
-    let mut animator = Animator::new(
-        niri.motion.progress(&options.output),
-        options.animations.parallax,
-    )
-    .with_slowdown(options.animations.slowdown);
+    let initial_progress = if options.parallax {
+        niri.motion.progress(&options.output)
+    } else {
+        motion::Progress {
+            horizontal: 0.5,
+            vertical: 0.5,
+        }
+    };
+    let mut animator = Animator::new(initial_progress, options.animations.parallax)
+        .with_slowdown(options.animations.slowdown);
     // The overview transition animates the canvas scale (§4.1): pulling back
     // shows more of the wallpaper, which reads as the workspace receding.
     let mut zoom = Animator::new(1.0f64, options.animations.overview_open_close.animation)
@@ -692,7 +701,14 @@ fn run_output(
                 break;
             }
             let now = Instant::now();
-            let target = niri.motion.progress(&options.output);
+            let target = if options.parallax {
+                niri.motion.progress(&options.output)
+            } else {
+                motion::Progress {
+                    horizontal: 0.5,
+                    vertical: 0.5,
+                }
+            };
             if animator.retarget(target, now) {
                 log(&format!(
                     "target h={:.3} v={:.3} (moving)",
@@ -771,6 +787,7 @@ fn run_output(
                     options.scale = params.scale;
                     options.column_span = params.column_span;
                     options.workspace_span = params.workspace_span;
+                    options.parallax = params.parallax;
                     // Compared before the assignments below overwrite them.
                     let transition_changed = reloaded.transition != options.transition
                         || reloaded.animations.slowdown != options.animations.slowdown;
@@ -807,7 +824,14 @@ fn run_output(
                     // changed curve or duration applies without a jump.
                     let now = Instant::now();
                     let position = animator.position(now);
-                    let target = animator.target();
+                    let target = if options.parallax {
+                        niri.motion.progress(&options.output)
+                    } else {
+                        motion::Progress {
+                            horizontal: 0.5,
+                            vertical: 0.5,
+                        }
+                    };
                     animator = Animator::new(position, options.animations.parallax)
                         .with_slowdown(options.animations.slowdown);
                     animator.retarget(target, now);
@@ -881,7 +905,17 @@ fn run_output(
                     }
                 }
                 Command::Query(reply) => {
-                    let (progress, _) = animator.sample(Instant::now());
+                    let (progress, _) = if options.parallax {
+                        animator.sample(Instant::now())
+                    } else {
+                        (
+                            motion::Progress {
+                                horizontal: 0.5,
+                                vertical: 0.5,
+                            },
+                            false,
+                        )
+                    };
                     let kind = match &media {
                         Some(media) => media.describe(),
                         None => format!("pattern {:?}", options.pattern),
@@ -893,7 +927,17 @@ fn run_output(
                 }
                 Command::State(reply) => {
                     let now = Instant::now();
-                    let (progress, _) = animator.sample(now);
+                    let (progress, _) = if options.parallax {
+                        animator.sample(now)
+                    } else {
+                        (
+                            motion::Progress {
+                                horizontal: 0.5,
+                                vertical: 0.5,
+                            },
+                            false,
+                        )
+                    };
                     let _ = reply.send(state_json(&Snapshot {
                         options: &options,
                         media: media.as_ref(),
@@ -920,7 +964,17 @@ fn run_output(
             let now = Instant::now();
             let dt = now.saturating_duration_since(last_frame_at);
             last_frame_at = now;
-            let (progress, moving) = animator.sample(now);
+            let (progress, moving) = if options.parallax {
+                animator.sample(now)
+            } else {
+                (
+                    motion::Progress {
+                        horizontal: 0.5,
+                        vertical: 0.5,
+                    },
+                    false,
+                )
+            };
             let (zoom_now, zoom_moving) = zoom.sample(now);
             let blend = transition.sample(now);
             let moving = moving || zoom_moving || video_present || blend.is_some();
@@ -963,7 +1017,10 @@ fn run_output(
         // Anything still animating but no frame pending: kick it with a commit
         // that carries only the frame request. Both the parallax and the
         // overview zoom go through here, so neither can stall.
-        if (animator.is_moving() || zoom.is_moving() || transition.is_moving() || video_present)
+        if ((options.parallax && animator.is_moving())
+            || zoom.is_moving()
+            || transition.is_moving()
+            || video_present)
             && !frame_pending
         {
             surface.request_frame(&client.handle());

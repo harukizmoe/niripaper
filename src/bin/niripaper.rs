@@ -345,6 +345,7 @@ fn daemon_command(args: &[String]) -> Result<(), String> {
         scale: over.scale,
         column_span: over.column_span,
         workspace_span: over.workspace_span,
+        parallax: None,
         wallpaper: over.wallpaper.clone(),
         fit: None,
     };
