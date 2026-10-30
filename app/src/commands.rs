@@ -939,8 +939,22 @@ pub struct WallhavenSearchResult {
 }
 
 /// Query Wallhaven API v1 directly via curl (zero extra dependencies, uses system TLS).
+///
+/// `async` on purpose: a plain `fn` command runs on the main thread, and this one
+/// waits on curl for a second or so — the whole window, spinner included, froze
+/// for that long on every page. The blocking work goes to a worker thread.
 #[tauri::command]
-pub fn search_wallhaven(params: WallhavenQueryParams) -> Result<WallhavenSearchResult, String> {
+pub async fn search_wallhaven(
+    params: WallhavenQueryParams,
+) -> Result<WallhavenSearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search_wallhaven_blocking(params))
+        .await
+        .map_err(|e| format!("检索线程异常: {e}"))?
+}
+
+fn search_wallhaven_blocking(
+    params: WallhavenQueryParams,
+) -> Result<WallhavenSearchResult, String> {
     let mut query_parts = Vec::new();
 
     if let Some(q) = params.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -1115,8 +1129,21 @@ pub fn search_wallhaven(params: WallhavenQueryParams) -> Result<WallhavenSearchR
 }
 
 /// Download a Wallhaven wallpaper into `~/Pictures/Wallpapers` (matching Noctalia's download workflow).
+/// Off the main thread for the same reason as [`search_wallhaven`].
 #[tauri::command]
-pub fn download_wallhaven_wallpaper(
+pub async fn download_wallhaven_wallpaper(
+    full_url: String,
+    filename: String,
+    dest_dir: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        download_wallhaven_blocking(full_url, filename, dest_dir)
+    })
+    .await
+    .map_err(|e| format!("下载线程异常: {e}"))?
+}
+
+fn download_wallhaven_blocking(
     full_url: String,
     filename: String,
     dest_dir: Option<String>,
