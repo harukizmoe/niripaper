@@ -354,6 +354,10 @@ struct Uniforms {
     vignette: i32,
     grain: i32,
     aberration: i32,
+    grain_size: i32,
+    tone_shadow: i32,
+    tone_highlight: i32,
+    tone_amount: i32,
 }
 
 /// What the shader needs to blend the previous frame in.
@@ -436,6 +440,10 @@ impl Renderer {
             vignette: uniform(program, "u_vignette"),
             grain: uniform(program, "u_grain"),
             aberration: uniform(program, "u_aberration"),
+            grain_size: uniform(program, "u_grain_size"),
+            tone_shadow: uniform(program, "u_tone_shadow"),
+            tone_highlight: uniform(program, "u_tone_highlight"),
+            tone_amount: uniform(program, "u_tone_amount"),
         };
         Ok(Self {
             program,
@@ -474,6 +482,10 @@ impl Renderer {
                 glUniform1f(self.uniforms.vignette, filter.vignette);
                 glUniform1f(self.uniforms.grain, filter.grain);
                 glUniform1f(self.uniforms.aberration, filter.aberration);
+                glUniform1f(self.uniforms.grain_size, filter.grain_size);
+                glUniform1f(self.uniforms.tone_shadow, filter.tone_shadow);
+                glUniform1f(self.uniforms.tone_highlight, filter.tone_highlight);
+                glUniform1f(self.uniforms.tone_amount, filter.tone_amount);
             }
             match content {
                 Content::Wallpaper(texture) => {
@@ -571,79 +583,87 @@ uniform float u_hue;
 uniform float u_vignette;
 uniform float u_grain;
 uniform float u_aberration;
+uniform float u_grain_size;
+uniform float u_tone_shadow;
+uniform float u_tone_highlight;
+uniform float u_tone_amount;
 out vec4 color;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
+vec3 hue_rgb(float deg) {
+    float h = deg / 60.0;
+    return clamp(abs(mod(h + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+}
+
+// Colour work happens in linear light (exposure, white balance, saturation),
+// contrast and the finishing touches in display space. Every control is
+// neutral at its default, so a small value is a small change.
 vec3 apply_filter(vec3 col, vec2 screen_uv, float aspect) {
-    // 1. Exposure / Brightness (soft exponential exposure)
+    vec3 lin = pow(max(col, vec3(0.0)), vec3(2.2));
+
     if (abs(u_brightness - 1.0) > 0.001) {
-        float exposure = pow(2.0, (u_brightness - 1.0) * 1.5);
-        col = col * exposure;
+        lin *= exp2((u_brightness - 1.0) * 2.0);
     }
-
-    // 2. White Balance / Temperature (cool teal -1.0 to warm golden +1.0)
     if (abs(u_temperature) > 0.001) {
-        vec3 warm_tint = vec3(1.12, 1.03, 0.88);
-        vec3 cool_tint = vec3(0.88, 1.02, 1.14);
-        vec3 tint = mix(cool_tint, warm_tint, u_temperature * 0.5 + 0.5);
-        col = col * tint;
+        lin *= vec3(1.0 + 0.18 * u_temperature, 1.0, 1.0 - 0.18 * u_temperature);
     }
-
-    // 3. Hue rotation (luminance-preserving)
     if (abs(u_hue) > 0.001) {
-        float angle = radians(u_hue);
-        float cosA = cos(angle);
-        float sinA = sin(angle);
-        mat3 hueMat = mat3(
-            vec3(0.213 + cosA * 0.787 - sinA * 0.213, 0.715 - cosA * 0.715 - sinA * 0.715, 0.072 - cosA * 0.072 + sinA * 0.928),
-            vec3(0.213 - cosA * 0.213 + sinA * 0.143, 0.715 + cosA * 0.285 + sinA * 0.140, 0.072 - cosA * 0.072 - sinA * 0.283),
-            vec3(0.213 - cosA * 0.213 - sinA * 0.787, 0.715 - cosA * 0.715 + sinA * 0.715, 0.072 + cosA * 0.928 + sinA * 0.072)
-        );
-        col = clamp(hueMat * col, 0.0, 1.0);
+        float a = radians(u_hue);
+        float c = cos(a);
+        float s = sin(a);
+        // GLSL matrices are column-major: transpose() turns these rows into
+        // the usual luminance-preserving rotation.
+        mat3 m = transpose(mat3(
+            0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
+            0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283,
+            0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072
+        ));
+        lin = max(m * lin, vec3(0.0));
     }
-
-    // 4. Vibrance & Saturation
-    float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    float luma = dot(lin, vec3(0.2126, 0.7152, 0.0722));
     if (abs(u_saturation - 1.0) > 0.001) {
-        col = mix(vec3(luma), col, u_saturation);
+        lin = max(mix(vec3(luma), lin, u_saturation), vec3(0.0));
     }
     if (abs(u_vibrance - 1.0) > 0.001) {
-        float max_c = max(col.r, max(col.g, col.b));
-        float min_c = min(col.r, min(col.g, col.b));
-        float sat = max_c - min_c;
-        float factor = (1.0 - sat) * (u_vibrance - 1.0);
-        col = mix(vec3(luma), col, max(0.0, 1.0 + factor));
+        float sat = max(lin.r, max(lin.g, lin.b)) - min(lin.r, min(lin.g, lin.b));
+        float amount = 1.0 + (u_vibrance - 1.0) * (1.0 - clamp(sat * 2.0, 0.0, 1.0));
+        lin = max(mix(vec3(luma), lin, amount), vec3(0.0));
     }
 
-    // 5. Filmic S-curve Contrast (preserves shadow and highlight detail)
+    vec3 c = pow(clamp(lin, 0.0, 1.0), vec3(1.0 / 2.2));
+
     if (abs(u_contrast - 1.0) > 0.001) {
-        vec3 c_c = clamp(col, 0.001, 0.999);
-        float k = u_contrast;
-        vec3 s_curve = pow(c_c, vec3(k)) / (pow(c_c, vec3(k)) + pow(1.0 - c_c, vec3(k)));
-        col = clamp(s_curve, 0.0, 1.0);
+        vec3 x = clamp(c, 0.001, 0.999);
+        vec3 hi = pow(x, vec3(u_contrast));
+        vec3 s_curve = hi / (hi + pow(1.0 - x, vec3(u_contrast)));
+        c = mix(c, s_curve, 0.85);
     }
-
-    // 6. Natural Vignette (quadratic cosine falloff from center)
+    if (u_tone_amount > 0.001) {
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        vec3 ts = hue_rgb(u_tone_shadow);
+        vec3 th = hue_rgb(u_tone_highlight);
+        float ws = 1.0 - smoothstep(0.0, 0.6, l);
+        float wh = smoothstep(0.4, 1.0, l);
+        // Push colour in without changing the brightness it is added to.
+        c += (ts - dot(ts, vec3(0.333))) * ws * u_tone_amount * 0.18;
+        c += (th - dot(th, vec3(0.333))) * wh * u_tone_amount * 0.18;
+        c = clamp(c, 0.0, 1.0);
+    }
     if (u_vignette > 0.001) {
         vec2 p = (screen_uv - vec2(0.5)) * vec2(aspect, 1.0);
-        float dist = length(p);
-        float vig = clamp(1.0 - smoothstep(0.45, 1.05, dist) * u_vignette, 0.0, 1.0);
-        col = col * vig;
+        float v = smoothstep(0.35, 1.0, length(p));
+        c *= 1.0 - v * v * u_vignette * 0.8;
     }
-
-    // 7. Organic Film Grain (midtone-weighted organic film noise)
     if (u_grain > 0.001) {
-        float grain_luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
-        float weight = 1.0 - abs(grain_luma - 0.45) * 1.5;
-        weight = max(0.2, weight);
-        float noise = (hash(screen_uv * u_screen) - 0.5) * 2.0;
-        col = clamp(col + vec3(noise * u_grain * 0.06 * weight), 0.0, 1.0);
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        float weight = 1.0 - abs(l - 0.5) * 1.2;
+        float n = hash(floor(screen_uv * u_screen / u_grain_size)) - 0.5;
+        c = clamp(c + vec3(n * u_grain * 0.2 * weight), 0.0, 1.0);
     }
-
-    return col;
+    return c;
 }
 
 // A transition between the previous frame and this one.
@@ -776,7 +796,7 @@ void main() {
         if (u_filter_enabled == 1 && u_aberration > 0.001) {
             vec2 dir = uv - vec2(0.5);
             float d2 = dot(dir, dir);
-            vec2 offset = dir * d2 * u_aberration * 0.015 * u_scale;
+            vec2 offset = dir * d2 * u_aberration * 0.006 * u_scale;
             float r = texture(u_wallpaper, new_c + offset).r;
             float g = texture(u_wallpaper, new_c).g;
             float b = texture(u_wallpaper, new_c - offset).b;

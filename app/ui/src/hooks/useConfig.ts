@@ -34,6 +34,13 @@ export interface SchemaKey {
 
 export type ConfigValue = unknown
 
+export interface FilterPreset {
+  id: string
+  label: string
+  /** Every `filter.*` key, spelled as in the schema. */
+  values: Record<string, number>
+}
+
 interface ConfigView {
   values: Record<string, ConfigValue>
   set: string[]
@@ -43,14 +50,16 @@ export function useConfig(onError: (message: string) => void) {
   const [schema, setSchema] = useState<Record<string, SchemaKey> | null>(null)
   const [view, setView] = useState<ConfigView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [presets, setPresets] = useState<FilterPreset[]>([])
 
   useEffect(() => {
     Promise.all([
-      invoke<{ keys: SchemaKey[] }>('config_schema'),
+      invoke<{ keys: SchemaKey[]; filter_presets?: FilterPreset[] }>('config_schema'),
       invoke<ConfigView>('config_values'),
     ]).then(
       ([s, v]) => {
         setSchema(Object.fromEntries(s.keys.map((k) => [k.name, k])))
+        setPresets(s.filter_presets ?? [])
         setView(v)
       },
       (e) => setLoadError(String(e)),
@@ -84,6 +93,7 @@ export function useConfig(onError: (message: string) => void) {
     () => ({
       ready: schema !== null && view !== null,
       loadError,
+      presets,
       key: (name: string) => schema?.[name],
       value: <T,>(name: string) => view?.values[name] as T,
       /** Whether the file states this key (and "reset" would remove it). */

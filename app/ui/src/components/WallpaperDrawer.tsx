@@ -71,174 +71,21 @@ export function WallpaperDrawer({ isOpen, wallpaper, ...rest }: WallpaperDrawerP
   )
 }
 
-interface FilterPreset {
-  id: string
-  label: string
-  values: {
-    brightness: number
-    contrast: number
-    saturation: number
-    vibrance: number
-    temperature: number
-    hue: number
-    vignette: number
-    grain: number
-    aberration: number
-  }
-}
-
-const FILTER_PRESETS: FilterPreset[] = [
-  {
-    id: 'none',
-    label: '原图 (无滤镜)',
-    values: {
-      brightness: 1.0,
-      contrast: 1.0,
-      saturation: 1.0,
-      vibrance: 1.0,
-      temperature: 0.0,
-      hue: 0.0,
-      vignette: 0.0,
-      grain: 0.0,
-      aberration: 0.0,
-    },
-  },
-  {
-    id: 'cinematic',
-    label: '电影质感 (Cinematic Film)',
-    values: {
-      brightness: 1.02,
-      contrast: 1.18,
-      saturation: 1.05,
-      vibrance: 1.25,
-      temperature: -0.15,
-      hue: 0.0,
-      vignette: 0.35,
-      grain: 0.12,
-      aberration: 0.25,
-    },
-  },
-  {
-    id: 'monochrome',
-    label: '黑白胶片 (B&W Noir)',
-    values: {
-      brightness: 0.98,
-      contrast: 1.3,
-      saturation: 0.0,
-      vibrance: 0.0,
-      temperature: 0.0,
-      hue: 0.0,
-      vignette: 0.4,
-      grain: 0.22,
-      aberration: 0.0,
-    },
-  },
-  {
-    id: 'cyberpunk',
-    label: '赛博霓虹 (Cyberpunk)',
-    values: {
-      brightness: 0.96,
-      contrast: 1.3,
-      saturation: 1.25,
-      vibrance: 1.45,
-      temperature: -0.35,
-      hue: 185.0,
-      vignette: 0.4,
-      grain: 0.0,
-      aberration: 0.45,
-    },
-  },
-  {
-    id: 'warm_sunset',
-    label: '暖阳日落 (Golden Sunset)',
-    values: {
-      brightness: 1.06,
-      contrast: 0.96,
-      saturation: 1.1,
-      vibrance: 1.25,
-      temperature: 0.45,
-      hue: 10.0,
-      vignette: 0.2,
-      grain: 0.0,
-      aberration: 0.1,
-    },
-  },
-  {
-    id: 'anime_clean',
-    label: '动漫清透 (Pastel Anime)',
-    values: {
-      brightness: 1.08,
-      contrast: 0.92,
-      saturation: 1.15,
-      vibrance: 1.35,
-      temperature: 0.08,
-      hue: 0.0,
-      vignette: 0.0,
-      grain: 0.0,
-      aberration: 0.0,
-    },
-  },
-  {
-    id: 'vintage',
-    label: '复古胶片 (Vintage 1970s)',
-    values: {
-      brightness: 1.02,
-      contrast: 0.92,
-      saturation: 0.82,
-      vibrance: 0.9,
-      temperature: 0.28,
-      hue: 14.0,
-      vignette: 0.45,
-      grain: 0.3,
-      aberration: 0.25,
-    },
-  },
-  {
-    id: 'night_ambient',
-    label: '暗夜护眼 (Night Ambient)',
-    values: {
-      brightness: 0.82,
-      contrast: 1.15,
-      saturation: 0.85,
-      vibrance: 0.9,
-      temperature: 0.2,
-      hue: 0.0,
-      vignette: 0.55,
-      grain: 0.0,
-      aberration: 0.0,
-    },
-  },
+const FILTER_KEYS = [
+  'filter.brightness',
+  'filter.contrast',
+  'filter.saturation',
+  'filter.vibrance',
+  'filter.temperature',
+  'filter.hue',
+  'filter.vignette',
+  'filter.grain',
+  'filter.grain_size',
+  'filter.aberration',
+  'filter.tone_shadow',
+  'filter.tone_highlight',
+  'filter.tone_amount',
 ]
-
-function matchPreset(
-  b: number,
-  c: number,
-  s: number,
-  vib: number,
-  temp: number,
-  h: number,
-  v: number,
-  g: number,
-  ab: number,
-): string {
-  for (const preset of FILTER_PRESETS) {
-    const pv = preset.values
-    if (
-      Math.abs(pv.brightness - b) < 0.03 &&
-      Math.abs(pv.contrast - c) < 0.03 &&
-      Math.abs(pv.saturation - s) < 0.03 &&
-      Math.abs(pv.vibrance - vib) < 0.03 &&
-      Math.abs(pv.temperature - temp) < 0.05 &&
-      Math.abs(pv.hue - h) < 1.0 &&
-      Math.abs(pv.vignette - v) < 0.03 &&
-      Math.abs(pv.grain - g) < 0.03 &&
-      Math.abs(pv.aberration - ab) < 0.03
-    ) {
-      return preset.id
-    }
-  }
-  return 'custom'
-}
 
 function DrawerBody({
   wallpaper: wp,
@@ -261,68 +108,38 @@ function DrawerBody({
   })()
   const fit = pickedFit ?? (config.ready ? config.value<string>('fit') : 'fill')
 
-  const brightness = config.value<number>('filter.brightness') ?? 1.0
-  const contrast = config.value<number>('filter.contrast') ?? 1.0
-  const saturation = config.value<number>('filter.saturation') ?? 1.0
-  const vibrance = config.value<number>('filter.vibrance') ?? 1.0
-  const temperature = config.value<number>('filter.temperature') ?? 0.0
-  const hue = config.value<number>('filter.hue') ?? 0.0
-  const vignette = config.value<number>('filter.vignette') ?? 0.0
-  const grain = config.value<number>('filter.grain') ?? 0.0
-  const aberration = config.value<number>('filter.aberration') ?? 0.0
+  const num = (key: string) => config.value<number>(key) ?? (config.key(key)?.default as number)
+  const brightness = num('filter.brightness')
+  const contrast = num('filter.contrast')
+  const saturation = num('filter.saturation')
+  const vibrance = num('filter.vibrance')
+  const temperature = num('filter.temperature')
+  const hue = num('filter.hue')
+  const vignette = num('filter.vignette')
+  const grain = num('filter.grain')
+  const grainSize = num('filter.grain_size')
+  const aberration = num('filter.aberration')
+  const toneShadow = num('filter.tone_shadow')
+  const toneHighlight = num('filter.tone_highlight')
+  const toneAmount = num('filter.tone_amount')
 
-  const anyFilterSet =
-    config.isSet('filter.brightness') ||
-    config.isSet('filter.contrast') ||
-    config.isSet('filter.saturation') ||
-    config.isSet('filter.vibrance') ||
-    config.isSet('filter.temperature') ||
-    config.isSet('filter.hue') ||
-    config.isSet('filter.vignette') ||
-    config.isSet('filter.grain') ||
-    config.isSet('filter.aberration')
+  const anyFilterSet = FILTER_KEYS.some((k) => config.isSet(k))
+  const resetAllFilters = () => FILTER_KEYS.forEach((k) => void config.reset(k))
 
-  const resetAllFilters = () => {
-    void config.reset('filter.brightness')
-    void config.reset('filter.contrast')
-    void config.reset('filter.saturation')
-    void config.reset('filter.vibrance')
-    void config.reset('filter.temperature')
-    void config.reset('filter.hue')
-    void config.reset('filter.vignette')
-    void config.reset('filter.grain')
-    void config.reset('filter.aberration')
-  }
-
-  const currentPreset = matchPreset(
-    brightness,
-    contrast,
-    saturation,
-    vibrance,
-    temperature,
-    hue,
-    vignette,
-    grain,
-    aberration,
-  )
+  // Same tolerance for every key: a preset matches when nothing is visibly off.
+  const currentPreset =
+    config.presets.find((p) =>
+      FILTER_KEYS.every((k) => Math.abs((p.values[k] ?? 0) - num(k)) < 0.015 * Math.max(1, Math.abs(p.values[k] ?? 0))),
+    )?.id ?? 'custom'
 
   const applyPreset = (presetId: string) => {
-    const preset = FILTER_PRESETS.find((p) => p.id === presetId)
+    const preset = config.presets.find((p) => p.id === presetId)
     if (!preset) return
     if (preset.id === 'none') {
       resetAllFilters()
       return
     }
-    const pv = preset.values
-    void config.set('filter.brightness', pv.brightness)
-    void config.set('filter.contrast', pv.contrast)
-    void config.set('filter.saturation', pv.saturation)
-    void config.set('filter.vibrance', pv.vibrance)
-    void config.set('filter.temperature', pv.temperature)
-    void config.set('filter.hue', pv.hue)
-    void config.set('filter.vignette', pv.vignette)
-    void config.set('filter.grain', pv.grain)
-    void config.set('filter.aberration', pv.aberration)
+    FILTER_KEYS.forEach((k) => void config.set(k, preset.values[k]))
   }
 
   const sepia = temperature > 0 ? temperature * 0.35 : 0
@@ -552,7 +369,7 @@ function DrawerBody({
                 onChange={(e) => applyPreset(e.target.value)}
                 sx={{ minWidth: 180 }}
               >
-                {FILTER_PRESETS.map((p) => (
+                {config.presets.map((p) => (
                   <MenuItem key={p.id} value={p.id}>
                     {p.label}
                   </MenuItem>
@@ -668,6 +485,68 @@ function DrawerBody({
               max={1.0}
               step={0.01}
               onCommit={(v) => void config.set('filter.vignette', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="颗粒大小"
+            modified={config.isSet('filter.grain_size')}
+            onReset={() => void config.reset('filter.grain_size')}
+          >
+            <SliderField
+              value={grainSize}
+              min={1}
+              max={4}
+              step={0.1}
+              unit="px"
+              onCommit={(v) => void config.set('filter.grain_size', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="分离色调强度"
+            description="给暗部和亮部各染一点色，不改变整体亮度。"
+            modified={config.isSet('filter.tone_amount')}
+            onReset={() => void config.reset('filter.tone_amount')}
+          >
+            <SliderField
+              value={toneAmount}
+              min={0}
+              max={1}
+              step={0.01}
+              onCommit={(v) => void config.set('filter.tone_amount', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="暗部色相"
+            modified={config.isSet('filter.tone_shadow')}
+            onReset={() => void config.reset('filter.tone_shadow')}
+          >
+            <SliderField
+              value={toneShadow}
+              min={0}
+              max={360}
+              step={1}
+              unit="°"
+              disabled={toneAmount <= 0.001}
+              onCommit={(v) => void config.set('filter.tone_shadow', v)}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="亮部色相"
+            modified={config.isSet('filter.tone_highlight')}
+            onReset={() => void config.reset('filter.tone_highlight')}
+          >
+            <SliderField
+              value={toneHighlight}
+              min={0}
+              max={360}
+              step={1}
+              unit="°"
+              disabled={toneAmount <= 0.001}
+              onCommit={(v) => void config.set('filter.tone_highlight', v)}
             />
           </SettingRow>
 

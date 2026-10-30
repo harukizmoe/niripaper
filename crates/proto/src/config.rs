@@ -167,7 +167,14 @@ pub struct Filter {
     pub hue: f32,
     pub vignette: f32,
     pub grain: f32,
+    /// Grain particle size in output pixels.
+    pub grain_size: f32,
     pub aberration: f32,
+    /// Split toning: the hue (degrees) pushed into the shadows and into the
+    /// highlights, and how much of it (0 = off).
+    pub tone_shadow: f32,
+    pub tone_highlight: f32,
+    pub tone_amount: f32,
 }
 
 impl Default for Filter {
@@ -181,7 +188,11 @@ impl Default for Filter {
             hue: 0.0,
             vignette: 0.0,
             grain: 0.0,
+            grain_size: 1.5,
             aberration: 0.0,
+            tone_shadow: 200.0,
+            tone_highlight: 40.0,
+            tone_amount: 0.0,
         }
     }
 }
@@ -197,6 +208,110 @@ impl Filter {
             || self.vignette > 0.001
             || self.grain > 0.001
             || self.aberration > 0.001
+            || self.tone_amount > 0.001
+    }
+
+    /// The built-in looks, `(id, label, values)`. Kept here, not in the UI, so
+    /// the panel and `trprobe` render exactly the same thing. Every preset is
+    /// deliberately restrained: a few controls moved a little, not nine at once.
+    pub fn presets() -> Vec<(&'static str, &'static str, Filter)> {
+        let base = Filter::default();
+        vec![
+            ("none", "原图", base),
+            (
+                "cinematic",
+                "电影质感",
+                Filter {
+                    contrast: 1.12,
+                    vibrance: 1.2,
+                    vignette: 0.25,
+                    grain: 0.08,
+                    tone_shadow: 200.0,
+                    tone_highlight: 35.0,
+                    tone_amount: 0.5,
+                    ..base
+                },
+            ),
+            (
+                "noir",
+                "黑白胶片",
+                Filter {
+                    saturation: 0.0,
+                    vibrance: 0.0,
+                    contrast: 1.2,
+                    vignette: 0.3,
+                    grain: 0.15,
+                    ..base
+                },
+            ),
+            (
+                "cyberpunk",
+                "赛博霓虹",
+                Filter {
+                    contrast: 1.1,
+                    saturation: 1.1,
+                    vibrance: 1.2,
+                    vignette: 0.25,
+                    aberration: 0.2,
+                    tone_shadow: 280.0,
+                    tone_highlight: 175.0,
+                    tone_amount: 0.7,
+                    ..base
+                },
+            ),
+            (
+                "sunset",
+                "暖阳日落",
+                Filter {
+                    brightness: 1.04,
+                    vibrance: 1.15,
+                    temperature: 0.35,
+                    vignette: 0.15,
+                    tone_shadow: 20.0,
+                    tone_highlight: 45.0,
+                    tone_amount: 0.3,
+                    ..base
+                },
+            ),
+            (
+                "pastel",
+                "动漫清透",
+                Filter {
+                    brightness: 1.05,
+                    contrast: 0.92,
+                    vibrance: 1.25,
+                    temperature: 0.05,
+                    ..base
+                },
+            ),
+            (
+                "vintage",
+                "复古胶片",
+                Filter {
+                    contrast: 0.9,
+                    saturation: 0.85,
+                    temperature: 0.2,
+                    vignette: 0.3,
+                    grain: 0.2,
+                    grain_size: 2.0,
+                    tone_shadow: 180.0,
+                    tone_highlight: 50.0,
+                    tone_amount: 0.35,
+                    ..base
+                },
+            ),
+            (
+                "night",
+                "暗夜护眼",
+                Filter {
+                    brightness: 0.85,
+                    saturation: 0.9,
+                    temperature: 0.25,
+                    vignette: 0.3,
+                    ..base
+                },
+            ),
+        ]
     }
 }
 
@@ -942,6 +1057,28 @@ fn validate_filter(filter: &Filter) -> Result<(), String> {
             filter.aberration
         ));
     }
+    if !(1.0..=4.0).contains(&filter.grain_size) {
+        return Err(format!(
+            "filter.grain_size must be between 1.0 and 4.0, got {}",
+            filter.grain_size
+        ));
+    }
+    for (name, v) in [
+        ("tone_shadow", filter.tone_shadow),
+        ("tone_highlight", filter.tone_highlight),
+    ] {
+        if !(0.0..=360.0).contains(&v) {
+            return Err(format!(
+                "filter.{name} must be between 0.0 and 360.0, got {v}"
+            ));
+        }
+    }
+    if !(0.0..=1.0).contains(&filter.tone_amount) {
+        return Err(format!(
+            "filter.tone_amount must be between 0.0 and 1.0, got {}",
+            filter.tone_amount
+        ));
+    }
     Ok(())
 }
 
@@ -974,6 +1111,18 @@ fn resolve_filter(raw: &Option<RawFilter>) -> Result<Filter, String> {
         }
         if let Some(v) = raw.aberration {
             filter.aberration = v;
+        }
+        if let Some(v) = raw.grain_size {
+            filter.grain_size = v;
+        }
+        if let Some(v) = raw.tone_shadow {
+            filter.tone_shadow = v;
+        }
+        if let Some(v) = raw.tone_highlight {
+            filter.tone_highlight = v;
+        }
+        if let Some(v) = raw.tone_amount {
+            filter.tone_amount = v;
         }
     }
     validate_filter(&filter)?;
@@ -1028,6 +1177,10 @@ struct RawFilter {
     vignette: Option<f32>,
     grain: Option<f32>,
     aberration: Option<f32>,
+    grain_size: Option<f32>,
+    tone_shadow: Option<f32>,
+    tone_highlight: Option<f32>,
+    tone_amount: Option<f32>,
 }
 
 /// The overview transition: an animation block plus its target zoom.

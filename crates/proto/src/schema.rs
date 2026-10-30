@@ -273,6 +273,50 @@ pub fn keys() -> Vec<Key> {
             about: "Chromatic aberration optical lens dispersion at screen edges.",
         },
         Key {
+            name: "filter.grain_size",
+            kind: Kind::Float {
+                min: 1.0,
+                max: Some(4.0),
+            },
+            default: json!(config.filter.grain_size),
+            unit: Some("px"),
+            hot: true,
+            about: "Film grain particle size, in pixels.",
+        },
+        Key {
+            name: "filter.tone_shadow",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(360.0),
+            },
+            default: json!(config.filter.tone_shadow),
+            unit: Some("°"),
+            hot: true,
+            about: "Split toning: hue pushed into the shadows.",
+        },
+        Key {
+            name: "filter.tone_highlight",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(360.0),
+            },
+            default: json!(config.filter.tone_highlight),
+            unit: Some("°"),
+            hot: true,
+            about: "Split toning: hue pushed into the highlights.",
+        },
+        Key {
+            name: "filter.tone_amount",
+            kind: Kind::Float {
+                min: 0.0,
+                max: Some(1.0),
+            },
+            default: json!(config.filter.tone_amount),
+            unit: None,
+            hot: true,
+            about: "Split toning strength (0 = off).",
+        },
+        Key {
             name: "playlist.enabled",
             kind: Kind::Bool,
             default: json!(config.playlist.enabled),
@@ -528,7 +572,32 @@ pub const PER_OUTPUT: [&str; 5] = ["wallpaper", "scale", "column_span", "workspa
 
 /// The whole schema, as one JSON value.
 pub fn schema() -> Value {
-    json!({ "keys": keys(), "per_output": PER_OUTPUT })
+    json!({
+        "keys": keys(),
+        "per_output": PER_OUTPUT,
+        "filter_presets": crate::config::Filter::presets()
+            .into_iter()
+            .map(|(id, label, f)| json!({
+                "id": id,
+                "label": label,
+                "values": {
+                    "filter.brightness": f.brightness,
+                    "filter.contrast": f.contrast,
+                    "filter.saturation": f.saturation,
+                    "filter.vibrance": f.vibrance,
+                    "filter.temperature": f.temperature,
+                    "filter.hue": f.hue,
+                    "filter.vignette": f.vignette,
+                    "filter.grain": f.grain,
+                    "filter.grain_size": f.grain_size,
+                    "filter.aberration": f.aberration,
+                    "filter.tone_shadow": f.tone_shadow,
+                    "filter.tone_highlight": f.tone_highlight,
+                    "filter.tone_amount": f.tone_amount,
+                },
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// niri's curve names, from the one place that parses them.
