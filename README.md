@@ -32,6 +32,11 @@ with the workspaces.
   step with the workspaces.
 - **Overview zoom.** Opening niri's overview zooms the wallpaper out with it.
 - **Per-output settings.** Scale, spans and wallpaper can all differ per output.
+- **A desktop app.** A Tauri window for what a wallpaper daemon should not do:
+  browse the local library or Wallhaven, preview a picture with the filters applied,
+  choose the monitor, and change transitions, parallax and rotation. It draws no
+  wallpaper pixels itself — it sends `set`/`next` over the control socket and edits
+  the configuration file in place.
 - **Low resource usage.** While nothing is moving it draws no frames and uses no
   measurable CPU.
 
@@ -42,18 +47,20 @@ Version 0.2.0, early.
 Working today: static images (PNG, JPEG, WebP), **video wallpapers** (hardware-decoded),
 parallax, the overview transition, the wallpaper transition (nine effects), `fit` for
 sources that do not match the canvas, a single configuration file with hot reload,
-per-output settings, `schema`/`state` for a front end to build its UI from, and
-changing the wallpaper of a running daemon.
+per-output settings, `schema`/`state` for a front end to build its UI from, changing
+the wallpaper of a running daemon, and a desktop app (`app/`) that browses the local
+library and Wallhaven, applies wallpapers per monitor and edits the configuration.
 
-Not here yet: the desktop app (a separate program talking to the daemon's control socket —
-the daemon side of the interface is `schema`, `state` and the config file, all of
-which are here), an AUR package, and prebuilt binaries.
+Not here yet: an AUR package and prebuilt binaries — the app is built from source.
 
 ## Requirements
 
 - **niri.** Developed against 26.04.
 - **libmpv** — the video path links it. On Arch, that is the `mpv` package.
 - **Rust** (a recent stable toolchain) if you are building it yourself.
+- **For the desktop app:** the WebKitGTK 4.1 development files (`webkit2gtk-4.1` on
+  Arch) and Node.js with npm. `ffmpeg` is optional — without it the app shows no
+  preview frame for local video wallpapers.
 
 ## Install
 
@@ -69,6 +76,17 @@ cargo install --path . --locked --bin niripaper
 
 **`--bin niripaper` is not optional**: without it the diagnostic probes in `src/bin/`
 get installed alongside the daemon.
+
+The desktop app is built from the same checkout. Its UI is compiled into the app
+binary, so build the UI first, then the shell:
+
+```bash
+cd app/ui && npm ci && npm run build && cd ../..
+cargo build -p niripaper-app --release
+```
+
+The result is `target/release/niripaper-app`. The crate keeps that name; the window
+and the tray icon call themselves NiriPaper. Nothing installs it for you.
 
 There is a `PKGBUILD` in `packaging/aur/` for the AUR (not published yet — the AUR is not
 accepting new accounts, see `packaging/aur/README.md`).
@@ -123,6 +141,36 @@ front end asks for the schema once to build its widgets, and afterwards only nee
 `state`'s `config.values` is what the configuration says, while `wallpaper.path` is what
 is *actually* on screen: `set` swaps the media without touching the configuration, so
 the two can legitimately differ.
+
+### The desktop app
+
+`niripaper-app` is the graphical front end. It is a thin client: it sends `set` and
+`next` over the control socket and rewrites `~/.config/niripaper/config.toml` in
+place, keeping the comments; the daemon reloads the file as soon as it changes. The
+interface is in Chinese.
+
+- **Wallpapers** — two sources. The local library is `$XDG_PICTURES_DIR/Wallpapers`
+  (falling back to `~/Pictures/Wallpapers`), read recursively, and its cards can be
+  filtered by kind (image or video), by brightness, and by rotation membership.
+  Brightness is measured from the picture itself and cached per file, so a wallpaper
+  added later is classified the first time the library is read. Wallhaven is searched
+  live: keywords, categories, purity, sorting, and an optional "match this screen"
+  filter built from the ratio and resolution of the chosen monitor. Results arrive as
+  a masonry that fetches two more pages (about 48 pictures) when the end comes near;
+  thumbnails are cached in `~/.cache/niripaper/wallhaven/`, so scrolling back does
+  not download them again.
+- **Applying** — choose a monitor (or all of them) and a `fit`, then apply. A
+  Wallhaven picture is downloaded in full into the local library first, so applying
+  it also keeps it. The same download can be requested on its own without applying
+  it, and a Wallhaven picture can be added to the rotation directly.
+- **Filters** — the presets from the daemon plus per-key sliders, applied to the
+  preview as you move them. The preview is a CSS approximation of the shader, not a
+  pixel-exact one.
+- **Rotation, transitions and parallax** each have a page of their own; they write
+  the same configuration keys the command line reads.
+- **Settings** cover the daemon connection, starting it at login, the window palette
+  (derived from the current wallpaper), and two list behaviours: blurring the other
+  cards under the pointer, and loading previews only near the viewport.
 
 ### Starting it with niri
 
