@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>niripaper, a wallpaper that moves with your layout</title>
+<meta name="description" content="A parallax wallpaper daemon for the niri compositor. It draws the wallpaper itself, plays hardware-decoded video, and follows niri's own animation settings.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="niripaper">
+<meta property="og:description" content="A wallpaper that moves with your layout. A parallax wallpaper daemon for niri.">
+<meta property="og:url" content="https://blog.moeco.fun/niripaper/">
+<meta property="og:image" content="https://blog.moeco.fun/niripaper/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://blog.moeco.fun/niripaper/">
+<link rel="alternate" hreflang="zh-CN" href="https://blog.moeco.fun/niripaper/zh-CN/">
+<link rel="icon" href="assets/mascot.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/Archivo-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script src="site.js" defer></script>
+</head>
+<body data-assets="assets/">
+
+<div class="backdrop" aria-hidden="true">
+  <div class="canvas stack" data-backdrop><img src="assets/wall-noon.webp" alt=""></div>
+</div>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top">niripaper</a>
+    <a class="opt" href="#features">Features</a>
+    <a class="opt" href="#transitions">Transitions</a>
+    <a class="opt" href="#install">Install</a>
+    <a href="https://github.com/harukizmoe/niripaper">GitHub</a>
+    <a class="lang" href="zh-CN/" hreflang="zh-CN" lang="zh-CN">中文</a>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <h1><span>A wallpaper that <em>moves</em> with your layout.</span></h1>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="note">A parallax wallpaper daemon for niri. The wallpaper shifts a few dozen pixels as you move between windows and workspaces.</p>
+          <div class="cta">
+            <a class="btn primary" href="#install">Install</a>
+            <a class="btn" href="https://github.com/harukizmoe/niripaper">View on GitHub</a>
+          </div>
+          <img class="mascot" src="assets/mascot.svg" alt="" width="170" height="164">
+        </div>
+
+        <figure class="demo" data-demo style="margin:0">
+          <div class="tv">
+            <div class="screen" data-screen tabindex="0" role="group" style="--scale:1.1"
+                 aria-label="Interactive niri demo. Arrow keys move focus between columns and workspaces, O toggles the overview.">
+              <div class="canvas stack" data-canvas><img src="assets/wall-noon.webp" alt=""></div>
+              <div class="layer"><div class="strip" data-strip></div></div>
+            </div>
+            <div class="tv-bar" aria-hidden="true"><span>niripaper</span></div>
+          </div>
+
+          <div class="hud">
+            <p>column <output data-o="col">1</output> of <output data-o="cols">5</output>, workspace <output data-o="ws">1</output></p>
+            <p>progress <output data-o="h">0.00</output> / <output data-o="v">0.00</output></p>
+            <p><code>column_span = 6</code>: one step is always 1/5 of the overflow</p>
+          </div>
+
+          <div class="controls">
+            <div class="group" role="group" aria-label="Move focus">
+              <button class="btn arrow" data-move="-1,0" aria-label="Focus column to the left">←</button>
+              <button class="btn arrow" data-move="1,0" aria-label="Focus column to the right">→</button>
+              <button class="btn arrow" data-move="0,-1" aria-label="Previous workspace">↑</button>
+              <button class="btn arrow" data-move="0,1" aria-label="Next workspace">↓</button>
+            </div>
+            <button class="btn" data-overview aria-pressed="false">Overview</button>
+            <label class="switch"><input type="checkbox" role="switch" data-parallax checked> Parallax</label>
+            <div class="walls" role="group" aria-label="Wallpaper">
+              <button data-wall="noon" aria-pressed="true" aria-label="Noon"><img src="assets/wall-noon.webp" alt="" loading="lazy"></button>
+              <button data-wall="neon" aria-pressed="false" aria-label="Neon"><img src="assets/wall-neon.webp" alt="" loading="lazy"></button>
+              <button data-wall="dusk" aria-pressed="false" aria-label="Dusk"><img src="assets/wall-dusk.webp" alt="" loading="lazy"></button>
+            </div>
+          </div>
+          <p class="hint">Click the screen, then use <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>O</kbd>. Switching wallpaper plays the iris transition. This page's background follows your scroll the same way.</p>
+          <noscript><p class="hint">The interactive demo needs JavaScript.</p></noscript>
+        </figure>
+      </div>
+    </div>
+  </div>
+
+  <section class="features band" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="deco" aria-hidden="true">機能</span>
+        <h2>The daemon is the wallpaper.</h2>
+        <p>Everything here is in the 0.1.0 release.</p>
+      </div>
+      <div class="posters">
+        <article class="poster">
+          <span class="deco" aria-hidden="true">視差</span>
+          <h3>Parallax that follows focus</h3>
+          <p>Moving between columns and workspaces shifts the wallpaper in the same direction. The step comes from fixed <code>column_span</code> and <code>workspace_span</code> values, so opening or closing a window never makes it jump.</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">単一</span>
+          <h3>No helper processes</h3>
+          <p>One binary puts a layer-shell surface on the background layer and renders into it. No mpv process, no shell scripts. While nothing is moving it draws no frames.</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">動画</span>
+          <h3>Video wallpapers, hardware-decoded</h3>
+          <p>mp4, webm, mkv, mov, m4v, avi and gif. libmpv is used as a library and draws into a texture the daemon owns, so a video gets the same parallax as a still.</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">同期</span>
+          <h3>Moves in step with niri</h3>
+          <p>With <code>follow_niri</code> on, the overview transition takes its spring or easing curve from niri's own config. Opening the overview zooms the wallpaper out with it.</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">設定</span>
+          <h3>One config file, per output</h3>
+          <p>Scale, spans and wallpaper can differ per output. A single <code>config.toml</code> is picked up while the daemon runs, and a file that fails to parse leaves the running configuration alone.</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">アプリ</span>
+          <h3>A desktop app for the rest</h3>
+          <p>A Tauri window browses the local library or Wallhaven, previews filters, picks the monitor, and edits transitions, parallax and rotation. It sends <code>set</code> and <code>next</code> over the control socket and edits the config in place. Its interface is in Chinese.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="tr band" id="transitions">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="deco" aria-hidden="true">転換</span>
+        <h2>Eight ways to swap a wallpaper.</h2>
+        <p>Each clip is the daemon's own shader rendered frame by frame, not a CSS imitation. Hover or focus a clip to play it. Set <code>effect = "none"</code> to turn the transition off.</p>
+      </div>
+      <div class="tr-grid">
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/portal.webp"><source src="assets/tr/portal.mp4" type="video/mp4"></video><figcaption><strong>portal</strong><span><code>push</code> <code>center</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/iris.webp"><source src="assets/tr/iris.mp4" type="video/mp4"></video><figcaption><strong>iris</strong><span><code>center</code> <code>start_radius</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/dissolve.webp"><source src="assets/tr/dissolve.mp4" type="video/mp4"></video><figcaption><strong>dissolve</strong></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/wipe.webp"><source src="assets/tr/wipe.mp4" type="video/mp4"></video><figcaption><strong>wipe</strong><span><code>direction</code> <code>softness</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/stripes.webp"><source src="assets/tr/stripes.mp4" type="video/mp4"></video><figcaption><strong>stripes</strong><span><code>stripes</code> <code>direction</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/slide.webp"><source src="assets/tr/slide.mp4" type="video/mp4"></video><figcaption><strong>slide</strong><span><code>direction</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/zoom.webp"><source src="assets/tr/zoom.mp4" type="video/mp4"></video><figcaption><strong>zoom</strong></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="assets/tr/fade.webp"><source src="assets/tr/fade.mp4" type="video/mp4"></video><figcaption><strong>fade</strong></figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="install band" id="install">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="deco" aria-hidden="true">導入</span>
+        <h2>Install.</h2>
+        <p class="status">Version 0.1.0, early. Needs niri (developed against 26.04) and libmpv.</p>
+      </div>
+
+      <details name="install" open>
+        <summary>Release binary</summary>
+        <div class="body">
+          <fieldset class="pick">
+            <legend>Run <code>mpv --version</code>. It reports:</legend>
+            <label><input type="radio" name="mpv" value="mpv0.41" checked> 0.35 or newer <small>Arch, Fedora, Debian 12 and later</small></label>
+            <label><input type="radio" name="mpv" value="mpv0.34"> 0.34 <small>Ubuntu 22.04</small></label>
+          </fieldset>
+          <p><a class="btn primary" data-dl href="https://github.com/harukizmoe/niripaper/releases/latest">Download tarball</a></p>
+          <div class="code"><pre data-cmd>curl -LO https://github.com/harukizmoe/niripaper/releases/download/v0.1.0/niripaper-v0.1.0-x86_64-linux-gnu-mpv0.41.tar.gz
+mkdir niripaper-release
+tar xzf niripaper-v0.1.0-x86_64-linux-gnu-mpv0.41.tar.gz -C niripaper-release
+install -Dm755 niripaper-release/niripaper niripaper-release/niripaper-app -t ~/.local/bin</pre><button class="btn" data-copy data-copied="Copied">Copy</button></div>
+          <p>The tarball holds the daemon <code>niripaper</code>, the desktop app <code>niripaper-app</code> and an <code>INSTALL.txt</code>. Both builds need glibc 2.34 or newer. The daemon needs libmpv, libEGL, libgbm and libwayland-client at run time; the app also needs webkit2gtk-4.1 and libayatana-appindicator3. <code>ldd ./niripaper</code> shows what is missing. Keep <code>~/.local/bin</code> on <code>PATH</code>, or niri will not find it at startup.</p>
+        </div>
+      </details>
+
+      <details name="install">
+        <summary>Build from source</summary>
+        <div class="body">
+          <p>The daemon links libmpv, libEGL, libGL, libgbm and libwayland-client by hand, so their development files are needed. On Arch: <code>mpv</code>, <code>libglvnd</code>, <code>mesa</code>, <code>wayland</code>.</p>
+          <div class="code"><pre>git clone https://github.com/harukizmoe/niripaper.git
+cd niripaper
+cargo install --path . --locked --bin niripaper</pre><button class="btn" data-copy data-copied="Copied">Copy</button></div>
+          <p><code>--bin niripaper</code> is not optional. Without it the diagnostic probes in <code>src/bin/</code> are installed alongside the daemon.</p>
+        </div>
+      </details>
+
+      <details name="install">
+        <summary>AUR</summary>
+        <div class="body">
+          <p>A <a href="https://github.com/harukizmoe/niripaper/tree/main/packaging/aur"><code>PKGBUILD</code></a> exists, but it is not published: the AUR is not accepting new accounts.</p>
+        </div>
+      </details>
+
+      <h3>Start it with niri</h3>
+      <p>Put this in <code>~/.config/niri/config.kdl</code>. The binary has to be on <code>PATH</code>.</p>
+      <div class="code"><pre>spawn-at-startup "niripaper" "daemon"</pre><button class="btn" data-copy data-copied="Copied">Copy</button></div>
+
+      <h3>Fill the whole overview backdrop</h3>
+      <p>By default the wallpaper is a workspace background: it scrolls with the workspace. This layer rule makes it stationary and puts it behind the overview.</p>
+      <div class="code"><pre>layer-rule {
+    match namespace="^niripaper$"
+    place-within-backdrop true
+}</pre><button class="btn" data-copy data-copied="Copied">Copy</button></div>
+
+      <h3>Configure</h3>
+      <p>The file is optional and edits are picked up while the daemon runs. Values resolve as command line, then file, then built-in default.</p>
+      <div class="code"><pre># ~/.config/niripaper/config.toml
+wallpaper = "~/Pictures/wall.webp"
+scale = 1.1                # larger leaves more room to move in
+
+[transition]
+selection = "rotate"       # fixed | rotate | random
+effects = ["portal", "iris", "dissolve"]</pre><button class="btn" data-copy data-copied="Copied">Copy</button></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>GPL-3.0-or-later, © 2026 harukizmoe</span>
+    <nav>
+      <a href="https://github.com/harukizmoe/niripaper">GitHub</a>
+      <a href="https://github.com/harukizmoe/niripaper#readme">README</a>
+      <a href="https://github.com/harukizmoe/niripaper/releases">Releases</a>
+      <a href="https://github.com/niri-wm/niri">niri</a>
+      <a href="zh-CN/" hreflang="zh-CN" lang="zh-CN">简体中文</a>
+    </nav>
+    <span class="bar" aria-hidden="true"></span>
+  </div>
+</footer>
+
+</body>
+</html>

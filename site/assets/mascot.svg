@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 164" width="170" height="164">
+  <style>
+    .blink { transform-box: fill-box; transform-origin: center; animation: blink 4.5s infinite; }
+    @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+    @media (prefers-reduced-motion: reduce) { .blink { animation: none; } }
+  </style>
+  <g stroke="#0b0a14" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M85 46 L48 10 M85 46 L124 14" fill="none"/>
+    <circle cx="48" cy="10" r="6" fill="#d4ff3a"/>
+    <circle cx="124" cy="14" r="6" fill="#ff3d9a"/>
+    <rect x="14" y="46" width="142" height="98" fill="#f3f1e7"/>
+    <rect x="26" y="58" width="94" height="74" rx="10" fill="#18e0d4"/>
+    <path d="M32 148 v10 M138 148 v10" fill="none"/>
+    <circle cx="138" cy="74" r="8" fill="#d4ff3a"/>
+    <circle cx="138" cy="100" r="8" fill="#ffd21f"/>
+    <path d="M130 120 h16 M130 127 h16" fill="none" stroke-width="3"/>
+  </g>
+  <g class="blink" fill="#0b0a14">
+    <rect x="50" y="84" width="10" height="18"/>
+    <rect x="86" y="84" width="10" height="18"/>
+  </g>
+  <path d="M62 112 Q73 122 84 112" fill="none" stroke="#0b0a14" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M34 66 h14 M34 74 h8" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+</svg>

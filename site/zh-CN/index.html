@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>niripaper，会跟着你的布局一起动的壁纸</title>
+<meta name="description" content="niri 合成器的视差壁纸守护进程。它自己绘制壁纸，支持硬件解码的视频壁纸，并跟随 niri 自己的动画设置。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="niripaper">
+<meta property="og:description" content="会跟着你的布局一起动的壁纸。niri 的视差壁纸守护进程。">
+<meta property="og:url" content="https://blog.moeco.fun/niripaper/zh-CN/">
+<meta property="og:image" content="https://blog.moeco.fun/niripaper/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://blog.moeco.fun/niripaper/zh-CN/">
+<link rel="alternate" hreflang="en" href="https://blog.moeco.fun/niripaper/">
+<link rel="icon" href="../assets/mascot.svg" type="image/svg+xml">
+<link rel="preload" href="../assets/fonts/Archivo-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../style.css">
+<script src="../site.js" defer></script>
+</head>
+<body data-assets="../assets/">
+
+<div class="backdrop" aria-hidden="true">
+  <div class="canvas stack" data-backdrop><img src="../assets/wall-noon.webp" alt=""></div>
+</div>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top">niripaper</a>
+    <a class="opt" href="#features">特性</a>
+    <a class="opt" href="#transitions">换图过渡</a>
+    <a class="opt" href="#install">安装</a>
+    <a href="https://github.com/harukizmoe/niripaper">GitHub</a>
+    <a class="lang" href="../" hreflang="en" lang="en">EN</a>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <h1><span>会跟着你的布局一起<em>动</em>的壁纸。</span></h1>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="note">niri 的视差壁纸守护进程。在窗口之间、工作区之间移动时，壁纸会朝同一方向移动几十像素。</p>
+          <div class="cta">
+            <a class="btn primary" href="#install">安装</a>
+            <a class="btn" href="https://github.com/harukizmoe/niripaper">在 GitHub 查看</a>
+          </div>
+          <img class="mascot" src="../assets/mascot.svg" alt="" width="170" height="164">
+        </div>
+
+        <figure class="demo" data-demo style="margin:0">
+          <div class="tv">
+            <div class="screen" data-screen tabindex="0" role="group" style="--scale:1.1"
+                 aria-label="niri 交互演示。方向键在列与工作区之间移动焦点，O 键切换总览。">
+              <div class="canvas stack" data-canvas><img src="../assets/wall-noon.webp" alt=""></div>
+              <div class="layer"><div class="strip" data-strip></div></div>
+            </div>
+            <div class="tv-bar" aria-hidden="true"><span>niripaper</span></div>
+          </div>
+
+          <div class="hud">
+            <p>第 <output data-o="col">1</output> 列 / 共 <output data-o="cols">5</output> 列，工作区 <output data-o="ws">1</output></p>
+            <p>进度 <output data-o="h">0.00</output> / <output data-o="v">0.00</output></p>
+            <p><code>column_span = 6</code>：每一步固定是溢出量的 1/5</p>
+          </div>
+
+          <div class="controls">
+            <div class="group" role="group" aria-label="移动焦点">
+              <button class="btn arrow" data-move="-1,0" aria-label="焦点移到左边一列">←</button>
+              <button class="btn arrow" data-move="1,0" aria-label="焦点移到右边一列">→</button>
+              <button class="btn arrow" data-move="0,-1" aria-label="上一个工作区">↑</button>
+              <button class="btn arrow" data-move="0,1" aria-label="下一个工作区">↓</button>
+            </div>
+            <button class="btn" data-overview aria-pressed="false">总览</button>
+            <label class="switch"><input type="checkbox" role="switch" data-parallax checked> 视差</label>
+            <div class="walls" role="group" aria-label="壁纸">
+              <button data-wall="noon" aria-pressed="true" aria-label="Noon"><img src="../assets/wall-noon.webp" alt="" loading="lazy"></button>
+              <button data-wall="neon" aria-pressed="false" aria-label="Neon"><img src="../assets/wall-neon.webp" alt="" loading="lazy"></button>
+              <button data-wall="dusk" aria-pressed="false" aria-label="Dusk"><img src="../assets/wall-dusk.webp" alt="" loading="lazy"></button>
+            </div>
+          </div>
+          <p class="hint">点一下屏幕，再用 <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> 和 <kbd>O</kbd>。切换壁纸会播放 iris 过渡。本页的背景也按同样的方式跟着滚动移动。</p>
+          <noscript><p class="hint">交互演示需要 JavaScript。</p></noscript>
+        </figure>
+      </div>
+    </div>
+  </div>
+
+  <section class="features band" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="deco" aria-hidden="true">機能</span>
+        <h2>守护进程自己就是壁纸。</h2>
+        <p>这里列的都在 0.1.0 里。</p>
+      </div>
+      <div class="posters">
+        <article class="poster">
+          <span class="deco" aria-hidden="true">視差</span>
+          <h3>跟随焦点的视差</h3>
+          <p>在列与工作区之间移动时，壁纸朝同一方向移动。步长来自固定的 <code>column_span</code> 与 <code>workspace_span</code>，所以开关窗口不会让壁纸跳动。</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">単一</span>
+          <h3>没有辅助进程</h3>
+          <p>一个二进制在 background 层放一个 layer-shell 表面，直接往里渲染。没有 mpv 进程，没有 shell 脚本。没有东西在动时不出帧。</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">動画</span>
+          <h3>视频壁纸，硬件解码</h3>
+          <p>mp4、webm、mkv、mov、m4v、avi 和 gif。mpv 在这里是库，把解码好的帧画进守护进程自己的纹理，所以视频和静态图一样按视差偏移采样。</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">同期</span>
+          <h3>和 niri 同步</h3>
+          <p>开启 <code>follow_niri</code> 后，总览过渡的弹簧或缓动曲线取自 niri 自己的配置。打开总览时，壁纸跟着一起缩小。</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">設定</span>
+          <h3>一个配置文件，按输出分别配置</h3>
+          <p>缩放、跨度、壁纸都可以每个输出不一样。单一的 <code>config.toml</code> 在守护进程运行时就会被读取；解析失败的文件不会影响正在运行的配置。</p>
+        </article>
+        <article class="poster">
+          <span class="deco" aria-hidden="true">アプリ</span>
+          <h3>其余的交给桌面应用</h3>
+          <p>一个 Tauri 窗口：浏览本地库或 Wallhaven、带着滤镜预览、选择显示器，以及改过渡、视差和轮播。它通过控制 socket 发送 <code>set</code> 与 <code>next</code>，并就地改写配置文件。界面是中文。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="tr band" id="transitions">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="deco" aria-hidden="true">転換</span>
+        <h2>八种换壁纸的方式。</h2>
+        <p>每段动画都是守护进程自己的 shader 逐帧渲染出来的，不是 CSS 的仿制。鼠标悬停或键盘聚焦即可播放。设置 <code>effect = "none"</code> 可以关掉过渡。</p>
+      </div>
+      <div class="tr-grid">
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/portal.webp"><source src="../assets/tr/portal.mp4" type="video/mp4"></video><figcaption><strong>portal</strong><span><code>push</code> <code>center</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/iris.webp"><source src="../assets/tr/iris.mp4" type="video/mp4"></video><figcaption><strong>iris</strong><span><code>center</code> <code>start_radius</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/dissolve.webp"><source src="../assets/tr/dissolve.mp4" type="video/mp4"></video><figcaption><strong>dissolve</strong></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/wipe.webp"><source src="../assets/tr/wipe.mp4" type="video/mp4"></video><figcaption><strong>wipe</strong><span><code>direction</code> <code>softness</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/stripes.webp"><source src="../assets/tr/stripes.mp4" type="video/mp4"></video><figcaption><strong>stripes</strong><span><code>stripes</code> <code>direction</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/slide.webp"><source src="../assets/tr/slide.mp4" type="video/mp4"></video><figcaption><strong>slide</strong><span><code>direction</code></span></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/zoom.webp"><source src="../assets/tr/zoom.mp4" type="video/mp4"></video><figcaption><strong>zoom</strong></figcaption></figure>
+        <figure tabindex="0"><video muted playsinline preload="none" poster="../assets/tr/fade.webp"><source src="../assets/tr/fade.mp4" type="video/mp4"></video><figcaption><strong>fade</strong></figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="install band" id="install">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="deco" aria-hidden="true">導入</span>
+        <h2>安装。</h2>
+        <p class="status">版本 0.1.0，早期。需要 niri（开发时用的是 26.04）和 libmpv。</p>
+      </div>
+
+      <details name="install" open>
+        <summary>预编译二进制</summary>
+        <div class="body">
+          <fieldset class="pick">
+            <legend>运行 <code>mpv --version</code>，它报告的版本是：</legend>
+            <label><input type="radio" name="mpv" value="mpv0.41" checked> 0.35 或更新 <small>Arch、Fedora、Debian 12 及以后</small></label>
+            <label><input type="radio" name="mpv" value="mpv0.34"> 0.34 <small>Ubuntu 22.04</small></label>
+          </fieldset>
+          <p><a class="btn primary" data-dl href="https://github.com/harukizmoe/niripaper/releases/latest">下载压缩包</a></p>
+          <div class="code"><pre data-cmd>curl -LO https://github.com/harukizmoe/niripaper/releases/download/v0.1.0/niripaper-v0.1.0-x86_64-linux-gnu-mpv0.41.tar.gz
+mkdir niripaper-release
+tar xzf niripaper-v0.1.0-x86_64-linux-gnu-mpv0.41.tar.gz -C niripaper-release
+install -Dm755 niripaper-release/niripaper niripaper-release/niripaper-app -t ~/.local/bin</pre><button class="btn" data-copy data-copied="已复制">复制</button></div>
+          <p>压缩包里有守护进程 <code>niripaper</code>、桌面应用 <code>niripaper-app</code> 和一份 <code>INSTALL.txt</code>。两个版本都需要 glibc 2.34 或更新。守护进程运行时需要 libmpv、libEGL、libgbm 和 libwayland-client；桌面应用还需要 webkit2gtk-4.1 和 libayatana-appindicator3。<code>ldd ./niripaper</code> 会列出缺的库。请让 <code>~/.local/bin</code> 在 <code>PATH</code> 上，否则 niri 启动时找不到它。</p>
+        </div>
+      </details>
+
+      <details name="install">
+        <summary>从源码编译</summary>
+        <div class="body">
+          <p>守护进程是手写 FFI 直接链接 libmpv、libEGL、libGL、libgbm 和 libwayland-client 的，所以编译时要有它们的开发文件。Arch 上是 <code>mpv</code>、<code>libglvnd</code>、<code>mesa</code>、<code>wayland</code>。</p>
+          <div class="code"><pre>git clone https://github.com/harukizmoe/niripaper.git
+cd niripaper
+cargo install --path . --locked --bin niripaper</pre><button class="btn" data-copy data-copied="已复制">复制</button></div>
+          <p><code>--bin niripaper</code> 不能省。不带它的话，<code>src/bin/</code> 里的诊断探针也会和守护进程一起被装上。</p>
+        </div>
+      </details>
+
+      <details name="install">
+        <summary>AUR</summary>
+        <div class="body">
+          <p>仓库里有一份 <a href="https://github.com/harukizmoe/niripaper/tree/main/packaging/aur"><code>PKGBUILD</code></a>，但还没有发布：AUR 目前不接受新账号。</p>
+        </div>
+      </details>
+
+      <h3>跟随 niri 启动</h3>
+      <p>把这行加进 <code>~/.config/niri/config.kdl</code>。二进制必须在 <code>PATH</code> 上。</p>
+      <div class="code"><pre>spawn-at-startup "niripaper" "daemon"</pre><button class="btn" data-copy data-copied="已复制">复制</button></div>
+
+      <h3>铺满整个总览背景</h3>
+      <p>默认情况下壁纸是工作区背景：它随工作区滚动。加上这条 layer rule，壁纸就固定不动，并放在总览的背后。</p>
+      <div class="code"><pre>layer-rule {
+    match namespace="^niripaper$"
+    place-within-backdrop true
+}</pre><button class="btn" data-copy data-copied="已复制">复制</button></div>
+
+      <h3>配置</h3>
+      <p>配置文件是可选的，守护进程运行时修改会被读取。取值的优先级是：命令行，然后配置文件，最后是内置默认值。</p>
+      <div class="code"><pre># ~/.config/niripaper/config.toml
+wallpaper = "~/Pictures/wall.webp"
+scale = 1.1                # 越大，可移动的余地越多
+
+[transition]
+selection = "rotate"       # fixed | rotate | random
+effects = ["portal", "iris", "dissolve"]</pre><button class="btn" data-copy data-copied="已复制">复制</button></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>GPL-3.0-or-later，© 2026 harukizmoe</span>
+    <nav>
+      <a href="https://github.com/harukizmoe/niripaper">GitHub</a>
+      <a href="https://github.com/harukizmoe/niripaper/blob/main/README.zh-CN.md">README</a>
+      <a href="https://github.com/harukizmoe/niripaper/releases">Releases</a>
+      <a href="https://github.com/niri-wm/niri">niri</a>
+      <a href="../" hreflang="en" lang="en">English</a>
+    </nav>
+    <span class="bar" aria-hidden="true"></span>
+  </div>
+</footer>
+
+</body>
+</html>
