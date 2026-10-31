@@ -126,6 +126,13 @@ CI 的守护进程 job 装不到 webkit2gtk，这是故意的。改了 `app/` �
   shader，而它已经抓到过三个真 bug：径向效果的 reach 误用整条对角线、honeycomb 用剪切取整
   得到的是平行四边形、以及纹理漏设 `GL_TEXTURE_MIN_FILTER` 导致快照采样恒为黑（后者意味着
   换图过渡一直在从黑淡入，只验 fade 数值是看不出来的）。
+  `trprobe NODE OUT --sequence FROM TO [FRAMES]` 把每个效果在两张真图之间的整段过渡渲成
+  编号帧，产品页的过渡短片就是用它出的（`scripts/gen-site-transitions.sh`）。
+- `site/` 是 GitHub Pages 产品页（纯静态 HTML/CSS/JS，无构建步骤，不在 Cargo workspace 内），
+  `.github/workflows/pages.yml` 在 `main` 上 `site/**` 变动时部署。壁纸与短片是生成物，
+  脚本在 `scripts/gen-site-*`；壁纸全部程序化原创，**不要往 `site/` 放第三方图片**（授权不明）。
+  页面文案只写已实现的功能与可验证的事实，英文页 `site/index.html` 与中文页
+  `site/zh-CN/index.html` 逐节对应，改一份就同步另一份。
 
 ---
 
